@@ -5,6 +5,3 @@
 [submodule "tests/googletest"]
 	path = tests/googletest
 	url = git://github.com/google/googletest
-[submodule "debian"]
-	path = debian
-	url = git@github.com:tranzmatt/OpenDDS-Debian.git
