@@ -3,17 +3,18 @@
  * See: http://www.opendds.org/license.html
  */
 
-#include "../Idl/MessengerTypeSupportImpl.h"
+#include <MessengerTypeSupportImpl.h>
 
-#include "dds/DCPS/Marked_Default_Qos.h"
-#include "dds/DCPS/PublisherImpl.h"
-#include "dds/DCPS/Service_Participant.h"
-#include "dds/DCPS/StaticIncludes.h"
-#include "dds/DCPS/WaitSet.h"
+#include <dds/DCPS/Marked_Default_Qos.h>
+#include <dds/DCPS/PublisherImpl.h>
+#include <dds/DCPS/Service_Participant.h>
+#include <dds/DCPS/StaticIncludes.h>
+#include <dds/DCPS/WaitSet.h>
 
-#include "ace/Log_Msg.h"
+#include <ace/Log_Msg.h>
 
 #include <iostream>
+#include <cstdlib>
 
 namespace {
   const auto num_messages = 40;
@@ -59,7 +60,7 @@ struct DataReaderListenerImpl
         ACE_ERROR((LM_ERROR,
                    ACE_TEXT("%N:%l: on_data_available()")
                    ACE_TEXT(" ERROR: _narrow failed!\n")));
-        ACE_OS::exit(-1);
+        ACE_OS::exit(EXIT_FAILURE);
       }
 
       Messenger::Message message;
@@ -68,7 +69,7 @@ struct DataReaderListenerImpl
 
       if (status == DDS::RETCODE_OK) {
         std::cout << "SampleInfo.sample_rank = " << si.sample_rank << std::endl;
-        std::cout << "SampleInfo.instance_state = " << si.instance_state << std::endl;
+        std::cout << "SampleInfo.instance_state = " << OpenDDS::DCPS::InstanceState::instance_state_string(si.instance_state) << std::endl;
 
         if (si.valid_data) {
           if (!counts_.insert(message.count()).second) {
@@ -106,7 +107,7 @@ struct DataReaderListenerImpl
 
     } catch (const CORBA::Exception& e) {
       e._tao_print_exception("Exception caught in on_data_available():");
-      ACE_OS::exit(-1);
+      ACE_OS::exit(EXIT_FAILURE);
     }
   }
 
@@ -160,7 +161,7 @@ struct DataReaderListenerImpl
 
 int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
 {
-  int status = 0;
+  int status = EXIT_SUCCESS;
   try {
     DDS::DomainParticipantFactory_var dpf =
       TheParticipantFactoryWithArgs(argc, argv);
@@ -174,7 +175,8 @@ int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
     if (!participant) {
       ACE_ERROR_RETURN((LM_ERROR,
                         ACE_TEXT("%N:%l main()")
-                        ACE_TEXT(" ERROR: create_participant() failed!\n")), -1);
+                        ACE_TEXT(" ERROR: create_participant() failed!\n")),
+                       EXIT_FAILURE);
     }
 
     Messenger::MessageTypeSupport_var ts = new Messenger::MessageTypeSupportImpl;
@@ -182,7 +184,8 @@ int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
     if (ts->register_type(participant, "") != DDS::RETCODE_OK) {
       ACE_ERROR_RETURN((LM_ERROR,
                         ACE_TEXT("%N:%l main()")
-                        ACE_TEXT(" ERROR: register_type() failed!\n")), -1);
+                        ACE_TEXT(" ERROR: register_type() failed!\n")),
+                       EXIT_FAILURE);
     }
 
     CORBA::String_var type_name = ts->get_type_name();
@@ -196,7 +199,8 @@ int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
     if (!topic) {
       ACE_ERROR_RETURN((LM_ERROR,
                         ACE_TEXT("%N:%l main()")
-                        ACE_TEXT(" ERROR: create_topic() failed!\n")), -1);
+                        ACE_TEXT(" ERROR: create_topic() failed!\n")),
+                       EXIT_FAILURE);
     }
 
     DDS::Subscriber_var sub =
@@ -207,7 +211,8 @@ int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
     if (!sub) {
       ACE_ERROR_RETURN((LM_ERROR,
                         ACE_TEXT("%N:%l main()")
-                        ACE_TEXT(" ERROR: create_subscriber() failed!\n")), -1);
+                        ACE_TEXT(" ERROR: create_subscriber() failed!\n")),
+                       EXIT_FAILURE);
     }
 
     DataReaderListenerImpl* const listener_servant = new DataReaderListenerImpl;
@@ -226,7 +231,8 @@ int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
     if (!reader) {
       ACE_ERROR_RETURN((LM_ERROR,
                         ACE_TEXT("%N:%l main()")
-                        ACE_TEXT(" ERROR: create_datareader() failed!\n")), -1);
+                        ACE_TEXT(" ERROR: create_datareader() failed!\n")),
+                       EXIT_FAILURE);
     }
 
     DDS::StatusCondition_var condition = reader->get_statuscondition();
@@ -245,7 +251,8 @@ int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
       if (reader->get_subscription_matched_status(matches) != DDS::RETCODE_OK) {
         ACE_ERROR_RETURN((LM_ERROR,
                           ACE_TEXT("%N:%l main()")
-                          ACE_TEXT(" ERROR: get_subscription_matched_status() failed!\n")), -1);
+                          ACE_TEXT(" ERROR: get_subscription_matched_status() failed!\n")),
+                         EXIT_FAILURE);
       }
       if (matches.current_count == 0 && matches.total_count > 0) {
         break;
@@ -253,11 +260,14 @@ int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
       if (ws->wait(conditions, timeout) != DDS::RETCODE_OK) {
         ACE_ERROR_RETURN((LM_ERROR,
                           ACE_TEXT("%N:%l main()")
-                          ACE_TEXT(" ERROR: wait() failed!\n")), -1);
+                          ACE_TEXT(" ERROR: wait() failed!\n")),
+                         EXIT_FAILURE);
       }
     }
 
-    status = listener_servant->is_valid() ? 0 : -1;
+    if (!listener_servant->is_valid()) {
+      status = EXIT_FAILURE;
+    }
 
     ws->detach_condition(condition);
 
@@ -267,7 +277,7 @@ int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
 
   } catch (const CORBA::Exception& e) {
     e._tao_print_exception("Exception caught in main():");
-    status = -1;
+    status = EXIT_FAILURE;
   }
 
   return status;

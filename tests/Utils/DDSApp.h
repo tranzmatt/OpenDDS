@@ -10,7 +10,7 @@
 
 #include "TestUtils_Export.h"
 
-#include "tests/Utils/DDSTopicFacade.h"
+#include "DDSTopicFacade.h"
 
 #include "dds/DdsDcpsPublicationC.h"
 #include "dds/DdsDcpsSubscriptionC.h"
@@ -211,7 +211,7 @@ private:
     typedef OpenDDS::DCPS::DDSTraits<MessageType> TraitsType;
     typedef typename TraitsType::TypeSupportType::_var_type TypeSupportVarType;
 
-    TypeSupportVarType ts(new typename TraitsType::TypeSupportTypeImpl);
+    TypeSupportVarType ts(new typename TraitsType::TypeSupportImplType);
     if (ts->register_type(participant.in(), "") != DDS::RETCODE_OK) {
       throw std::runtime_error(" ERROR: register_type failed!");
     }

@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_COPYCHAINVISTOR_H
-#define OPENDDS_DCPS_COPYCHAINVISTOR_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_COPYCHAINVISITOR_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_COPYCHAINVISITOR_H
 
 #include "dds/DCPS/dcps_export.h"
 #include "BasicQueue_T.h"
@@ -29,7 +29,8 @@ public:
   CopyChainVisitor(
     BasicQueue<TransportQueueElement>& target,
     MessageBlockAllocator*             mb_allocator,
-    DataBlockAllocator*                db_allocator
+    DataBlockAllocator*                db_allocator,
+    bool duplicate = false
   );
 
   virtual ~CopyChainVisitor();
@@ -49,6 +50,7 @@ private:
 
   /// Status of visitation.
   int status_;
+  bool duplicate_;
 };
 
 } // namespace DCPS

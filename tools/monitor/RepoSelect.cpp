@@ -5,8 +5,23 @@
  * See: http://www.opendds.org/license.html
  */
 
+// Tell GCC to ignore implicitly declared copy methods as long as
+// Qt is not compliant.
+#ifdef __GNUC__
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wdeprecated-copy"
+#  pragma GCC diagnostic ignored "-Wdeprecated-enum-enum-conversion"
+#  pragma GCC diagnostic ignored "-Wsign-conversion"
+#  pragma GCC diagnostic ignored "-Wtemplate-id-cdtor"
+#endif
+
 #include <QtGui/QtGui>
 #include <QtWidgets/QFileDialog>
+
+#ifdef __GNUC__
+#  pragma GCC diagnostic pop
+#endif
+
 #include "RepoSelect.h"
 
 namespace Monitor {
@@ -49,4 +64,3 @@ RepoSelect::fileIOR()
 }
 
 } // End of namespace Monitor
-

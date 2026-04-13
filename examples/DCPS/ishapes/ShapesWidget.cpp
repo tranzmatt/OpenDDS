@@ -1,14 +1,29 @@
 #include <iostream>
+
+// Tell GCC to ignore implicitly declared copy methods as long as
+// Qt is not compliant.
+#ifdef __GNUC__
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wdeprecated-copy"
+#endif
+
 #include <QtGui/QtGui>
+
+#ifdef __GNUC__
+#  pragma GCC diagnostic pop
+#endif
+
 #include <ShapesWidget.hpp>
 
 #include "dds/DCPS/Service_Participant.h"
+
+#include <dds/OpenDDSConfigWrapper.h>
 
 namespace {
   const char* logoFile()
   {
     return
-#ifdef OPENDDS_SECURITY
+#if OPENDDS_CONFIG_SECURITY
       TheServiceParticipant->get_security() ? ":/images/logo_secure_beta.png" :
 #endif
       ":/images/logo.png";
@@ -28,7 +43,7 @@ ShapesWidget::~ShapesWidget() {
 }
 
 void
-ShapesWidget::addShape(shared_ptr<Shape> shape) {
+ShapesWidget::addShape(std::shared_ptr<Shape> shape) {
     shapeList_.push_back(shape);
 }
 

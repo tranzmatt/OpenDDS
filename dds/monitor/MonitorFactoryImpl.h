@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_MONITOR_FACTORY_IMPL_H
-#define OPENDDS_DCPS_MONITOR_FACTORY_IMPL_H
+#ifndef OPENDDS_MONITOR_MONITORFACTORYIMPL_H
+#define OPENDDS_MONITOR_MONITORFACTORYIMPL_H
 
 #include "monitor_export.h"
 #include "dds/DCPS/MonitorFactory.h"
@@ -19,9 +19,8 @@
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace OpenDDS {
-namespace DCPS {
+namespace Monitor {
 
-class Monitor;
 /**
 * @class MonitorFactoryImpl
 *
@@ -30,43 +29,45 @@ class Monitor;
 * Full version of this library is implemented by the monitor lib.
 */
 class OpenDDS_monitor_Export MonitorFactoryImpl
-  : public MonitorFactory {
+  : public DCPS::MonitorFactory {
 public:
   MonitorFactoryImpl();
 
   virtual ~MonitorFactoryImpl();
 
   /// Factory function to create a service participant monitor object
-  virtual Monitor* create_sp_monitor(Service_Participant* sp);
+  virtual DCPS::Monitor* create_sp_monitor(DCPS::Service_Participant* sp);
 
   /// Factory function to create a domain participant monitor object
-  virtual Monitor* create_dp_monitor(DomainParticipantImpl* dp);
+  virtual DCPS::Monitor* create_dp_monitor(DCPS::DomainParticipantImpl* dp);
 
   /// Factory function to create a topic monitor object
-  virtual Monitor* create_topic_monitor(TopicImpl* topic);
+  virtual DCPS::Monitor* create_topic_monitor(DCPS::TopicImpl* topic);
 
   /// Factory function to create a publisher monitor object
-  virtual Monitor* create_publisher_monitor(PublisherImpl* publisher);
+  virtual DCPS::Monitor* create_publisher_monitor(DCPS::PublisherImpl* publisher);
 
   /// Factory function to create a subscriber monitor object
-  virtual Monitor* create_subscriber_monitor(SubscriberImpl* subscriber);
+  virtual DCPS::Monitor* create_subscriber_monitor(DCPS::SubscriberImpl* subscriber);
 
   /// Factory function to create a data writer monitor object
-  virtual Monitor* create_data_writer_monitor(DataWriterImpl* dw);
+  virtual DCPS::Monitor* create_data_writer_monitor(DCPS::DataWriterImpl* dw);
 
   /// Factory function to create a data writer periodic monitor object
-  virtual Monitor* create_data_writer_periodic_monitor(DataWriterImpl* dw);
+  virtual DCPS::Monitor* create_data_writer_periodic_monitor(DCPS::DataWriterImpl* dw);
 
   /// Factory function to create a data reader monitor object
-  virtual Monitor* create_data_reader_monitor(DataReaderImpl* dr);
+  virtual DCPS::Monitor* create_data_reader_monitor(DCPS::DataReaderImpl* dr);
 
   /// Factory function to create a data reader periodic monitor object
-  virtual Monitor* create_data_reader_periodic_monitor(DataReaderImpl* dr);
+  virtual DCPS::Monitor* create_data_reader_periodic_monitor(DCPS::DataReaderImpl* dr);
 
   /// Factory function to create a transport monitor object
-  virtual Monitor* create_transport_monitor(TransportImpl* transport);
+  virtual DCPS::Monitor* create_transport_monitor(DCPS::TransportImpl* transport);
 
   virtual void initialize();
+
+  virtual void deinitialize();
 
   ServiceParticipantReportDataWriter_ptr get_sp_writer();
 
@@ -79,6 +80,7 @@ private:
                                          const char* topic_name,
                                          const DDS::DataWriterQos& dw_qos);
 
+  DDS::DomainParticipant_var participant_;
   ServiceParticipantReportDataWriter_var  sp_writer_;
   DomainParticipantReportDataWriter_var   dp_writer_;
   TopicReportDataWriter_var               topic_writer_;
@@ -94,8 +96,8 @@ private:
 static int OpenDDS_Requires_MonitorFactoryImpl_Initializer =
   MonitorFactoryImpl::service_initialize();
 
-} // namespace DCPS
-} // namespace OpenDDS
+}
+}
 
 
 ACE_STATIC_SVC_DECLARE (MonitorFactoryImpl)

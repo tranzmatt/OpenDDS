@@ -1,0 +1,15 @@
+project(*XtypesExtensibility): dcps_test, googletest, msvc_bigobj{
+  exename = *
+  Source_Files {
+    XtypesExtensibility.cpp
+  }
+
+  TypeSupport_Files {
+    Extensibility.idl
+  }
+
+  TypeSupport_Files {
+    idlflags += --default-enum-extensibility-zero
+    ZeroEnum.idl
+  }
+}

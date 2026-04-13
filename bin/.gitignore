@@ -4,3 +4,7 @@
 /monitor
 /repoctl
 /dcpsinfo_dump
+/RtpsRelay
+/RtpsRelayControl
+/inspect
+/opendds_mwc.pl*

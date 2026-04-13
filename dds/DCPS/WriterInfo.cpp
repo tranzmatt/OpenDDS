@@ -7,10 +7,11 @@
 #include "DCPS/DdsDcps_pch.h" //Only the _pch include should start with DCPS/
 #include "dcps_export.h"
 
+#include "DataReaderImpl.h"
 #include "GuidConverter.h"
-#include "WriterInfo.h"
-#include "Time_Helper.h"
 #include "Service_Participant.h"
+#include "Time_Helper.h"
+#include "WriterInfo.h"
 
 #include "ace/OS_NS_sys_time.h"
 
@@ -20,8 +21,7 @@ namespace OpenDDS {
 namespace DCPS {
 
 WriterInfoListener::WriterInfoListener()
-  : subscription_id_(GUID_UNKNOWN),
-  liveliness_lease_duration_(ACE_Time_Value::zero)
+  : subscription_id_(GUID_UNKNOWN)
 {
 }
 
@@ -34,7 +34,8 @@ WriterInfoListener::~WriterInfoListener()
 /// handle_timeout is called since some subroutine use the state.
 void
 WriterInfoListener::writer_became_alive(WriterInfo&,
-                                        const ACE_Time_Value& )
+                                        const MonotonicTimePoint&,
+                                        WriterState)
 {
 }
 
@@ -43,181 +44,272 @@ WriterInfoListener::writer_became_alive(WriterInfo&,
 /// when it returns.
 void
 WriterInfoListener::writer_became_dead(WriterInfo&,
-                                       const ACE_Time_Value& )
+                                       WriterState)
 {
 }
 
 /// tell instance when a DataWriter is removed.
 /// The liveliness status need update.
 void
-WriterInfoListener::writer_removed(WriterInfo& )
+WriterInfoListener::writer_removed(WriterInfo&)
 {
 }
 
+void
+WriterInfoListener::resume_sample_processing(WriterInfo&)
+{
+}
 
-
-WriterInfo::WriterInfo(WriterInfoListener*         reader,
-                       const PublicationId&        writer_id,
-                       const ::DDS::DataWriterQos& writer_qos)
-  : last_liveliness_activity_time_(ACE_OS::gettimeofday()),
-  historic_samples_timer_(NO_TIMER),
-  remove_association_timer_(NO_TIMER),
-  removal_deadline_(ACE_Time_Value::zero),
-  last_historic_seq_(SequenceNumber::SEQUENCENUMBER_UNKNOWN()),
-  waiting_for_end_historic_samples_(false),
-  scheduled_for_removal_(false),
-  notify_lost_(false),
-  state_(NOT_SET),
-  reader_(reader),
-  writer_id_(writer_id),
-  writer_qos_(writer_qos),
-  handle_(DDS::HANDLE_NIL)
+WriterInfo::WriterInfo(const WriterInfoListener_rch& reader,
+                       const GUID_t& writer_id,
+                       const ::DDS::DataWriterQos& writer_qos,
+                       const DDS::Duration_t& reader_liveliness_lease_duration)
+  : historic_samples_sweeper_task_(make_rch<SporadicEvent>(TheServiceParticipant->event_dispatcher(), make_rch<WriterInfoEvent>(rchandle_from(this), &WriterInfo::sweep_historic_samples)))
+  , liveliness_check_task_(make_rch<SporadicEvent>(TheServiceParticipant->event_dispatcher(), make_rch<WriterInfoEvent>(rchandle_from(this), &WriterInfo::check_liveliness)))
+  , last_historic_seq_(SequenceNumber::SEQUENCENUMBER_UNKNOWN())
+  , waiting_for_end_historic_samples_(false)
+  , delivering_historic_samples_(false)
+  , delivering_historic_samples_cv_(mutex_)
+  , state_(NOT_SET)
+  , reader_(reader)
+  , writer_id_(writer_id)
+  , writer_qos_(writer_qos)
+  , reader_liveliness_lease_duration_(reader_liveliness_lease_duration)
+  , reader_liveliness_lease_duration_is_finite_(!is_infinite(reader_liveliness_lease_duration))
+  , handle_(DDS::HANDLE_NIL)
 {
 #ifndef OPENDDS_NO_OBJECT_MODEL_PROFILE
-  this->reset_coherent_info();
+  reset_coherent_info();
 #endif
 
   if (DCPS_debug_level >= 5) {
-    GuidConverter writer_converter(writer_id);
-    GuidConverter reader_converter(reader->subscription_id_);
     ACE_DEBUG((LM_DEBUG,
                ACE_TEXT("(%P|%t) WriterInfo::WriterInfo: ")
                ACE_TEXT("writer %C added to reader %C.\n"),
-               OPENDDS_STRING(writer_converter).c_str(),
-               OPENDDS_STRING(reader_converter).c_str()));
+               LogGuid(writer_id).c_str(),
+               LogGuid(reader->subscription_id_).c_str()));
   }
 }
 
-OPENDDS_STRING
-WriterInfo::get_state_str() const
+WriterInfo::~WriterInfo()
 {
-  OPENDDS_STRING ret;
-  switch (this->state_) {
-  case WriterInfo::NOT_SET:
-    ret += "NOT_SET";
-    break;
-  case WriterInfo::ALIVE:
-    ret += "ALIVE";
-    break;
-  case WriterInfo::DEAD:
-    ret += "DEAD";
-    break;
+  historic_samples_sweeper_task_->cancel();
+  liveliness_check_task_->cancel();
+}
+
+const char* get_state_str(WriterState state)
+{
+  switch (state) {
+  case NOT_SET:
+    return "NOT_SET";
+  case ALIVE:
+    return "ALIVE";
+  case DEAD:
+    return "DEAD";
   default:
-    ret += "UNSPECIFIED(";
-    ret += to_dds_string(int(this->state_));
-    ret += ")";
+    ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR:get_state_str(WriterState): ")
+      ACE_TEXT("%d is either invalid or not recognized.\n"),
+      state));
+    return "Invalid state";
   }
-  return ret.c_str();
 }
 
 void
-WriterInfo::clear_owner_evaluated ()
+WriterInfo::schedule_historic_samples_timer()
 {
-  this->owner_evaluated_.clear ();
+  waiting_for_end_historic_samples(true);
+  const TimeDuration ten_seconds(10, 0);
+  historic_samples_sweeper_task_->schedule(ten_seconds);
 }
 
 void
-WriterInfo::set_owner_evaluated (::DDS::InstanceHandle_t instance, bool flag)
+WriterInfo::cancel_historic_samples_timer()
 {
-  if (flag ||
-      (!flag && owner_evaluated_.find (instance) != owner_evaluated_.end ())) {
-    this->owner_evaluated_ [instance] = flag;
+  waiting_for_end_historic_samples(false);
+  historic_samples_sweeper_task_->cancel();
+}
+
+bool
+WriterInfo::check_end_historic_samples(OPENDDS_MAP(SequenceNumber, ReceivedDataSample)& to_deliver)
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(mutex_);
+  while (delivering_historic_samples_) {
+    delivering_historic_samples_cv_.wait(TheServiceParticipant->get_thread_status_manager());
+  }
+  if (waiting_for_end_historic_samples_) {
+    bool result = false;
+    RcHandle<WriterInfo> info = rchandle_from(this);
+    if (!historic_samples_.empty()) {
+      last_historic_seq_ = historic_samples_.rbegin()->first;
+      delivering_historic_samples_ = true;
+      to_deliver.swap(historic_samples_);
+      result = true;
+    }
+    waiting_for_end_historic_samples_ = false;
+    guard.release();
+    historic_samples_sweeper_task_->cancel();
+    return result;
+  }
+  return false;
+}
+
+void
+WriterInfo::sweep_historic_samples(const MonotonicTimePoint&)
+{
+  WriterInfoListener_rch reader = reader_.lock();
+  if (reader) {
+    reader->resume_sample_processing(*this);
   }
 }
 
 bool
-WriterInfo::is_owner_evaluated (::DDS::InstanceHandle_t instance)
+WriterInfo::check_historic(const SequenceNumber& seq, const ReceivedDataSample& sample, SequenceNumber& last_historic_seq)
 {
-  OwnerEvaluateFlags::iterator iter = owner_evaluated_.find (instance);
-  if (iter == owner_evaluated_.end ()) {
-    this->owner_evaluated_.insert (OwnerEvaluateFlags::value_type (instance, false));
+  ACE_Guard<ACE_Thread_Mutex> guard(mutex_);
+  last_historic_seq = last_historic_seq_;
+  if (waiting_for_end_historic_samples_) {
+    historic_samples_.insert(std::make_pair(seq, sample));
+    return true;
+  }
+  return false;
+}
+
+void
+WriterInfo::finished_delivering_historic()
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(mutex_);
+  delivering_historic_samples_ = false;
+  delivering_historic_samples_cv_.notify_all();
+}
+
+#ifndef OPENDDS_NO_OBJECT_MODEL_PROFILE
+void
+WriterInfo::add_coherent_samples(const SequenceNumber& seq)
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(mutex_);
+  if (coherent_samples_ == 0) {
+    static const SequenceNumber defaultSN;
+    const SequenceRange resetRange(defaultSN, seq);
+    coherent_sample_sequence_.reset();
+    coherent_sample_sequence_.insert(resetRange);
+  }
+  else {
+    coherent_sample_sequence_.insert(seq);
+  }
+}
+
+void
+WriterInfo::coherent_change(bool group_coherent, const GUID_t& publisher_id)
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(mutex_);
+  group_coherent_ = group_coherent;
+  publisher_id_ = publisher_id;
+  ++coherent_samples_;
+}
+#endif
+
+void
+WriterInfo::clear_owner_evaluated()
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(mutex_);
+  owner_evaluated_.clear();
+}
+
+void
+WriterInfo::set_owner_evaluated(::DDS::InstanceHandle_t instance, bool flag)
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(mutex_);
+  if (flag ||
+      (!flag && owner_evaluated_.find(instance) != owner_evaluated_.end())) {
+    owner_evaluated_[instance] = flag;
+  }
+}
+
+bool
+WriterInfo::is_owner_evaluated(::DDS::InstanceHandle_t instance)
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(mutex_);
+  OwnerEvaluateFlags::iterator iter = owner_evaluated_.find(instance);
+  if (iter == owner_evaluated_.end()) {
+    owner_evaluated_.insert(OwnerEvaluateFlags::value_type(instance, false));
     return false;
   }
   else
     return iter->second;
 }
 
-ACE_Time_Value
-WriterInfo::check_activity(const ACE_Time_Value& now)
+void
+WriterInfo::remove_instance(DDS::InstanceHandle_t instance)
 {
-  ACE_Time_Value expires_at = ACE_Time_Value::max_time;
+  owner_evaluated_.erase(instance);
+}
 
-  // We only need check the liveliness with the non-zero liveliness_lease_duration_.
-  // if (state_ != DEAD && reader_->liveliness_lease_duration_ != ACE_Time_Value::zero)
-  if (state_ == ALIVE && reader_->liveliness_lease_duration_ != ACE_Time_Value::zero) {
-    expires_at = this->last_liveliness_activity_time_ +
-                 reader_->liveliness_lease_duration_;
+void
+WriterInfo::start_liveliness_timer()
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(mutex_);
+  last_liveliness_activity_time_ = MonotonicTimePoint::now();
+  if (reader_liveliness_lease_duration_is_finite_) {
+    liveliness_check_task_->schedule(reader_liveliness_lease_duration_);
+  }
+}
 
-    if (expires_at <= now) {
-      // let all instances know this write is not alive.
-      reader_->writer_became_dead(*this, now);
-      expires_at = ACE_Time_Value::max_time;
+void
+WriterInfo::check_liveliness(const MonotonicTimePoint& now)
+{
+  bool became_dead = false;
+  WriterState previous_state;
+
+  {
+    ACE_Guard<ACE_Thread_Mutex> guard(mutex_);
+    previous_state = state_;
+    if (state_ == ALIVE) {
+      const TimeDuration elapsed = now - last_liveliness_activity_time_;
+      became_dead = elapsed > reader_liveliness_lease_duration_;
+      if (became_dead) {
+        state_ = DEAD;
+      } else {
+        liveliness_check_task_->schedule(reader_liveliness_lease_duration_ - elapsed);
+      }
     }
   }
 
-  return expires_at;
+  WriterInfoListener_rch reader = reader_.lock();
+  if (reader && became_dead) {
+    reader->writer_became_dead(*this, previous_state);
+  }
 }
 
 void
 WriterInfo::removed()
 {
-  reader_->writer_removed(*this);
-}
-
-ACE_Time_Value WriterInfo::activity_wait_period() const
-{
-  ACE_Time_Value activity_wait_period(TheServiceParticipant->pending_timeout());
-  if (reader_->liveliness_lease_duration_ != ACE_Time_Value::zero) {
-    activity_wait_period = reader_->liveliness_lease_duration_;
+  ACE_Guard<ACE_Thread_Mutex> guard(mutex_);
+  WriterInfoListener_rch reader = reader_.lock();
+  guard.release();
+  if (reader) {
+    reader->writer_removed(*this);
   }
-  if (activity_wait_period == ACE_Time_Value::zero) {
-      activity_wait_period = duration_to_time_value(writer_qos_.reliability.max_blocking_time);
-  }
-
-  return activity_wait_period;
+  historic_samples_sweeper_task_->cancel();
+  liveliness_check_task_->cancel();
 }
-
-
-bool
-WriterInfo::active() const
-{
-  // Need some period of time by which to decide if a writer the
-  // DataReaderImpl knows about has gone 'inactive'.  Used to determine
-  // if a remove_associations should remove immediately or wait to let
-  // reader process more information that may have queued up from the writer
-  // Over-arching max wait time for removal is controlled in the
-  // RemoveAssociationSweeper (10 seconds), but on a per writer basis set
-  // activity_wait_period based on:
-  //     1) Reader's liveliness_lease_duration
-  //     2) DCPSPendingTimeout value (if not zero)
-  //     3) Writer's max blocking time (could be infinite, in which case
-  //        RemoveAssociationSweeper will remove after its max wait)
-  //     4) Zero - don't wait, simply remove association
-  ACE_Time_Value activity_wait_period = this->activity_wait_period();
-
-  if (activity_wait_period == ACE_Time_Value::zero) {
-    return false;
-  }
-  return (ACE_OS::gettimeofday() - last_liveliness_activity_time_) <= activity_wait_period;
-}
-
 
 #ifndef OPENDDS_NO_OBJECT_MODEL_PROFILE
 Coherent_State
 WriterInfo::coherent_change_received()
 {
-  if (this->writer_coherent_samples_.num_samples_ == 0) {
+  ACE_Guard<ACE_Thread_Mutex> guard(mutex_);
+  if (writer_coherent_samples_.num_samples_ == 0) {
     return NOT_COMPLETED_YET;
   }
 
-  if (!this->coherent_sample_sequence_.disjoint()
-      && (this->coherent_sample_sequence_.high()
-          == this->writer_coherent_samples_.last_sample_)) {
+  if (!coherent_sample_sequence_.disjoint()
+      && (coherent_sample_sequence_.high()
+          == writer_coherent_samples_.last_sample_)) {
     return COMPLETED;
   }
 
-  if (this->coherent_sample_sequence_.high() >
-      this->writer_coherent_samples_.last_sample_) {
+  if (coherent_sample_sequence_.high() >
+      writer_coherent_samples_.last_sample_) {
     return REJECTED;
   }
 
@@ -227,31 +319,32 @@ WriterInfo::coherent_change_received()
 void
 WriterInfo::reset_coherent_info()
 {
-  this->coherent_samples_ = 0;
-  this->group_coherent_ = false;
-  this->publisher_id_ = GUID_UNKNOWN;
-  this->coherent_sample_sequence_.reset();
-  this->writer_coherent_samples_.reset();
-  this->group_coherent_samples_.clear();
+  ACE_Guard<ACE_Thread_Mutex> guard(mutex_);
+  coherent_samples_ = 0;
+  group_coherent_ = false;
+  publisher_id_ = GUID_UNKNOWN;
+  coherent_sample_sequence_.reset();
+  writer_coherent_samples_.reset();
+  group_coherent_samples_.clear();
 }
 
 
 void
 WriterInfo::set_group_info(const CoherentChangeControl& info)
 {
-  if (!(this->publisher_id_ == info.publisher_id_)
-      || this->group_coherent_ != info.group_coherent_) {
-    GuidConverter sub_id(this->reader_->subscription_id_);
-    GuidConverter pub_id(this->writer_id_);
+  ACE_Guard<ACE_Thread_Mutex> guard(mutex_);
+  if (!(publisher_id_ == info.publisher_id_)
+      || group_coherent_ != info.group_coherent_) {
+    WriterInfoListener_rch reader = reader_.lock();
     ACE_ERROR((LM_ERROR,
                ACE_TEXT("(%P|%t) ERROR: WriterInfo::set_group_info()")
                ACE_TEXT(" reader %C writer %C incorrect coherent info !\n"),
-               OPENDDS_STRING(sub_id).c_str(),
-               OPENDDS_STRING(pub_id).c_str()));
+               reader ? LogGuid(reader->subscription_id_).c_str() : "",
+               LogGuid(writer_id_).c_str()));
   }
 
-  this->writer_coherent_samples_ = info.coherent_samples_;
-  this->group_coherent_samples_ = info.group_coherent_samples_;
+  writer_coherent_samples_ = info.coherent_samples_;
+  group_coherent_samples_ = info.group_coherent_samples_;
 }
 
 #endif  // OPENDDS_NO_OBJECT_MODEL_PROFILE

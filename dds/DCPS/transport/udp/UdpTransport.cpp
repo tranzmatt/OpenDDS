@@ -6,37 +6,45 @@
  */
 
 #include "UdpTransport.h"
+
 #include "UdpInst_rch.h"
+#include "UdpDataLink.h"
 #include "UdpInst.h"
 #include "UdpSendStrategy.h"
 #include "UdpReceiveStrategy.h"
 
-#include "ace/CDR_Base.h"
-#include "ace/Log_Msg.h"
+#include <dds/DCPS/LogAddr.h>
+#include <dds/DCPS/NetworkResource.h>
+#include <dds/DCPS/transport/framework/PriorityKey.h>
+#include <dds/DCPS/transport/framework/TransportClient.h>
+#include <dds/DCPS/transport/framework/TransportExceptions.h>
+#include <dds/DCPS/AssociationData.h>
 
-#include "dds/DCPS/transport/framework/NetworkAddress.h"
-#include "dds/DCPS/transport/framework/PriorityKey.h"
-#include "dds/DCPS/transport/framework/TransportClient.h"
-#include "dds/DCPS/transport/framework/TransportExceptions.h"
-#include "dds/DCPS/AssociationData.h"
+#include <ace/CDR_Base.h>
+#include <ace/Log_Msg.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace OpenDDS {
 namespace DCPS {
 
-UdpTransport::UdpTransport(UdpInst& inst)
-  : TransportImpl(inst)
+namespace {
+  const Encoding::Kind encoding_kind = Encoding::KIND_UNALIGNED_CDR;
+}
+
+UdpTransport::UdpTransport(const UdpInst_rch& inst,
+                           DDS::DomainId_t domain)
+  : TransportImpl(inst, domain)
 {
   if (!(configure_i(inst) && open())) {
     throw Transport::UnableToCreate();
   }
 }
 
-UdpInst&
+UdpInst_rch
 UdpTransport::config() const
 {
-  return static_cast<UdpInst&>(TransportImpl::config());
+  return dynamic_rchandle_cast<UdpInst>(TransportImpl::config());
 }
 
 
@@ -44,8 +52,7 @@ UdpDataLink_rch
 UdpTransport::make_datalink(const ACE_INET_Addr& remote_address,
                             Priority priority, bool active)
 {
-  ReactorTask_rch rtask (reactor_task());
-  UdpDataLink_rch link(make_rch<UdpDataLink>(ref(*this), priority, rtask.in(), active));
+  UdpDataLink_rch link(make_rch<UdpDataLink>(rchandle_from(this), priority, reactor_task(), active));
   // Configure link with transport configuration and reactor task:
 
   // Open logical connection:
@@ -66,13 +73,18 @@ UdpTransport::connect_datalink(const RemoteTransport& remote,
                                const ConnectionAttribs& attribs,
                                const TransportClient_rch& )
 {
-
-  if (this->is_shut_down()) {
+  UdpInst_rch cfg = config();
+  if (!cfg && is_shut_down()) {
     return AcceptConnectResult(AcceptConnectResult::ACR_FAILED);
   }
   const ACE_INET_Addr remote_address = get_connection_addr(remote.blob_);
   const bool active = true;
-  const PriorityKey key = blob_to_key(remote.blob_, attribs.priority_, this->config().local_address(), active);
+  const PriorityKey key = blob_to_key(remote.blob_, attribs.priority_, cfg->send_receive_address(), active);
+
+  VDBG_LVL((LM_DEBUG, "(%P|%t) UdpTransport::connect_datalink PriorityKey "
+            "prio=%d, addr=%C, is_loopback=%d, is_active=%d\n",
+            key.priority(), LogAddr(key.address()).c_str(), key.is_loopback(),
+            key.is_active()), 2);
 
   GuardType guard(client_links_lock_);
   if (this->is_shut_down()) {
@@ -103,16 +115,24 @@ UdpTransport::accept_datalink(const RemoteTransport& remote,
                               const ConnectionAttribs& attribs,
                               const TransportClient_rch& client)
 {
+  UdpInst_rch cfg = config();
+  if (!cfg && is_shut_down()) {
+    return AcceptConnectResult(AcceptConnectResult::ACR_FAILED);
+  }
   ACE_Guard<ACE_Recursive_Thread_Mutex> guard(connections_lock_);
-  //GuardType guard(connections_lock_);
+
   const PriorityKey key = blob_to_key(remote.blob_,
-                                      attribs.priority_, config().local_address(), false /* !active */);
+                                      attribs.priority_, cfg->send_receive_address(), false /* !active */);
+
+  VDBG_LVL((LM_DEBUG, "(%P|%t) UdpTransport::accept_datalink PriorityKey "
+            "prio=%d, addr=%C, is_loopback=%d, is_active=%d\n",
+            key.priority(), LogAddr(key.address()).c_str(), key.is_loopback(),
+            key.is_active()), 2);
+
   if (server_link_keys_.count(key)) {
     VDBG((LM_DEBUG, "(%P|%t) UdpTransport::accept_datalink found\n"));
     return AcceptConnectResult(UdpDataLink_rch(server_link_));
-  }
-
-  else if (pending_server_link_keys_.count(key)) {
+  } else if (pending_server_link_keys_.count(key)) {
     pending_server_link_keys_.erase(key);
     server_link_keys_.insert(key);
     VDBG((LM_DEBUG, "(%P|%t) UdpTransport::accept_datalink completed\n"));
@@ -123,23 +143,23 @@ UdpTransport::accept_datalink(const RemoteTransport& remote,
     VDBG((LM_DEBUG, "(%P|%t) UdpTransport::accept_datalink pending\n"));
     return AcceptConnectResult(AcceptConnectResult::ACR_SUCCESS);
   }
-     return AcceptConnectResult();
 }
 
 void
 UdpTransport::stop_accepting_or_connecting(const TransportClient_wrch& client,
-                                           const RepoId& remote_id)
+                                           const GUID_t& remote_id,
+                                           bool /*disassociate*/,
+                                           bool /*association_failed*/)
 {
   VDBG((LM_DEBUG, "(%P|%t) UdpTransport::stop_accepting_or_connecting\n"));
 
-  //GuardType guard(connections_lock_);
   ACE_Guard<ACE_Recursive_Thread_Mutex> guard(connections_lock_);
 
   for (PendConnMap::iterator it = pending_connections_.begin();
        it != pending_connections_.end(); ++it) {
-    for (size_t i = 0; i < it->second.size(); ++i) {
-      if (it->second[i].first == client && it->second[i].second == remote_id) {
-        it->second.erase(it->second.begin() + i);
+    for (Callbacks::iterator cit = it->second.begin(); cit != it->second.end(); ++cit) {
+      if (cit->first == client && cit->second == remote_id) {
+        it->second.erase(cit);
         break;
       }
     }
@@ -151,21 +171,17 @@ UdpTransport::stop_accepting_or_connecting(const TransportClient_wrch& client,
 }
 
 bool
-UdpTransport::configure_i(UdpInst& config)
+UdpTransport::configure_i(const UdpInst_rch& config)
 {
-  create_reactor_task();
-
-  // Override with DCPSDefaultAddress.
-  if (config.local_address() == ACE_INET_Addr () &&
-      !TheServiceParticipant->default_address ().empty ()) {
-
-    config.local_address(0, TheServiceParticipant->default_address ().c_str ());
+  if (!config) {
+    return false;
   }
+  create_reactor_task(false, "UdpTransport" + config->name());
 
   // Our "server side" data link is created here, similar to the acceptor_
   // in the TcpTransport implementation.  This establishes a socket as an
   // endpoint that we can advertise to peers via connection_info_i().
-  server_link_ = make_datalink(config.local_address(), 0 /* priority */, false);
+  server_link_ = make_datalink(config->send_receive_address(), 0 /* priority */, false);
   return true;
 }
 
@@ -187,24 +203,28 @@ UdpTransport::shutdown_i()
 }
 
 bool
-UdpTransport::connection_info_i(TransportLocator& info) const
+UdpTransport::connection_info_i(TransportLocator& info, ConnectionInfoFlags flags) const
 {
-  this->config().populate_locator(info);
-  return true;
+  UdpInst_rch cfg = config();
+  if (cfg) {
+    cfg->populate_locator(info, flags, domain_, GUID_UNKNOWN);
+    return true;
+  }
+  return false;
 }
 
 ACE_INET_Addr
 UdpTransport::get_connection_addr(const TransportBLOB& data) const
 {
   ACE_INET_Addr local_address;
-  NetworkAddress network_address;
+  NetworkResource network_resource;
 
   size_t len = data.length();
   const char* buffer = reinterpret_cast<const char*>(data.get_buffer());
 
   ACE_InputCDR cdr(buffer, len);
-  if (cdr >> network_address) {
-    network_address.to_addr(local_address);
+  if (cdr >> network_resource) {
+    network_resource.to_addr(local_address);
   }
 
   return local_address;
@@ -232,17 +252,17 @@ UdpTransport::blob_to_key(const TransportBLOB& remote,
                           ACE_INET_Addr local_addr,
                           bool active)
 {
-  NetworkAddress network_order_address;
+  NetworkResource network_resource;
   ACE_InputCDR cdr((const char*)remote.get_buffer(), remote.length());
 
-  if (!(cdr >> network_order_address)) {
+  if (!(cdr >> network_resource)) {
     ACE_ERROR((LM_ERROR,
                ACE_TEXT("(%P|%t) ERROR: UdpTransport::blob_to_key")
-               ACE_TEXT(" failed to de-serialize the NetworkAddress\n")));
+               ACE_TEXT(" failed to de-serialize the NetworkResource\n")));
   }
 
   ACE_INET_Addr remote_address;
-  network_order_address.to_addr(remote_address);
+  network_resource.to_addr(remote_address);
   const bool is_loopback = remote_address == local_addr;
 
   return PriorityKey(priority, remote_address, is_loopback, active);
@@ -250,16 +270,30 @@ UdpTransport::blob_to_key(const TransportBLOB& remote,
 
 void
 UdpTransport::passive_connection(const ACE_INET_Addr& remote_address,
-                                 const Message_Block_Ptr& data)
+                                 const ReceivedDataSample& data)
 {
-  CORBA::ULong octet_size =
-    static_cast<CORBA::ULong>(data->length() - sizeof(Priority));
+  UdpInst_rch cfg = config();
+  if (!cfg) {
+    return;
+  }
+  if (data.data_length() < sizeof(Priority)) {
+    VDBG((LM_DEBUG, "(%P|%t) UdpTransport::passive_connection received short data sample\n"));
+    return;
+  }
+  const size_t blob_len = data.data_length() - sizeof(Priority);
+  Message_Block_Ptr payload(data.data());
   Priority priority;
-  Serializer serializer(data.get());
-  serializer >> priority;
-  TransportBLOB blob(octet_size);
-  blob.length(octet_size);
-  serializer.read_octet_array(blob.get_buffer(), octet_size);
+  Serializer serializer(payload.get(), encoding_kind);
+  if (!(serializer >> priority)) {
+    VDBG((LM_DEBUG, "(%P|%t) UdpTransport::passive_connection failed to read priority\n"));
+    return;
+  }
+  TransportBLOB blob(static_cast<CORBA::ULong>(blob_len));
+  blob.length(blob.maximum());
+  if (!serializer.read_octet_array(blob.get_buffer(), blob.length())) {
+    VDBG((LM_DEBUG, "(%P|%t) UdpTransport::passive_connection failed to read blob\n"));
+    return;
+  }
 
   // Send an ack so that the active side can return from
   // connect_datalink_i().  This is just a single byte of
@@ -271,11 +305,10 @@ UdpTransport::passive_connection(const ACE_INET_Addr& remote_address,
     VDBG((LM_DEBUG, "(%P|%t) UdpTransport::passive_connection failed to send ack\n"));
   }
 
-  const PriorityKey key = blob_to_key(blob, priority, config().local_address(), false /* passive */);
+  const PriorityKey key = blob_to_key(blob, priority, cfg->send_receive_address(), false /* passive */);
 
   ACE_Guard<ACE_Recursive_Thread_Mutex> guard(connections_lock_);
 
-  //GuardType guard(connections_lock_);
   const PendConnMap::iterator pend = pending_connections_.find(key);
 
   if (pend != pending_connections_.end()) {
@@ -301,14 +334,14 @@ UdpTransport::passive_connection(const ACE_INET_Addr& remote_address,
     //still present in the actual pending_connections_ before calling use_datalink
     Callbacks tmp(pend->second);
     for (size_t i = 0; i < tmp.size(); ++i) {
-      const PendConnMap::iterator pend = pending_connections_.find(key);
-      if (pend != pending_connections_.end()) {
-        const Callbacks::iterator tmp_iter = find(pend->second.begin(),
-                                                  pend->second.end(),
+      const PendConnMap::iterator pos = pending_connections_.find(key);
+      if (pos != pending_connections_.end()) {
+        const Callbacks::iterator tmp_iter = find(pos->second.begin(),
+                                                  pos->second.end(),
                                                   tmp.at(i));
-        if (tmp_iter != pend->second.end()) {
+        if (tmp_iter != pos->second.end()) {
           TransportClient_wrch pend_client = tmp.at(i).first;
-          RepoId remote_repo = tmp.at(i).second;
+          GUID_t remote_repo = tmp.at(i).second;
           guard.release();
           TransportClient_rch client = pend_client.lock();
           if (client)

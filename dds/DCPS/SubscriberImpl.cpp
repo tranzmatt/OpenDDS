@@ -1,22 +1,21 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-#include "DCPS/DdsDcps_pch.h" //Only the _pch include should start with DCPS/
+#include <DCPS/DdsDcps_pch.h> // Only the _pch include should start with DCPS/
+
 #include "debug.h"
 #include "SubscriberImpl.h"
 #include "FeatureDisabledQosCheck.h"
 #include "DomainParticipantImpl.h"
 #include "Qos_Helper.h"
 #include "GuidConverter.h"
+#include "BuiltInTopicUtils.h"
 #include "TopicImpl.h"
 #include "MonitorFactory.h"
 #include "DataReaderImpl.h"
 #include "Service_Participant.h"
-#include "dds/DdsDcpsTypeSupportExtC.h"
 #include "TopicDescriptionImpl.h"
 #include "Marked_Default_Qos.h"
 #include "Transient_Kludge.h"
@@ -25,13 +24,12 @@
 #include "GroupRakeData.h"
 #include "MultiTopicDataReaderBase.h"
 #include "Util.h"
-#include "dds/DCPS/transport/framework/TransportImpl.h"
-#include "dds/DCPS/transport/framework/DataLinkSet.h"
+#include "transport/framework/TransportImpl.h"
+#include "transport/framework/DataLinkSet.h"
+#include "DCPS_Utils.h"
+#include "PoolAllocator.h"
 
-#include "tao/debug.h"
-
-#include "ace/Auto_Ptr.h"
-#include "ace/Vector_T.h"
+#include <dds/DdsDcpsTypeSupportExtC.h>
 
 #include <stdexcept>
 
@@ -53,25 +51,29 @@ SubscriberImpl::SubscriberImpl(DDS::InstanceHandle_t       handle,
   domain_id_(participant->get_domain_id()),
   raw_latency_buffer_size_(0),
   raw_latency_buffer_type_(DataCollector<double>::KeepOldest),
-  monitor_(0),
   access_depth_ (0)
 {
   //Note: OK to duplicate a nil.
   listener_ = DDS::SubscriberListener::_duplicate(a_listener);
 
-  monitor_ = TheServiceParticipant->monitor_factory_->create_subscriber_monitor(this);
+  monitor_.reset(TheServiceParticipant->monitor_factory_->create_subscriber_monitor(this));
 }
 
 SubscriberImpl::~SubscriberImpl()
 {
+  const RcHandle<DomainParticipantImpl> participant = participant_.lock();
+  if (participant) {
+    participant->return_handle(handle_);
+  }
+
   // The datareaders should be deleted already before calling delete
   // subscriber.
-  if (!is_clean()) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("SubscriberImpl::~SubscriberImpl, ")
-               ACE_TEXT("%B datareaders still exist.\n"),
-               datareader_map_.size ()));
+  String leftover_entities;
+  if (!is_clean(&leftover_entities)) {
+    if (log_level >= LogLevel::Warning) {
+      ACE_ERROR((LM_WARNING, "(%P|%t) WARNING: SubscriberImpl::~SubscriberImpl: "
+                 "%C still exist\n", leftover_entities.c_str()));
+    }
   }
 }
 
@@ -106,12 +108,25 @@ SubscriberImpl::create_datareader(
   DDS::DataReaderListener_ptr a_listener,
   DDS::StatusMask             mask)
 {
-  if (CORBA::is_nil(a_topic_desc)) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("SubscriberImpl::create_datareader, ")
-               ACE_TEXT("topic desc is nil.\n")));
-    return DDS::DataReader::_nil();
+  if (!a_topic_desc) {
+    if (log_level >= LogLevel::Notice) {
+      ACE_ERROR((LM_NOTICE,
+                 "(%P|%t) NOTICE: SubscriberImpl::create_datareader: "
+                 "topic is nil\n"));
+    }
+    return 0;
+  }
+
+  DDS::DomainParticipant_var my_participant = get_participant();
+  DDS::DomainParticipant_var topic_participant = a_topic_desc->get_participant();
+
+  if (my_participant != topic_participant) {
+    if (log_level >= LogLevel::Notice) {
+      ACE_ERROR((LM_NOTICE,
+                 "(%P|%t) NOTICE: SubscriberImpl::create_datareader: "
+                 "topic does not belong to same participant\n"));
+    }
+    return 0;
   }
 
   DDS::DataReaderQos dr_qos;
@@ -158,23 +173,27 @@ SubscriberImpl::create_datareader(
       MultiTopicDataReaderBase* mtdr =
         dynamic_cast<MultiTopicDataReaderBase*>(dr.in());
       mtdr->init(dr_qos, a_listener, mask, this, mt);
-      if (enabled_.value() && qos_.entity_factory.autoenable_created_entities) {
+      if (enabled_ && qos_.entity_factory.autoenable_created_entities) {
         if (dr->enable() != DDS::RETCODE_OK) {
-          ACE_ERROR((LM_ERROR,
-                     ACE_TEXT("(%P|%t) ERROR: ")
-                     ACE_TEXT("SubscriberImpl::create_datareader, ")
-                     ACE_TEXT("enable of MultiTopicDataReader failed.\n")));
+          if (DCPS_debug_level > 0) {
+            ACE_ERROR((LM_ERROR,
+                      ACE_TEXT("(%P|%t) ERROR: ")
+                      ACE_TEXT("SubscriberImpl::create_datareader, ")
+                      ACE_TEXT("enable of MultiTopicDataReader failed.\n")));
+          }
           return DDS::DataReader::_nil();
         }
         multitopic_reader_enabled(dr);
       }
       return dr._retn();
     } catch (const std::exception& e) {
-      ACE_ERROR((LM_ERROR,
-                 ACE_TEXT("(%P|%t) ERROR: ")
-                 ACE_TEXT("SubscriberImpl::create_datareader, ")
-                 ACE_TEXT("creation of MultiTopicDataReader failed: %C.\n"),
-                 e.what()));
+      if (DCPS_debug_level > 0) {
+        ACE_ERROR((LM_ERROR,
+                  ACE_TEXT("(%P|%t) ERROR: ")
+                  ACE_TEXT("SubscriberImpl::create_datareader, ")
+                  ACE_TEXT("creation of MultiTopicDataReader failed: %C.\n"),
+                  e.what()));
+      }
     }
     return DDS::DataReader::_nil();
   }
@@ -185,11 +204,13 @@ SubscriberImpl::create_datareader(
 
   if (0 == typesupport) {
     CORBA::String_var name = a_topic_desc->get_name();
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("SubscriberImpl::create_datareader, ")
-               ACE_TEXT("typesupport(topic_name=%C) is nil.\n"),
-               name.in()));
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                ACE_TEXT("(%P|%t) ERROR: ")
+                ACE_TEXT("SubscriberImpl::create_datareader, ")
+                ACE_TEXT("typesupport(topic_name=%C) is nil.\n"),
+                name.in()));
+    }
     return DDS::DataReader::_nil();
   }
 
@@ -199,10 +220,12 @@ SubscriberImpl::create_datareader(
     dynamic_cast<DataReaderImpl*>(dr_obj.in());
 
   if (dr_servant == 0) {
-    ACE_ERROR((LM_ERROR,
-        ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("SubscriberImpl::create_datareader, ")
-        ACE_TEXT("servant is nil.\n")));
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+          ACE_TEXT("(%P|%t) ERROR: ")
+          ACE_TEXT("SubscriberImpl::create_datareader, ")
+          ACE_TEXT("servant is nil.\n")));
+    }
     return DDS::DataReader::_nil();
   }
 
@@ -226,14 +249,16 @@ SubscriberImpl::create_datareader(
                    participant.in(),
                    this);
 
-  if ((this->enabled_ == true) && (qos_.entity_factory.autoenable_created_entities)) {
+  if (enabled_ && qos_.entity_factory.autoenable_created_entities) {
     const DDS::ReturnCode_t ret = dr_servant->enable();
 
     if (ret != DDS::RETCODE_OK) {
-      ACE_ERROR((LM_WARNING,
-                 ACE_TEXT("(%P|%t) WARNING: ")
-                 ACE_TEXT("SubscriberImpl::create_datareader, ")
-                 ACE_TEXT("enable failed.\n")));
+      if (DCPS_debug_level > 0) {
+        ACE_ERROR((LM_WARNING,
+                  ACE_TEXT("(%P|%t) WARNING: ")
+                  ACE_TEXT("SubscriberImpl::create_datareader, ")
+                  ACE_TEXT("enable failed.\n")));
+      }
       return DDS::DataReader::_nil();
     }
   } else {
@@ -254,46 +279,43 @@ SubscriberImpl::delete_datareader(::DDS::DataReader_ptr a_datareader)
   DataReaderImpl_rch dr_servant = rchandle_from(dynamic_cast<DataReaderImpl*>(a_datareader));
 
   if (dr_servant) { // for MultiTopic this will be false
-    const ACE_TCHAR* reason = ACE_TEXT(" (unknown reason)");
+    const char* reason = " (ERROR: unknown reason)";
     DDS::ReturnCode_t rc = DDS::RETCODE_OK;
-    DDS::Subscriber_var dr_subscriber(dr_servant->get_subscriber());
-    if (dr_subscriber.in() != this) {
-      reason = ACE_TEXT("doesn't belong to this subscriber.");
+    RcHandle<SubscriberImpl> dr_subscriber = dr_servant->get_subscriber_servant();
+    if (dr_subscriber.get() != this) {
+      reason = "doesn't belong to this subscriber.";
       rc = DDS::RETCODE_PRECONDITION_NOT_MET;
     } else if (dr_servant->has_zero_copies()) {
-      reason = ACE_TEXT("has outstanding zero-copy samples loaned out.");
+      reason = "has outstanding zero-copy samples loaned out.";
       rc = DDS::RETCODE_PRECONDITION_NOT_MET;
     } else if (!dr_servant->read_conditions_.empty()) {
-      reason = ACE_TEXT("has read conditions attached.");
+      reason = "has read conditions attached.";
       rc = DDS::RETCODE_PRECONDITION_NOT_MET;
     }
     if (rc != DDS::RETCODE_OK) {
-      if (DCPS_debug_level) {
-        GuidConverter converter(dr_servant->get_subscription_id());
-        ACE_ERROR((LM_WARNING, ACE_TEXT("(%P|%t) SubscriberImpl::delete_datareader(%C): ")
-          ACE_TEXT("will return \"%C\" because datareader %s"),
-          OPENDDS_STRING(converter).c_str(), retcode_to_string(rc).c_str(),
-          reason));
+      if (log_level >= LogLevel::Notice) {
+        DDS::TopicDescription_var topic = a_datareader->get_topicdescription();
+        CORBA::String_var topic_name = topic->get_name();
+        ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: SubscriberImpl::delete_datareader: "
+          "on reader %C (topic \"%C\") will return \"%C\" because it %C\n",
+          LogGuid(dr_servant->get_id()).c_str(), topic_name.in(),
+          retcode_to_string(rc), reason));
       }
       return rc;
     }
-  }
-  if (dr_servant) {
+
     // marks entity as deleted and stops future associating
     dr_servant->prepare_to_delete();
   }
 
   {
     ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                     guard,
+                     si_guard,
                      this->si_lock_,
                      DDS::RETCODE_ERROR);
 
     DataReaderMap::iterator it;
-
-    for (it = datareader_map_.begin();
-         it != datareader_map_.end();
-         ++it) {
+    for (it = datareader_map_.begin(); it != datareader_map_.end(); ++it) {
       if (it->second == dr_servant) {
         break;
       }
@@ -303,18 +325,20 @@ SubscriberImpl::delete_datareader(::DDS::DataReader_ptr a_datareader)
       DDS::TopicDescription_var td = a_datareader->get_topicdescription();
       CORBA::String_var topic_name = td->get_name();
 #ifndef OPENDDS_NO_MULTI_TOPIC
-      OPENDDS_MAP(OPENDDS_STRING, DDS::DataReader_var)::iterator mt_iter =
-        multitopic_reader_map_.find(topic_name.in());
+      MultitopicReaderMap::iterator mt_iter = multitopic_reader_map_.find(topic_name.in());
       if (mt_iter != multitopic_reader_map_.end()) {
         DDS::DataReader_ptr ptr = mt_iter->second;
         MultiTopicDataReaderBase* mtdrb = dynamic_cast<MultiTopicDataReaderBase*>(ptr);
         if (!mtdrb) {
-          ACE_ERROR_RETURN((LM_ERROR,
-            ACE_TEXT("(%P|%t) ERROR: ")
-            ACE_TEXT("SubscriberImpl::delete_datareader: ")
-            ACE_TEXT("datareader(topic_name=%C)")
-            ACE_TEXT("failed to obtain MultiTopicDataReaderBase.\n"),
-            topic_name.in()), ::DDS::RETCODE_ERROR);
+          if (DCPS_debug_level > 0) {
+            ACE_ERROR((LM_ERROR,
+              ACE_TEXT("(%P|%t) ERROR: ")
+              ACE_TEXT("SubscriberImpl::delete_datareader: ")
+              ACE_TEXT("datareader(topic_name=%C)")
+              ACE_TEXT("failed to obtain MultiTopicDataReaderBase.\n"),
+              topic_name.in()));
+          }
+          return ::DDS::RETCODE_ERROR;
         }
         mtdrb->cleanup();
         multitopic_reader_map_.erase(mt_iter);
@@ -322,25 +346,34 @@ SubscriberImpl::delete_datareader(::DDS::DataReader_ptr a_datareader)
       }
 #endif
       if (!dr_servant) {
-        ACE_ERROR_RETURN((LM_ERROR,
-                          ACE_TEXT("(%P|%t) ERROR: ")
-                          ACE_TEXT("SubscriberImpl::delete_datareader: ")
-                          ACE_TEXT("datareader(topic_name=%C)")
-                          ACE_TEXT("for unknown repo id not found.\n"),
-                          topic_name.in()), ::DDS::RETCODE_ERROR);
+        if (DCPS_debug_level > 0) {
+          ACE_ERROR((LM_ERROR,
+                    ACE_TEXT("(%P|%t) ERROR: ")
+                    ACE_TEXT("SubscriberImpl::delete_datareader: ")
+                    ACE_TEXT("datareader(topic_name=%C)")
+                    ACE_TEXT("for unknown repo id not found.\n"),
+                    topic_name.in()));
+        }
+        return ::DDS::RETCODE_ERROR;
       }
-      RepoId id = dr_servant->get_subscription_id();
-      GuidConverter converter(id);
-      ACE_ERROR_RETURN((LM_ERROR,
-                        ACE_TEXT("(%P|%t) ERROR: ")
-                        ACE_TEXT("SubscriberImpl::delete_datareader: ")
-                        ACE_TEXT("datareader(topic_name=%C) %C not found.\n"),
-                        topic_name.in(),
-                        OPENDDS_STRING(converter).c_str()),
-                        ::DDS::RETCODE_ERROR);
+      if (DCPS_debug_level > 0) {
+        GUID_t id = dr_servant->get_guid();
+        ACE_ERROR((LM_ERROR,
+                  ACE_TEXT("(%P|%t) ERROR: ")
+                  ACE_TEXT("SubscriberImpl::delete_datareader: ")
+                  ACE_TEXT("datareader(topic_name=%C) %C not found.\n"),
+                  topic_name.in(),
+                  LogGuid(id).c_str()));
+      }
+      return ::DDS::RETCODE_ERROR;
     }
 
     datareader_map_.erase(it);
+
+    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
+                     dr_set_guard,
+                     this->dr_set_lock_,
+                     DDS::RETCODE_ERROR);
     datareader_set_.erase(dr_servant);
   }
 
@@ -348,24 +381,18 @@ SubscriberImpl::delete_datareader(::DDS::DataReader_ptr a_datareader)
     this->monitor_->report();
   }
 
-  if (!dr_servant) {
-    ACE_ERROR_RETURN((LM_ERROR,
-                      ACE_TEXT("(%P|%t) ERROR: ")
-                      ACE_TEXT("SubscriberImpl::delete_datareader: ")
-                      ACE_TEXT("could not remove unknown subscription.\n")),
-                      ::DDS::RETCODE_ERROR);
-  }
-
-  RepoId subscription_id = dr_servant->get_subscription_id();
+  const GUID_t subscription_id = dr_servant->subscription_id();
   Discovery_rch disco = TheServiceParticipant->get_discovery(this->domain_id_);
   if (!disco->remove_subscription(this->domain_id_,
                                   this->dp_id_,
                                   subscription_id)) {
-    ACE_ERROR_RETURN((LM_ERROR,
-                      ACE_TEXT("(%P|%t) ERROR: ")
-                      ACE_TEXT("SubscriberImpl::delete_datareader: ")
-                      ACE_TEXT(" could not remove subscription from discovery.\n")),
-                      ::DDS::RETCODE_ERROR);
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                ACE_TEXT("(%P|%t) ERROR: ")
+                ACE_TEXT("SubscriberImpl::delete_datareader: ")
+                ACE_TEXT(" could not remove subscription from discovery.\n")));
+    }
+    return ::DDS::RETCODE_ERROR;
   }
 
   // Call remove association before unregistering the datareader from the transport,
@@ -381,7 +408,7 @@ SubscriberImpl::delete_contained_entities()
   // mark that the entity is being deleted
   set_deleted(true);
 
-  ACE_Vector<DDS::DataReader_ptr> drs;
+  OPENDDS_VECTOR(DDS::DataReader*) drs;
 
 #ifndef OPENDDS_NO_MULTI_TOPIC
   {
@@ -389,8 +416,7 @@ SubscriberImpl::delete_contained_entities()
                      guard,
                      this->si_lock_,
                      DDS::RETCODE_ERROR);
-    for (OPENDDS_MAP(OPENDDS_STRING, DDS::DataReader_var)::iterator mt_iter =
-           multitopic_reader_map_.begin();
+    for (MultitopicReaderMap::iterator mt_iter = multitopic_reader_map_.begin();
          mt_iter != multitopic_reader_map_.end(); ++mt_iter) {
       drs.push_back(mt_iter->second);
     }
@@ -402,11 +428,13 @@ SubscriberImpl::delete_contained_entities()
       ret = delete_datareader(drs[i]);
     }
     if (ret != DDS::RETCODE_OK) {
-      ACE_ERROR_RETURN((LM_ERROR,
-                        ACE_TEXT("(%P|%t) ERROR: ")
-                        ACE_TEXT("SubscriberImpl::delete_contained_entities, ")
-                        ACE_TEXT("failed to delete datareader\n")),
-                       ret);
+      if (DCPS_debug_level > 0) {
+        ACE_ERROR((LM_ERROR,
+                  ACE_TEXT("(%P|%t) ERROR: ")
+                  ACE_TEXT("SubscriberImpl::delete_contained_entities, ")
+                  ACE_TEXT("failed to delete datareader\n")));
+      }
+      return ret;
     }
   }
   drs.clear();
@@ -431,11 +459,13 @@ SubscriberImpl::delete_contained_entities()
       ret = delete_datareader(drs[i]);
     }
     if (ret != DDS::RETCODE_OK) {
-      ACE_ERROR_RETURN((LM_ERROR,
-                        ACE_TEXT("(%P|%t) ERROR: ")
-                        ACE_TEXT("SubscriberImpl::delete_contained_entities, ")
-                        ACE_TEXT("failed to delete datareader\n")),
-                       ret);
+      if (DCPS_debug_level > 0) {
+        ACE_ERROR((LM_ERROR,
+                  ACE_TEXT("(%P|%t) ERROR: ")
+                  ACE_TEXT("SubscriberImpl::delete_contained_entities, ")
+                  ACE_TEXT("failed to delete datareader\n")));
+      }
+      return ret;
     }
   }
 
@@ -460,8 +490,7 @@ SubscriberImpl::lookup_datareader(
 
   if (it == datareader_map_.end()) {
 #ifndef OPENDDS_NO_MULTI_TOPIC
-    OPENDDS_MAP(OPENDDS_STRING, DDS::DataReader_var)::iterator mt_iter =
-      multitopic_reader_map_.find(topic_name);
+    MultitopicReaderMap::iterator mt_iter = multitopic_reader_map_.find(topic_name);
     if (mt_iter != multitopic_reader_map_.end()) {
       return DDS::DataReader::_duplicate(mt_iter->second);
     }
@@ -489,10 +518,14 @@ SubscriberImpl::get_datareaders(
   DDS::ViewStateMask     view_states,
   DDS::InstanceStateMask instance_states)
 {
-  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                   guard,
-                   this->si_lock_,
-                   DDS::RETCODE_ERROR);
+  DataReaderSet localreaders;
+  {
+    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
+                     guard,
+                     this->dr_set_lock_,
+                     DDS::RETCODE_ERROR);
+    localreaders = datareader_set_;
+  }
 
 #ifndef OPENDDS_NO_OBJECT_MODEL_PROFILE
   // If access_scope is GROUP and ordered_access is true then return readers as
@@ -502,19 +535,17 @@ SubscriberImpl::get_datareaders(
     if (this->access_depth_ == 0 && this->qos_.presentation.coherent_access) {
       return ::DDS::RETCODE_PRECONDITION_NOT_MET;
     }
-
     if (this->qos_.presentation.ordered_access) {
 
       GroupRakeData data;
-      for (DataReaderSet::const_iterator pos = datareader_set_.begin();
-           pos != datareader_set_.end(); ++pos) {
-        (*pos)->get_ordered_data (data, sample_states, view_states, instance_states);
+      for (DataReaderSet::const_iterator pos = localreaders.begin();
+           pos != localreaders.end(); ++pos) {
+        (*pos)->get_ordered_data(data, sample_states, view_states, instance_states);
       }
 
       // Return list of readers in the order of the source timestamp of the received
       // samples from readers.
-      data.get_datareaders (readers);
-
+      data.get_datareaders(readers);
       return DDS::RETCODE_OK;
     }
   }
@@ -522,9 +553,8 @@ SubscriberImpl::get_datareaders(
 
   // Return set of datareaders.
   readers.length(0);
-
-  for (DataReaderSet::const_iterator pos = datareader_set_.begin();
-       pos != datareader_set_.end(); ++pos) {
+  for (DataReaderSet::const_iterator pos = localreaders.begin();
+       pos != localreaders.end(); ++pos) {
     if ((*pos)->have_sample_states(sample_states) &&
         (*pos)->have_view_states(view_states) &&
         (*pos)->have_instance_states(instance_states)) {
@@ -538,44 +568,58 @@ SubscriberImpl::get_datareaders(
 DDS::ReturnCode_t
 SubscriberImpl::notify_datareaders()
 {
-  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                   guard,
-                   this->si_lock_,
-                   DDS::RETCODE_ERROR);
-
-  DataReaderMap::iterator it;
-
-  for (it = datareader_map_.begin(); it != datareader_map_.end(); ++it) {
+  DataReaderMap localreadermap;
+  {
+    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
+                    guard,
+                    this->si_lock_,
+                    DDS::RETCODE_ERROR);
+    localreadermap = datareader_map_;
+  }
+  for (DataReaderMap::iterator it = localreadermap.begin(); it != localreadermap.end(); ++it) {
     if (it->second->have_sample_states(DDS::NOT_READ_SAMPLE_STATE)) {
       DDS::DataReaderListener_var listener = it->second->get_listener();
-      if (!CORBA::is_nil (listener)) {
-        listener->on_data_available(it->second.in());
+      if (!it->second->is_bit()) {
+        it->second->set_status_changed_flag(DDS::DATA_AVAILABLE_STATUS, false);
+        if (listener) {
+          listener->on_data_available(it->second.in());
+        }
+      } else {
+        TheServiceParticipant->job_queue()->enqueue(make_rch<DataReaderImpl::OnDataAvailable>(listener, it->second, listener, true, false));
       }
-
-      it->second->set_status_changed_flag(DDS::DATA_AVAILABLE_STATUS, false);
     }
   }
 
 #ifndef OPENDDS_NO_MULTI_TOPIC
-  for (OPENDDS_MAP(OPENDDS_STRING, DDS::DataReader_var)::iterator it =
-         multitopic_reader_map_.begin(); it != multitopic_reader_map_.end();
-       ++it) {
+  MultitopicReaderMap localmtr;
+  {
+    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
+                    guard,
+                    this->si_lock_,
+                    DDS::RETCODE_ERROR);
+    localmtr = multitopic_reader_map_;
+  }
+
+  for (MultitopicReaderMap::iterator it = localmtr.begin();
+      it != localmtr.end(); ++it) {
     MultiTopicDataReaderBase* dri =
       dynamic_cast<MultiTopicDataReaderBase*>(it->second.in());
 
     if (!dri) {
-      ACE_ERROR_RETURN((LM_ERROR,
-        ACE_TEXT("(%P|%t) ERROR: SubscriberImpl::notify_datareaders: ")
-        ACE_TEXT("failed to obtain MultiTopicDataReaderBase.\n")),
-        ::DDS::RETCODE_ERROR);
+      if (DCPS_debug_level > 0) {
+        ACE_ERROR((LM_ERROR,
+          ACE_TEXT("(%P|%t) ERROR: SubscriberImpl::notify_datareaders: ")
+          ACE_TEXT("failed to obtain MultiTopicDataReaderBase.\n")));
+      }
+      return ::DDS::RETCODE_ERROR;
     }
 
     if (dri->have_sample_states(DDS::NOT_READ_SAMPLE_STATE)) {
       DDS::DataReaderListener_var listener = dri->get_listener();
+      dri->set_status_changed_flag(DDS::DATA_AVAILABLE_STATUS, false);
       if (!CORBA::is_nil(listener)) {
         listener->on_data_available(dri);
       }
-      dri->set_status_changed_flag(DDS::DATA_AVAILABLE_STATUS, false);
     }
   }
 #endif
@@ -595,7 +639,7 @@ SubscriberImpl::set_qos(
       return DDS::RETCODE_OK;
 
     // for the not changeable qos, it can be changed before enable
-    if (!Qos_Helper::changeable(qos_, qos) && enabled_ == true) {
+    if (!Qos_Helper::changeable(qos_, qos) && enabled_) {
       return DDS::RETCODE_IMMUTABLE_POLICY;
 
     } else {
@@ -614,18 +658,19 @@ SubscriberImpl::set_qos(
              iter != endIter; ++iter) {
           DataReaderImpl_rch reader = iter->second;
           reader->set_subscriber_qos (qos);
-          DDS::DataReaderQos qos;
-          reader->get_qos(qos);
-          RepoId id = reader->get_subscription_id();
+          DDS::DataReaderQos dr_qos = reader->qos_;
+          GUID_t id = reader->get_guid();
           std::pair<DrIdToQosMap::iterator, bool> pair
-            = idToQosMap.insert(DrIdToQosMap::value_type(id, qos));
+            = idToQosMap.insert(DrIdToQosMap::value_type(id, dr_qos));
 
-          if (pair.second == false) {
-            GuidConverter converter(id);
-            ACE_ERROR_RETURN((LM_ERROR,
-                              ACE_TEXT("(%P|%t) ERROR: SubscriberImpl::set_qos: ")
-                              ACE_TEXT("insert %C to DrIdToQosMap failed.\n"),
-                              OPENDDS_STRING(converter).c_str()),::DDS::RETCODE_ERROR);
+          if (!pair.second) {
+            if (DCPS_debug_level > 0) {
+              ACE_ERROR((LM_ERROR,
+                        ACE_TEXT("(%P|%t) ERROR: SubscriberImpl::set_qos: ")
+                        ACE_TEXT("insert %C to DrIdToQosMap failed.\n"),
+                        LogGuid(id).c_str()));
+            }
+            return ::DDS::RETCODE_ERROR;
           }
         }
       }
@@ -642,10 +687,12 @@ SubscriberImpl::set_qos(
                                            this->qos_);
 
         if (!status) {
-          ACE_ERROR_RETURN((LM_ERROR,
-                            ACE_TEXT("(%P|%t) SubscriberImpl::set_qos, ")
-                            ACE_TEXT("failed. \n")),
-                           DDS::RETCODE_ERROR);
+          if (DCPS_debug_level > 0) {
+            ACE_ERROR((LM_ERROR,
+                      ACE_TEXT("(%P|%t) SubscriberImpl::set_qos, ")
+                      ACE_TEXT("failed.\n")));
+          }
+          return DDS::RETCODE_ERROR;
         }
 
         ++iter;
@@ -672,6 +719,7 @@ SubscriberImpl::set_listener(
   DDS::SubscriberListener_ptr a_listener,
   DDS::StatusMask             mask)
 {
+  ACE_Guard<ACE_Thread_Mutex> g(listener_mutex_);
   listener_mask_ = mask;
   //note: OK to duplicate  a nil object ref
   listener_ = DDS::SubscriberListener::_duplicate(a_listener);
@@ -681,6 +729,7 @@ SubscriberImpl::set_listener(
 DDS::SubscriberListener_ptr
 SubscriberImpl::get_listener()
 {
+  ACE_Guard<ACE_Thread_Mutex> g(listener_mutex_);
   return DDS::SubscriberListener::_duplicate(listener_.in());
 }
 
@@ -689,73 +738,89 @@ SubscriberImpl::get_listener()
 DDS::ReturnCode_t
 SubscriberImpl::begin_access()
 {
-  if (enabled_ == false) {
-    ACE_ERROR_RETURN((LM_ERROR,
-                      ACE_TEXT("(%P|%t) ERROR: SubscriberImpl::begin_access:")
-                      ACE_TEXT(" Subscriber is not enabled!\n")),
-                     DDS::RETCODE_NOT_ENABLED);
-  }
+  DataReaderSet to_call;
+  {
+    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
+                     si_guard,
+                     si_lock_,
+                     DDS::RETCODE_ERROR);
+    if (!enabled_) {
+      if (DCPS_debug_level > 0) {
+        ACE_ERROR((LM_ERROR,
+                   ACE_TEXT("(%P|%t) ERROR: SubscriberImpl::begin_access:")
+                   ACE_TEXT(" Subscriber is not enabled!\n")));
+      }
+      return DDS::RETCODE_NOT_ENABLED;
+    }
 
-  if (qos_.presentation.access_scope != DDS::GROUP_PRESENTATION_QOS) {
-    return DDS::RETCODE_OK;
-  }
+    if (qos_.presentation.access_scope != DDS::GROUP_PRESENTATION_QOS) {
+      return DDS::RETCODE_OK;
+    }
 
-  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                   guard,
-                   this->si_lock_,
-                   DDS::RETCODE_ERROR);
-
-  ++this->access_depth_;
-
-  // We should only notify subscription on the first
-  // and last change to the current change set:
-  if (this->access_depth_ == 1) {
-    for (DataReaderSet::iterator it = this->datareader_set_.begin();
-         it != this->datareader_set_.end(); ++it) {
-      (*it)->begin_access();
+    ++access_depth_;
+    // We should only notify subscription on the first
+    // and last change to the current change set:
+    if (access_depth_ == 1) {
+      ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
+                       dr_set_guard,
+                       dr_set_lock_,
+                       DDS::RETCODE_ERROR);
+      to_call = datareader_set_;
     }
   }
 
+  for (DataReaderSet::iterator it = to_call.begin(); it != to_call.end(); ++it) {
+    (*it)->begin_access();
+  }
   return DDS::RETCODE_OK;
 }
 
 DDS::ReturnCode_t
 SubscriberImpl::end_access()
 {
-  if (enabled_ == false) {
-    ACE_ERROR_RETURN((LM_ERROR,
-                      ACE_TEXT("(%P|%t) ERROR: SubscriberImpl::end_access:")
-                      ACE_TEXT(" Publisher is not enabled!\n")),
-                     DDS::RETCODE_NOT_ENABLED);
-  }
+  DataReaderSet to_call;
+  {
+    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
+                     si_guard,
+                     si_lock_,
+                     DDS::RETCODE_ERROR);
+    if (!enabled_) {
+      if (DCPS_debug_level > 0) {
+        ACE_ERROR((LM_ERROR,
+                   ACE_TEXT("(%P|%t) ERROR: SubscriberImpl::end_access:")
+                   ACE_TEXT(" Publisher is not enabled!\n")));
+      }
+      return DDS::RETCODE_NOT_ENABLED;
+    }
 
-  if (qos_.presentation.access_scope != DDS::GROUP_PRESENTATION_QOS) {
-    return DDS::RETCODE_OK;
-  }
+    if (qos_.presentation.access_scope != DDS::GROUP_PRESENTATION_QOS) {
+      return DDS::RETCODE_OK;
+    }
 
-  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                   guard,
-                   this->si_lock_,
-                   DDS::RETCODE_ERROR);
+    if (access_depth_ == 0) {
+      if (DCPS_debug_level > 0) {
+        ACE_ERROR((LM_ERROR,
+                   ACE_TEXT("(%P|%t) ERROR: SubscriberImpl::end_access:")
+                   ACE_TEXT(" No matching call to begin_coherent_changes!\n")));
+      }
+      return DDS::RETCODE_PRECONDITION_NOT_MET;
+    }
 
-  if (this->access_depth_ == 0) {
-    ACE_ERROR_RETURN((LM_ERROR,
-                      ACE_TEXT("(%P|%t) ERROR: SubscriberImpl::end_access:")
-                      ACE_TEXT(" No matching call to begin_coherent_changes!\n")),
-                     DDS::RETCODE_PRECONDITION_NOT_MET);
-  }
-
-  --this->access_depth_;
-
-  // We should only notify subscription on the first
-  // and last change to the current change set:
-  if (this->access_depth_ == 0) {
-    for (DataReaderSet::iterator it = this->datareader_set_.begin();
-         it != this->datareader_set_.end(); ++it) {
-      (*it)->end_access();
+    --access_depth_;
+    // We should only notify subscription on the first
+    // and last change to the current change set:
+    if (access_depth_ == 0) {
+      ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
+                       dr_set_guard,
+                       dr_set_lock_,
+                       DDS::RETCODE_ERROR);
+      to_call = datareader_set_;
     }
   }
 
+  for (DataReaderSet::iterator it = to_call.begin(); it != to_call.end(); ++it) {
+    (*it)->end_access();
+  }
   return DDS::RETCODE_OK;
 }
 
@@ -815,7 +880,7 @@ SubscriberImpl::enable()
   }
 
   RcHandle<DomainParticipantImpl> participant = this->participant_.lock();
-  if (!participant || participant->is_enabled() == false) {
+  if (!participant || !participant->is_enabled()) {
     return DDS::RETCODE_PRECONDITION_NOT_MET;
   }
 
@@ -828,9 +893,11 @@ SubscriberImpl::enable()
   this->set_enabled();
 
   if (qos_.entity_factory.autoenable_created_entities) {
-    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, si_lock_, DDS::RETCODE_ERROR);
     DataReaderSet readers;
-    readers_not_enabled_.swap(readers);
+    {
+      ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, si_lock_, DDS::RETCODE_ERROR);
+      readers_not_enabled_.swap(readers);
+    }
     for (DataReaderSet::iterator it = readers.begin(); it != readers.end(); ++it) {
       (*it)->enable();
     }
@@ -839,17 +906,22 @@ SubscriberImpl::enable()
   return DDS::RETCODE_OK;
 }
 
-bool
-SubscriberImpl::is_clean() const
+bool SubscriberImpl::is_clean(String* leftover_entities) const
 {
-  const bool sub_is_clean = datareader_map_.empty();
-
-  if (!sub_is_clean && !TheTransientKludge->is_enabled()) {
-    // Four BIT datareaders.
-    return datareader_map_.size() == 4;
+  if (leftover_entities) {
+    leftover_entities->clear();
   }
 
-  return sub_is_clean;
+  size_t reader_count = datareader_map_.size();
+  if (reader_count && !TheTransientKludge->is_enabled()) {
+    // BIT datareaders.
+    reader_count = reader_count == NUMBER_OF_BUILT_IN_TOPICS ? 0 : reader_count;
+  }
+  if (leftover_entities && reader_count) {
+    *leftover_entities += to_dds_string(reader_count) + " reader(s)";
+  }
+
+  return reader_count == 0;
 }
 
 void
@@ -857,7 +929,7 @@ SubscriberImpl::data_received(DataReaderImpl* reader)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex,
             guard,
-            this->si_lock_);
+            this->dr_set_lock_);
   datareader_set_.insert(rchandle_from(reader));
 }
 
@@ -898,7 +970,7 @@ SubscriberImpl::multitopic_reader_enabled(DDS::DataReader_ptr reader)
 void
 SubscriberImpl::remove_from_datareader_set(DataReaderImpl* reader)
 {
-  ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, si_lock_);
+  ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, dr_set_lock_);
   datareader_set_.erase(rchandle_from(reader));
 }
 #endif
@@ -913,7 +985,9 @@ SubscriberImpl::listener_for(::DDS::StatusKind kind)
   if (! participant)
     return 0;
 
+  ACE_Guard<ACE_Thread_Mutex> g(listener_mutex_);
   if (CORBA::is_nil(listener_.in()) || (listener_mask_ & kind) == 0) {
+    g.release();
     return participant->listener_for(kind);
 
   } else {
@@ -945,13 +1019,13 @@ SubscriberImpl::get_subscription_ids(SubscriptionIdVec& subs)
   for (DataReaderMap::iterator iter = datareader_map_.begin();
        iter != datareader_map_.end();
        ++iter) {
-    subs.push_back(iter->second->get_subscription_id());
+    subs.push_back(iter->second->get_guid());
   }
 }
 
 #ifndef OPENDDS_NO_OWNERSHIP_KIND_EXCLUSIVE
 void
-SubscriberImpl::update_ownership_strength (const PublicationId& pub_id,
+SubscriberImpl::update_ownership_strength (const GUID_t& pub_id,
                                            const CORBA::Long&   ownership_strength)
 {
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
@@ -972,20 +1046,22 @@ SubscriberImpl::update_ownership_strength (const PublicationId& pub_id,
 
 #ifndef OPENDDS_NO_OBJECT_MODEL_PROFILE
 void
-SubscriberImpl::coherent_change_received (RepoId&         publisher_id,
+SubscriberImpl::coherent_change_received (const GUID_t& publisher_id,
                                           DataReaderImpl* reader,
                                           Coherent_State& group_state)
 {
-  ACE_GUARD(ACE_Recursive_Thread_Mutex,
-            guard,
-            this->si_lock_);
-
+  DataReaderSet localdrs;
+  {
+    ACE_GUARD(ACE_Recursive_Thread_Mutex,
+              guard,
+              this->dr_set_lock_);
+     localdrs = datareader_set_;
+  }
   // Verify if all readers complete the coherent changes. The result
   // is either COMPLETED or REJECTED.
   group_state = COMPLETED;
-  DataReaderSet::const_iterator endIter = datareader_set_.end();
-  for (DataReaderSet::const_iterator iter = datareader_set_.begin();
-       iter != endIter; ++iter) {
+  for (DataReaderSet::const_iterator iter = localdrs.begin();
+       iter != localdrs.end(); ++iter) {
 
     Coherent_State state = COMPLETED;
     (*iter)->coherent_change_received (publisher_id, state);
@@ -998,9 +1074,9 @@ SubscriberImpl::coherent_change_received (RepoId&         publisher_id,
     }
   }
 
-  PublicationId writerId = GUID_UNKNOWN;
-  for (DataReaderSet::const_iterator iter = datareader_set_.begin();
-       iter != endIter; ++iter) {
+  GUID_t writerId = GUID_UNKNOWN;
+  for (DataReaderSet::const_iterator iter = localdrs.begin();
+       iter != localdrs.end(); ++iter) {
     if (group_state == COMPLETED) {
       (*iter)->accept_coherent (writerId, publisher_id);
     }
@@ -1010,8 +1086,8 @@ SubscriberImpl::coherent_change_received (RepoId&         publisher_id,
   }
 
   if (group_state == COMPLETED) {
-    for (DataReaderSet::const_iterator iter = datareader_set_.begin();
-         iter != endIter; ++iter) {
+    for (DataReaderSet::const_iterator iter = localdrs.begin();
+         iter != localdrs.end(); ++iter) {
       (*iter)->coherent_changes_completed (reader);
       (*iter)->reset_coherent_info (writerId, publisher_id);
     }
@@ -1041,13 +1117,13 @@ SubscriberImpl::validate_datareader_qos(const DDS::DataReaderQos & qos,
 
 #ifndef OPENDDS_NO_MULTI_TOPIC
     if (mt) {
-      if (DCPS_debug_level) {
+      if (DCPS_debug_level > 0) {
         ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
                    ACE_TEXT("SubscriberImpl::create_datareader, ")
                    ACE_TEXT("DATAREADER_QOS_USE_TOPIC_QOS can not be used ")
                    ACE_TEXT("to create a MultiTopic DataReader.\n")));
       }
-      return DDS::DataReader::_nil();
+      return false;
     }
 #else
     ACE_UNUSED_ARG(mt);
@@ -1069,21 +1145,24 @@ SubscriberImpl::validate_datareader_qos(const DDS::DataReaderQos & qos,
   OPENDDS_NO_DURABILITY_KIND_TRANSIENT_PERSISTENT_COMPATIBILITY_CHECK(dr_qos, false);
 
   if (!Qos_Helper::valid(dr_qos)) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("SubscriberImpl::create_datareader, ")
-               ACE_TEXT("invalid qos.\n")));
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                ACE_TEXT("(%P|%t) ERROR: ")
+                ACE_TEXT("SubscriberImpl::create_datareader, ")
+                ACE_TEXT("invalid qos.\n")));
+    }
     return false;
   }
 
   if (!Qos_Helper::consistent(dr_qos)) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("SubscriberImpl::create_datareader, ")
-               ACE_TEXT("inconsistent qos.\n")));
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                ACE_TEXT("(%P|%t) ERROR: ")
+                ACE_TEXT("SubscriberImpl::create_datareader, ")
+                ACE_TEXT("inconsistent qos.\n")));
+    }
     return false;
   }
-
 
   return true;
 }

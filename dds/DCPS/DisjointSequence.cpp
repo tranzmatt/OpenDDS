@@ -28,16 +28,18 @@ bool
 DisjointSequence::insert_i(const SequenceRange& range,
                            OPENDDS_VECTOR(SequenceRange)* gaps /* = 0 */)
 {
-  validate(range);
+  OPENDDS_ASSERT(range.first <= range.second);
 
-  RangeSet::iterator range_above = sequences_.lower_bound(range);
-  if (range_above != sequences_.end()
+  typedef RangeSet::Container::iterator iter_t;
+
+  iter_t range_above = sequences_.ranges_.lower_bound(range);
+  if (range_above != sequences_.ranges_.end()
       && range_above->first <= range.first) {
     return false; // already have this range, nothing to insert
   }
 
   SequenceRange newRange = range;
-  if (range_above != sequences_.end()
+  if (range_above != sequences_.ranges_.end()
       && ++SequenceNumber(newRange.second) >= range_above->first) {
     // newRange overlaps range_above, replace range_above with modified newRange
     newRange.second = range_above->second;
@@ -48,11 +50,11 @@ DisjointSequence::insert_i(const SequenceRange& range,
   const SequenceNumber::Value previous = range.first.getValue() - 1;
   // find the lower_bound for the SequenceNumber just before this range
   // to see if any ranges need to combine
-  const RangeSet::iterator range_below =
-    sequences_.lower_bound(SequenceRange(1 /*ignored*/,
-                                         (previous > 0) ? previous
-                                         : SequenceNumber::ZERO()));
-  if (range_below != sequences_.end()) {
+  const iter_t range_below =
+    sequences_.ranges_.lower_bound(SequenceRange(1 /*ignored*/,
+                                                 (previous > 0) ? previous
+                                                 : SequenceNumber::ZERO()));
+  if (range_below != sequences_.ranges_.end()) {
     // if low end falls inside of the range_below range
     // then combine
     if (newRange.first > range_below->first) {
@@ -60,7 +62,7 @@ DisjointSequence::insert_i(const SequenceRange& range,
     }
 
     if (gaps) {
-      RangeSet::iterator gap_iter = range_below;
+      iter_t gap_iter = range_below;
       if (range.first < gap_iter->second) {
         gaps->push_back(SequenceRange(range.first,
                                       gap_iter->second.previous()));
@@ -68,8 +70,7 @@ DisjointSequence::insert_i(const SequenceRange& range,
       SequenceNumber last_gap = gap_iter++->second;
       for (; gap_iter != range_above; ++gap_iter) {
         const SequenceNumber in_range =
-          std::min(gap_iter->first.previous().getValue(),
-                   range.second.getValue());
+          (std::min)(gap_iter->first.previous().getValue(), range.second.getValue());
         gaps->push_back(SequenceRange(++last_gap, in_range));
         last_gap = gap_iter->second;
       }
@@ -78,30 +79,30 @@ DisjointSequence::insert_i(const SequenceRange& range,
       }
     }
 
-    sequences_.erase(range_below, range_above);
+    sequences_.ranges_.erase(range_below, range_above);
   }
 
-  sequences_.insert(newRange);
+  sequences_.ranges_.insert(newRange);
   return true;
 }
 
 bool
-DisjointSequence::insert(SequenceNumber value, CORBA::ULong num_bits,
-                         const CORBA::Long bits[])
+DisjointSequence::insert(SequenceNumber value, ACE_CDR::ULong num_bits,
+                         const ACE_CDR::Long bits[])
 {
   bool inserted = false;
-  RangeSet::iterator iter = sequences_.end();
+  RangeSet::Container::iterator iter = sequences_.ranges_.end();
   bool range_start_is_valid = false;
   SequenceNumber::Value range_start = 0;
   const SequenceNumber::Value val = value.getValue();
 
   // See RTPS v2.1 section 9.4.2.6 SequenceNumberSet
-  for (CORBA::ULong i = 0, x = 0, bit = 0; i < num_bits; ++i, ++bit) {
+  for (ACE_CDR::ULong i = 0, x = 0, bit = 0; i < num_bits; ++i, ++bit) {
 
     if (bit == 32) bit = 0;
 
     if (bit == 0) {
-      x = static_cast<CORBA::ULong>(bits[i / 32]);
+      x = static_cast<ACE_CDR::ULong>(bits[i / 32]);
       if (x == 0) {
         // skip an entire Long if it's all 0's (adds 32 due to ++i)
         i += 31;
@@ -113,7 +114,7 @@ DisjointSequence::insert(SequenceNumber value, CORBA::ULong num_bits,
       }
     }
 
-    if (x & (1 << (31 - bit))) {
+    if (x & (1u << (31 - bit))) {
       if (!range_start_is_valid) {
         range_start = val + i;
         range_start_is_valid = true;
@@ -127,12 +128,12 @@ DisjointSequence::insert(SequenceNumber value, CORBA::ULong num_bits,
       range_start = 0;
       range_start_is_valid = false;
 
-      if (iter != sequences_.end() && iter->second.getValue() != to_insert) {
+      if (iter != sequences_.ranges_.end() && iter->second.getValue() != to_insert) {
         // skip ahead: next gap in sequence must be past iter->second
-        CORBA::ULong next_i = CORBA::ULong(iter->second.getValue() - val);
+        ACE_CDR::ULong next_i = ACE_CDR::ULong(iter->second.getValue() - val);
         bit = next_i % 32;
         if (next_i / 32 != i / 32 && next_i < num_bits) {
-          x = static_cast<CORBA::ULong>(bits[next_i / 32]);
+          x = static_cast<ACE_CDR::ULong>(bits[next_i / 32]);
         }
         i = next_i;
       }
@@ -141,7 +142,7 @@ DisjointSequence::insert(SequenceNumber value, CORBA::ULong num_bits,
 
   if (range_start_is_valid) {
     // iteration finished before we saw a "0" (inside a range)
-    SequenceNumber range_end = (value + num_bits).previous();
+    SequenceNumber range_end = (value + static_cast<int>(num_bits)).previous();
     if (insert_bitmap_range(iter, SequenceRange(range_start, range_end))) {
       return true;
     }
@@ -150,7 +151,7 @@ DisjointSequence::insert(SequenceNumber value, CORBA::ULong num_bits,
 }
 
 bool
-DisjointSequence::insert_bitmap_range(RangeSet::iterator& iter,
+DisjointSequence::insert_bitmap_range(RangeSet::Container::iterator& iter,
                                       const SequenceRange& range)
 {
   // This is similar to insert_i(), except it doesn't need an O(log(n)) search
@@ -161,17 +162,17 @@ DisjointSequence::insert_bitmap_range(RangeSet::iterator& iter,
     next = range.second.getValue() + 1;
 
   if (!sequences_.empty()) {
-    if (iter == sequences_.end()) {
-      iter = sequences_.lower_bound(SequenceRange(0 /*ignored*/, previous));
+    if (iter == sequences_.ranges_.end()) {
+      iter = sequences_.ranges_.lower_bound(SequenceRange(0 /*ignored*/, previous));
     } else {
       // start where we left off last time and get the lower_bound(previous)
-      for (; iter != sequences_.end() && iter->second < previous; ++iter) ;
+      for (; iter != sequences_.ranges_.end() && iter->second < previous; ++iter) ;
     }
   }
 
-  if (iter == sequences_.end() || iter->first > next) {
+  if (iter == sequences_.ranges_.end() || iter->first > next) {
     // can't combine on either side, insert a new range
-    iter = sequences_.insert(iter, range);
+    iter = sequences_.ranges_.insert(iter, range);
     return true;
   }
 
@@ -181,26 +182,26 @@ DisjointSequence::insert_bitmap_range(RangeSet::iterator& iter,
   }
 
   // find the right-most (highest) range we can use
-  RangeSet::iterator right = iter;
-  for (; right != sequences_.end() && right->second < next; ++right) ;
+  RangeSet::Container::iterator right = iter;
+  for (; right != sequences_.ranges_.end() && right->second < next; ++right) ;
 
   SequenceNumber high = range.second;
-  if (right != sequences_.end()
+  if (right != sequences_.ranges_.end()
       && right->first <= next && right->first > range.first) {
     high = right->second;
     ++right;
   }
 
-  const SequenceNumber low = std::min(iter->first, range.first);
-  sequences_.erase(iter, right);
+  const SequenceNumber low = (std::min)(iter->first, range.first);
+  sequences_.ranges_.erase(iter, right);
 
-  iter = sequences_.insert(SequenceRange(low, high)).first;
+  iter = sequences_.ranges_.insert(SequenceRange(low, high)).first;
   return true;
 }
 
 bool
-DisjointSequence::to_bitmap(CORBA::Long bitmap[], CORBA::ULong length,
-                            CORBA::ULong& num_bits, bool invert) const
+DisjointSequence::to_bitmap(ACE_CDR::Long bitmap[], ACE_CDR::ULong length,
+                            ACE_CDR::ULong& num_bits, ACE_CDR::ULong& cumulative_bits_added, bool invert) const
 {
   // num_bits will be 1 more than the index of the last bit we wrote
   num_bits = 0;
@@ -213,18 +214,18 @@ DisjointSequence::to_bitmap(CORBA::Long bitmap[], CORBA::ULong length,
   for (RangeSet::const_iterator iter = sequences_.begin(), prev = iter++;
        iter != sequences_.end(); ++iter, ++prev) {
 
-    CORBA::ULong low = 0, high = 0;
+    ACE_CDR::ULong low = 0, high = 0;
 
     if (invert) {
-      low = CORBA::ULong(prev->second.getValue() + 1 - base.getValue());
-      high = CORBA::ULong(iter->first.getValue() - 1 - base.getValue());
+      low = ACE_CDR::ULong(prev->second.getValue() + 1 - base.getValue());
+      high = ACE_CDR::ULong(iter->first.getValue() - 1 - base.getValue());
 
     } else {
-      low = CORBA::ULong(iter->first.getValue() - base.getValue());
-      high = CORBA::ULong(iter->second.getValue() - base.getValue());
+      low = ACE_CDR::ULong(iter->first.getValue() - base.getValue());
+      high = ACE_CDR::ULong(iter->second.getValue() - base.getValue());
     }
 
-    if (!fill_bitmap_range(low, high, bitmap, length, num_bits)) {
+    if (!fill_bitmap_range(low, high, bitmap, length, num_bits, cumulative_bits_added)) {
       return false;
     }
   }
@@ -233,59 +234,68 @@ DisjointSequence::to_bitmap(CORBA::Long bitmap[], CORBA::ULong length,
 }
 
 bool
-DisjointSequence::fill_bitmap_range(CORBA::ULong low, CORBA::ULong high,
-                                    CORBA::Long bitmap[], CORBA::ULong length,
-                                    CORBA::ULong& num_bits)
+DisjointSequence::fill_bitmap_range(ACE_CDR::ULong low, ACE_CDR::ULong high,
+                                    ACE_CDR::Long bitmap[], ACE_CDR::ULong length,
+                                    ACE_CDR::ULong& num_bits, ACE_CDR::ULong& cumulative_bits_added)
 {
-  bool clamped = false;
-  if ((low / 32) >= length) {
+  if (low / 32 >= length) {
     return false;
   }
-  if ((high / 32) >= length) {
+  bool clamped = false;
+  if (high / 32 >= length) {
     high = length * 32 - 1;
     clamped = true;
   }
 
-  const CORBA::ULong idx_nb = num_bits / 32, bit_nb = num_bits % 32,
+  const ACE_CDR::ULong idx_nb = num_bits / 32, bit_nb = num_bits % 32,
                      idx_low = low / 32, bit_low = low % 32,
                      idx_high = high / 32, bit_high = high % 32;
 
   // handle idx_nb zeros
   if (bit_nb) {
-    bitmap[idx_nb] &= ~((0x1u << (32 - bit_nb)) - 1);
+    ACE_CDR::ULong entry = static_cast<ACE_CDR::ULong>(bitmap[idx_nb]);
+    entry &= ~((1u << (32 - bit_nb)) - 1);
+    bitmap[idx_nb] = static_cast<ACE_CDR::Long>(entry);
   } else {
     bitmap[idx_nb] = 0;
   }
 
   // handle zeros between idx_nb and idx_low (if gap exists)
-  for (CORBA::ULong i = idx_nb + 1; i < idx_low; ++i) {
+  for (ACE_CDR::ULong i = idx_nb + 1; i < idx_low; ++i) {
     bitmap[i] = 0;
   }
 
   // handle idx_nb ones
   if (bit_low) {
+    const ACE_CDR::ULong value = (1u << (32 - bit_low)) - 1;
     if (idx_low > idx_nb) {
-      bitmap[idx_low] = (0x1u << (32 - bit_low)) - 1;
+      bitmap[idx_low] = static_cast<ACE_CDR::Long>(value);
     } else {
-      bitmap[idx_low] |= (0x1u << (32 - bit_low)) - 1;
+      ACE_CDR::ULong entry = static_cast<ACE_CDR::ULong>(bitmap[idx_low]);
+      entry |= value;
+      bitmap[idx_low] = static_cast<ACE_CDR::Long>(entry);
     }
   } else {
-    bitmap[idx_low] = 0xFFFFFFFF;
+    bitmap[idx_low] = -1;
   }
 
   // handle ones between idx_low and idx_high (if gap exists)
-  for (CORBA::ULong i = idx_low + 1; i < idx_high; ++i) {
-    bitmap[i] = 0xFFFFFFFF;
+  for (ACE_CDR::ULong i = idx_low + 1; i < idx_high; ++i) {
+    bitmap[i] = -1;
   }
 
   // handle idx_high
+  const ACE_CDR::ULong value = ~((1u << (31 - bit_high)) - 1);
   if (idx_high > idx_low) {
-    bitmap[idx_high] = ~((0x1u << (31 - bit_high)) - 1);
+    bitmap[idx_high] = static_cast<ACE_CDR::Long>(value);
   } else if (bit_high < 31) {
-    bitmap[idx_high] &= ~((0x1u << (31 - bit_high)) - 1);
+    ACE_CDR::ULong entry = static_cast<ACE_CDR::ULong>(bitmap[idx_high]);
+    entry &= value;
+    bitmap[idx_high] = static_cast<ACE_CDR::Long>(entry);
   }
 
   num_bits = high + 1;
+  cumulative_bits_added += high - low + 1;
   return !clamped;
 }
 
@@ -312,31 +322,6 @@ DisjointSequence::missing_sequence_ranges() const
   return missing;
 }
 
-OPENDDS_VECTOR(SequenceRange)
-DisjointSequence::present_sequence_ranges() const
-{
-  OPENDDS_VECTOR(SequenceRange) present;
-  std::copy(sequences_.begin(), sequences_.end(), std::back_inserter(present));
-  return present;
-}
-
-bool
-DisjointSequence::contains(SequenceNumber value) const
-{
-  RangeSet::const_iterator iter =
-    sequences_.lower_bound(SequenceRange(0 /*ignored*/, value));
-  return iter != sequences_.end() && iter->first <= value;
-}
-
-void
-DisjointSequence::validate(const SequenceRange& range)
-{
-  if (range.first > range.second) {
-    throw std::runtime_error("SequenceNumber range invalid, range must "
-                             "be ascending.");
-  }
-}
-
 void
 DisjointSequence::dump() const
 {
@@ -346,6 +331,39 @@ DisjointSequence::dump() const
        iter != sequences_.end(); ++iter) {
     ACE_DEBUG((LM_DEBUG, "(%P|%t) DisjointSequence[%X]::dump\t%q-%q\n",
                this, iter->first.getValue(), iter->second.getValue()));
+  }
+}
+
+ACE_CDR::ULong
+DisjointSequence::bitmap_num_longs(const SequenceNumber& low, const SequenceNumber& high)
+{
+  return high < low ? 0u : (std::min)(8u, unsigned((high.getValue() - low.getValue() + 32) / 32));
+}
+
+void
+DisjointSequence::erase(const SequenceNumber value)
+{
+  RangeSet::Container::iterator iter =
+    sequences_.ranges_.lower_bound(SequenceRange(0 /*ignored*/, value));
+  if (iter != sequences_.ranges_.end()) {
+    if (iter->first == value &&
+        iter->second == value) {
+      sequences_.ranges_.erase(iter);
+    } else if (iter->first == value) {
+      SequenceRange x(value + 1, iter->second);
+      sequences_.ranges_.erase(iter);
+      sequences_.ranges_.insert(x);
+    } else if (iter->second == value) {
+      SequenceRange x(iter->first, value.previous());
+      sequences_.ranges_.erase(iter);
+      sequences_.ranges_.insert(x);
+    } else {
+      SequenceRange x(iter->first, value.previous());
+      SequenceRange y(value + 1, iter->second);
+      sequences_.ranges_.erase(iter);
+      sequences_.ranges_.insert(x);
+      sequences_.ranges_.insert(y);
+    }
   }
 }
 

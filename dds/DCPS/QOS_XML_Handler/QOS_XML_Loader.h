@@ -1,27 +1,28 @@
 /**
  * @author Marcel Smit (msmit@remedy.nl)
  *
- *
  * Starting point for QOS XML parsing library.
- *
  */
-#ifndef QOS_XML_LOADER_H
-#define QOS_XML_LOADER_H
+#ifndef OPENDDS_DCPS_QOS_XML_HANDLER_QOS_XML_LOADER_H
+#define OPENDDS_DCPS_QOS_XML_HANDLER_QOS_XML_LOADER_H
 
 #include "dds/DdsDcpsInfrastructureC.h"
-#include "dds/DCPS/QOS_XML_Handler/XML_QOS_Handler_Export.h"
-#include "dds/DCPS/QOS_XML_Handler/XML_File_Intf.h"
+#include "OpenDDS_XML_QOS_Handler_Export.h"
+#include "XML_File_Intf.h"
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace OpenDDS {
 namespace DCPS {
 
-  class XML_QOS_Handler_Export QOS_XML_Loader
+  class OpenDDS_XML_QOS_Handler_Export QOS_XML_Loader
   {
   public:
-    QOS_XML_Loader (void);
-    ~QOS_XML_Loader (void);
+    /// Pass an optional @error_handler which is called back when
+    /// there are any errors parsing the input XML. The QOS_XML_Loader
+    /// will assume ownership when a pointer is passed
+    QOS_XML_Loader (XML::XML_Error_Handler* error_handler = 0);
+    ~QOS_XML_Loader ();
 
     /**
      * init
@@ -33,7 +34,6 @@ namespace DCPS {
      * Init parses this string and will append ".xml" to
      * qos_base_file_name_without_extension. It'll than invoke
      * the init method on the XML_File_Intf class.
-     *
      */
     DDS::ReturnCode_t
     init (const ACE_TCHAR * qos_profile);
@@ -56,37 +56,37 @@ namespace DCPS {
      */
     DDS::ReturnCode_t
     get_datawriter_qos (DDS::DataWriterQos& dw_qos,
-                        const char *qos_profile,
-                        const char* topic_name);
+                        const ACE_TCHAR *qos_profile,
+                        const ACE_TCHAR* topic_name);
 
     DDS::ReturnCode_t
     get_datareader_qos (DDS::DataReaderQos& dr_qos,
-                        const char *qos_profile,
-                        const char* topic_name);
+                        const ACE_TCHAR *qos_profile,
+                        const ACE_TCHAR* topic_name);
 
     DDS::ReturnCode_t
     get_publisher_qos (DDS::PublisherQos& pub_qos,
-                        const char *qos_profile);
+                        const ACE_TCHAR *qos_profile);
 
     DDS::ReturnCode_t
     get_subscriber_qos (DDS::SubscriberQos& sub_qos,
-                        const char *qos_profile);
+                        const ACE_TCHAR *qos_profile);
 
     DDS::ReturnCode_t
     get_topic_qos (DDS::TopicQos& topic_qos,
-                   const char *qos_profile,
+                   const ACE_TCHAR *qos_profile,
                    const ACE_TCHAR *topic_name);
 
     DDS::ReturnCode_t
     get_participant_qos (DDS::DomainParticipantQos& part_qos,
-                         const char *qos_profile);
+                         const ACE_TCHAR *qos_profile);
     //@}
 
   private:
     QOS_XML_File_Handler xml_file_;
 
-    char* get_xml_file_name (const char * qos_profile);
-    char* get_profile_name (const char * qos_profile);
+    ACE_TString get_xml_file_name(const ACE_TCHAR* qos_profile);
+    ACE_TString get_profile_name(const ACE_TCHAR* qos_profile);
   };
 }
 }

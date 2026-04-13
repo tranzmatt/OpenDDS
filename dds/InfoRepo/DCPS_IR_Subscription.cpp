@@ -22,16 +22,18 @@
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
-DCPS_IR_Subscription::DCPS_IR_Subscription(const OpenDDS::DCPS::RepoId& id,
+DCPS_IR_Subscription::DCPS_IR_Subscription(const OpenDDS::DCPS::GUID_t& id,
                                            DCPS_IR_Participant* participant,
                                            DCPS_IR_Topic* topic,
                                            OpenDDS::DCPS::DataReaderRemote_ptr reader,
                                            const DDS::DataReaderQos& qos,
                                            const OpenDDS::DCPS::TransportLocatorSeq& info,
+                                           ACE_CDR::ULong transportContext,
                                            const DDS::SubscriberQos& subscriberQos,
                                            const char* filterClassName,
                                            const char* filterExpression,
-                                           const DDS::StringSeq& exprParams)
+                                           const DDS::StringSeq& exprParams,
+                                           const DDS::OctetSeq& serializedTypeInfo)
   : id_(id),
     participant_(participant),
     topic_(topic),
@@ -39,10 +41,12 @@ DCPS_IR_Subscription::DCPS_IR_Subscription(const OpenDDS::DCPS::RepoId& id,
     isBIT_(0),
     qos_(qos),
     info_(info),
+    transportContext_(transportContext),
     subscriberQos_(subscriberQos),
     filterClassName_(filterClassName),
     filterExpression_(filterExpression),
-    exprParams_(exprParams)
+    exprParams_(exprParams),
+    serializedTypeInfo_(serializedTypeInfo)
 {
   reader_ =  OpenDDS::DCPS::DataReaderRemote::_duplicate(reader);
 
@@ -65,10 +69,11 @@ int DCPS_IR_Subscription::add_associated_publication(DCPS_IR_Publication* pub,
     // inform the datareader about the association
     OpenDDS::DCPS::WriterAssociation association;
     association.writerTransInfo = pub->get_transportLocatorSeq();
+    association.transportContext = pub->get_transportContext();
     association.writerId = pub->get_id();
     association.pubQos = *(pub->get_publisher_qos());
     association.writerQos = *(pub->get_datawriter_qos());
-
+    association.serializedTypeInfo = pub->get_serialized_type_info();
     if (participant_->is_alive() && this->participant_->isOwner()) {
       try {
         if (OpenDDS::DCPS::DCPS_debug_level > 0) {
@@ -81,7 +86,7 @@ int DCPS_IR_Subscription::add_associated_publication(DCPS_IR_Publication* pub,
                      std::string(pub_converter).c_str()));
         }
 
-        reader_->add_association(id_, association, active);
+        reader_->add_association(association, active);
 
         if (OpenDDS::DCPS::DCPS_debug_level > 0) {
           ACE_DEBUG((LM_DEBUG,
@@ -120,32 +125,9 @@ int DCPS_IR_Subscription::add_associated_publication(DCPS_IR_Publication* pub,
                std::string(sub_converter).c_str(),
                std::string(pub_converter).c_str()));
   }
-  };
+  }
 
   return status;
-}
-
-void
-DCPS_IR_Subscription::association_complete(const OpenDDS::DCPS::RepoId& remote)
-{
-  typedef DCPS_IR_Publication_Set::ITERATOR iter_t;
-  for (iter_t iter = associations_.begin(); iter != associations_.end(); ++iter) {
-    if ((*iter)->get_id() == remote) {
-      (*iter)->call_association_complete(get_id());
-    }
-  }
-}
-
-void
-DCPS_IR_Subscription::call_association_complete(const OpenDDS::DCPS::RepoId& remote)
-{
-  try {
-    reader_->association_complete(remote);
-  } catch (const CORBA::Exception& ex) {
-    ex._tao_print_exception(
-      "(%P|%t) ERROR: Exception caught in DCPS_IR_Subscription::call_association_complete:");
-    participant_->mark_dead();
-  }
 }
 
 int DCPS_IR_Subscription::remove_associated_publication(DCPS_IR_Publication* pub,
@@ -251,14 +233,14 @@ int DCPS_IR_Subscription::remove_associations(CORBA::Boolean notify_lost)
   return status;
 }
 
-void DCPS_IR_Subscription::disassociate_participant(OpenDDS::DCPS::RepoId id,
+void DCPS_IR_Subscription::disassociate_participant(OpenDDS::DCPS::GUID_t id,
                                                     bool reassociate)
 {
   DCPS_IR_Publication* pub = 0;
   size_t numAssociations = associations_.size();
   CORBA::Boolean dontSend = 0;
   CORBA::Boolean send = 1;
-  long count = 0;
+  CORBA::ULong count = 0;
 
   if (0 < numAssociations) {
     OpenDDS::DCPS::WriterIdSeq idSeq(static_cast<CORBA::ULong>(numAssociations));
@@ -327,13 +309,13 @@ void DCPS_IR_Subscription::disassociate_participant(OpenDDS::DCPS::RepoId id,
   }
 }
 
-void DCPS_IR_Subscription::disassociate_topic(OpenDDS::DCPS::RepoId id)
+void DCPS_IR_Subscription::disassociate_topic(OpenDDS::DCPS::GUID_t id)
 {
   DCPS_IR_Publication* pub = 0;
   size_t numAssociations = associations_.size();
   CORBA::Boolean dontSend = 0;
   CORBA::Boolean send = 1;
-  long count = 0;
+  CORBA::ULong count = 0;
 
   if (0 < numAssociations) {
     OpenDDS::DCPS::WriterIdSeq idSeq(static_cast<CORBA::ULong>(numAssociations));
@@ -391,14 +373,14 @@ void DCPS_IR_Subscription::disassociate_topic(OpenDDS::DCPS::RepoId id)
   }
 }
 
-void DCPS_IR_Subscription::disassociate_publication(OpenDDS::DCPS::RepoId id,
+void DCPS_IR_Subscription::disassociate_publication(OpenDDS::DCPS::GUID_t id,
                                                     bool reassociate)
 {
   DCPS_IR_Publication* pub = 0;
   size_t numAssociations = associations_.size();
   CORBA::Boolean dontSend = 0;
   CORBA::Boolean send = 1;
-  long count = 0;
+  CORBA::ULong count = 0;
 
   if (0 < numAssociations) {
     OpenDDS::DCPS::WriterIdSeq idSeq(static_cast<CORBA::ULong>(numAssociations));
@@ -482,9 +464,9 @@ void DCPS_IR_Subscription::update_incompatible_qos()
   }
 }
 
-CORBA::Boolean DCPS_IR_Subscription::is_publication_ignored(OpenDDS::DCPS::RepoId partId,
-                                                            OpenDDS::DCPS::RepoId topicId,
-                                                            OpenDDS::DCPS::RepoId pubId)
+CORBA::Boolean DCPS_IR_Subscription::is_publication_ignored(OpenDDS::DCPS::GUID_t partId,
+                                                            OpenDDS::DCPS::GUID_t topicId,
+                                                            OpenDDS::DCPS::GUID_t pubId)
 {
   CORBA::Boolean ignored = (participant_->is_participant_ignored(partId) ||
                             participant_->is_topic_ignored(topicId) ||
@@ -659,7 +641,7 @@ DCPS_IR_Subscription::reevaluate_association(DCPS_IR_Publication* publication)
   int status = this->associations_.find(publication);
 
   if (status == 0) {
-    // verify if they are still compatiable after change
+    // verify if they are still compatible after change
 
     if (!OpenDDS::DCPS::compatibleQOS(publication->get_incompatibleQosStatus(),
                                       this->get_incompatibleQosStatus(),
@@ -683,17 +665,17 @@ DCPS_IR_Subscription::reevaluate_association(DCPS_IR_Publication* publication)
   return false;
 }
 
-OpenDDS::DCPS::RepoId DCPS_IR_Subscription::get_id()
+OpenDDS::DCPS::GUID_t DCPS_IR_Subscription::get_id()
 {
   return id_;
 }
 
-OpenDDS::DCPS::RepoId DCPS_IR_Subscription::get_topic_id()
+OpenDDS::DCPS::GUID_t DCPS_IR_Subscription::get_topic_id()
 {
   return topic_->get_id();
 }
 
-OpenDDS::DCPS::RepoId DCPS_IR_Subscription::get_participant_id()
+OpenDDS::DCPS::GUID_t DCPS_IR_Subscription::get_participant_id()
 {
   return participant_->get_id();
 }
@@ -803,6 +785,12 @@ DCPS_IR_Subscription::dump_to_string(const std::string& prefix, int depth) const
 
 #endif // !defined (OPENDDS_INFOREPO_REDUCED_FOOTPRINT)
   return str;
+}
+
+const DDS::OctetSeq&
+DCPS_IR_Subscription::get_serialized_type_info() const
+{
+  return serializedTypeInfo_;
 }
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL

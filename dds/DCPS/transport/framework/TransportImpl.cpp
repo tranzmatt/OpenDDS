@@ -17,6 +17,7 @@
 #include "dds/DCPS/Util.h"
 #include "dds/DCPS/MonitorFactory.h"
 #include "dds/DCPS/Service_Participant.h"
+#include "dds/DCPS/ServiceEventDispatcher.h"
 #include "tao/debug.h"
 #include "dds/DCPS/SafetyProfileStreams.h"
 
@@ -29,15 +30,16 @@ OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 namespace OpenDDS {
 namespace DCPS {
 
-TransportImpl::TransportImpl(TransportInst& config)
+TransportImpl::TransportImpl(TransportInst_rch config,
+                             DDS::DomainId_t domain)
   : config_(config)
-  , monitor_(0)
-  , last_link_(0)
+  , event_dispatcher_(make_rch<ServiceEventDispatcher>(1u))
   , is_shut_down_(false)
+  , domain_(domain)
 {
   DBG_ENTRY_LVL("TransportImpl", "TransportImpl", 6);
   if (TheServiceParticipant->monitor_factory_) {
-    monitor_ = TheServiceParticipant->monitor_factory_->create_transport_monitor(this);
+    monitor_.reset(TheServiceParticipant->monitor_factory_->create_transport_monitor(this));
   }
 }
 
@@ -59,8 +61,7 @@ TransportImpl::shutdown()
 
   is_shut_down_ = true;
 
-  // Stop datalink clean task.
-  this->dl_clean_task_.close(1);
+  event_dispatcher_->shutdown(false);
 
   if (!this->reactor_task_.is_nil()) {
     this->reactor_task_->stop();
@@ -74,15 +75,6 @@ TransportImpl::shutdown()
 bool
 TransportImpl::open()
 {
-  // Open the DL Cleanup task
-  // We depend upon the existing config logic to ensure the
-  // DL Cleanup task is opened only once
-  if (this->dl_clean_task_.open()) {
-    ACE_ERROR_RETURN((LM_ERROR,
-                      "(%P|%t) ERROR: DL Cleanup task failed to open : %p\n",
-                      ACE_TEXT("open")), false);
-  }
-
   // Success.
   if (this->monitor_) {
     this->monitor_->report();
@@ -95,25 +87,27 @@ TransportImpl::open()
                dump_to_str().c_str()));
   }
 
-
   return true;
 }
 
 void
 TransportImpl::add_pending_connection(const TransportClient_rch& client, DataLink_rch link)
 {
-  pending_connections_.insert( PendConnMap::value_type(client, link));
+  GuardType guard(pending_connections_lock_);
+  pending_connections_.insert( PendConnMap::value_type(client, link) );
 }
 
 void
-TransportImpl::create_reactor_task(bool useAsyncSend)
+TransportImpl::create_reactor_task(bool useAsyncSend, const OPENDDS_STRING& name)
 {
-  if (is_shut_down_ || this->reactor_task_.in()) {
+  if (is_shut_down_ || reactor_task_) {
     return;
   }
 
-  this->reactor_task_= make_rch<ReactorTask>(useAsyncSend);
-  if (0 != this->reactor_task_->open(0)) {
+  reactor_task_ = make_rch<ReactorTask>(useAsyncSend);
+  reactor_task_->job_queue(TheServiceParticipant->job_queue());
+
+  if (reactor_task_->open_reactor_task(&TheServiceParticipant->get_thread_status_manager(), name)) {
     throw Transport::MiscProblem(); // error already logged by TRT::open()
   }
 }
@@ -131,9 +125,9 @@ TransportImpl::release_link_resources(DataLink* link)
 {
   DBG_ENTRY_LVL("TransportImpl", "release_link_resources",6);
 
-  // Create a smart pointer without ownership (bumps up ref count)
-  dl_clean_task_.add(rchandle_from(link));
-
+  DataLink_rch link_rch = rchandle_from(link);
+  EventBase_rch do_clear = make_rch<DoClear>(link_rch);
+  event_dispatcher_->dispatch(do_clear);
   return true;
 }
 
@@ -156,7 +150,27 @@ TransportImpl::dump()
 OPENDDS_STRING
 TransportImpl::dump_to_str()
 {
-  return config_.dump_to_str();
+  TransportInst_rch cfg = config_.lock();
+  return cfg ? cfg->dump_to_str(domain_) : OPENDDS_STRING();
+}
+
+StatisticSeq TransportImpl::stats_template()
+{
+  static const DDS::UInt32 num_local_stats = 2;
+  StatisticSeq stats(num_local_stats);
+  stats.length(num_local_stats);
+  stats[0].name = "TransportImplPendingConnections";
+  stats[1].name = "TransportImplReactorTaskCmdQueue";
+  return stats;
+}
+
+void TransportImpl::fill_stats(StatisticSeq& stats, DDS::UInt32& idx) const
+{
+  {
+    GuardType guard(pending_connections_lock_);
+    stats[idx++].value = pending_connections_.size();
+  }
+  stats[idx++].value = reactor_task_ ? reactor_task_->command_queue_size() : 0;
 }
 
 }

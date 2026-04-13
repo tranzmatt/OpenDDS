@@ -33,6 +33,8 @@ long lease_duration_sec = 5;
 
 using namespace ::OpenDDS::DCPS;
 
+const Encoding encoding(Encoding::KIND_UNALIGNED_CDR);
+
 int offered_incompatible_qos_called_on_dp = 0;
 int offered_incompatible_qos_called_on_pub = 0;
 int offered_incompatible_qos_called_on_dw = 0;
@@ -108,7 +110,7 @@ PubDriver::parse_args(int& argc, ACE_TCHAR* argv[])
     // The '-?' option
     else if (arg_shifter.cur_arg_strncasecmp(ACE_TEXT("-?")) == 0) {
       ACE_DEBUG((LM_DEBUG,
-                 "usage: %s \n",
+                 "usage: %s\n",
                  argv[0]));
 
       arg_shifter.consume_arg();
@@ -154,8 +156,6 @@ PubDriver::initialize(int& argc, ACE_TCHAR *argv[])
   ::DDS::TopicQos new_topic_qos = default_topic_qos;
   new_topic_qos.reliability.kind  = ::DDS::RELIABLE_RELIABILITY_QOS;
 
-  //The SunOS compiler had problem resolving operator in a namespace.
-  //To resolve the compilation errors, the operator is called explicitly.
   TEST_CHECK (! (new_topic_qos == default_topic_qos));
 
   participant_->set_default_topic_qos(new_topic_qos);
@@ -362,7 +362,7 @@ PubDriver::end()
 void
 PubDriver::run()
 {
-  OpenDDS::DCPS::PublicationId pub_id = datawriter_servant_->get_publication_id ();
+  OpenDDS::DCPS::GUID_t pub_id = datawriter_servant_->get_guid ();
   std::stringstream buffer;
 
   buffer << to_string(pub_id);
@@ -370,12 +370,12 @@ PubDriver::run()
   // Write the publication id to a file.
   ACE_DEBUG ((LM_DEBUG,
               ACE_TEXT("(%P|%t) PubDriver::run, ")
-              ACE_TEXT(" pub_id=%C. \n"),
+              ACE_TEXT(" pub_id=%C.\n"),
               buffer.str().c_str()));
 
   ACE_DEBUG ((LM_DEBUG,
               ACE_TEXT("(%P|%t) PubDriver::run, ")
-              ACE_TEXT(" Wait for subscriber start. \n")));
+              ACE_TEXT(" Wait for subscriber start.\n")));
 
   // Wait for the sub to be ready.
   FILE* sub_ready = 0;
@@ -487,6 +487,7 @@ PubDriver::register_test ()
   TEST_CHECK(key_holder.sample_sequence == foo1.sample_sequence);
   TEST_CHECK(key_holder.writer_id == foo1.writer_id);
 
+  // Regression Test for https://github.com/OpenDDS/OpenDDS/issues/592
   ret = foo_datawriter_->get_key_value(key_holder, ::DDS::HANDLE_NIL);
   TEST_CHECK(ret == ::DDS::RETCODE_BAD_PARAMETER);
 
@@ -577,12 +578,17 @@ PubDriver::unregister_test ()
 
   TEST_CHECK (ret == ::DDS::RETCODE_OK);
 
+  TEST_CHECK(DDS::HANDLE_NIL == foo_datawriter_->lookup_instance(foo1));
+
   foo2.sample_sequence = 2;
 
   ret = foo_datawriter_->write(foo2,
                                ::DDS::HANDLE_NIL);
 
   TEST_CHECK (ret == ::DDS::RETCODE_OK);
+
+  handle = foo_datawriter_->lookup_instance(foo2);
+  TEST_CHECK (handle != ::DDS::HANDLE_NIL);
 
   foo2.sample_sequence = 3;
 
@@ -933,52 +939,42 @@ PubDriver::allocator_test ()
   ::Xyz::Foo foo2;
   foo2.a_long_value = 101010;
   foo2.handle_value = handle;
-  foo2.writer_id =0;
+  foo2.writer_id = 0;
+
+  const SerializedSizeBound bound = MarshalTraits< ::Xyz::Foo>::serialized_size_bound(encoding);
 
   // Allocate serialized foo data from pre-allocated pool
-  for (size_t i = 1; i <= n_chunks; i ++)
-  {
+  for (size_t i = 1; i <= n_chunks; i ++) {
     foo2.sample_sequence = static_cast<CORBA::Long>(i);
 
-    ret = foo_datawriter_->write(foo2,
-                                 handle);
+    ret = foo_datawriter_->write(foo2, handle);
 
-    TEST_CHECK (ret == ::DDS::RETCODE_OK);
+    TEST_CHECK(ret == ::DDS::RETCODE_OK);
 
-    if (MarshalTraits< ::Xyz::Foo>::gen_is_bounded_size ())
-    {
-      TEST_CHECK (foo_datawriter_servant_->data_allocator() != 0);
-      TEST_CHECK (foo_datawriter_servant_->data_allocator()->allocs_from_heap_ == 0);
-      TEST_CHECK (foo_datawriter_servant_->data_allocator()->allocs_from_pool_ == static_cast<unsigned long>(i));
-    }
-    else
-    {
-       TEST_CHECK (foo_datawriter_servant_->data_allocator() == 0);
+    if (bound) {
+      TEST_CHECK(foo_datawriter_servant_->data_allocator() != 0);
+      TEST_CHECK(foo_datawriter_servant_->data_allocator()->allocs_from_heap_ == 0);
+      TEST_CHECK(foo_datawriter_servant_->data_allocator()->allocs_from_pool_ == static_cast<unsigned long>(i));
+    } else {
+      TEST_CHECK(foo_datawriter_servant_->data_allocator() == 0);
     }
   }
 
-  {
   // The pre-allocated pool is full, now the foo data is allocated from heap
-  for (size_t i = 1; i <= 2; i ++)
-  {
+  for (size_t i = 1; i <= 2; i ++) {
     foo2.sample_sequence = static_cast<CORBA::Long>(i + n_chunks);
 
-    ret = foo_datawriter_->write(foo2,
-                                 handle);
+    ret = foo_datawriter_->write(foo2, handle);
 
-    TEST_CHECK (ret == ::DDS::RETCODE_OK);
+    TEST_CHECK(ret == ::DDS::RETCODE_OK);
 
-    if (MarshalTraits< ::Xyz::Foo>::gen_is_bounded_size ())
-    {
-      TEST_CHECK (foo_datawriter_servant_->data_allocator() != 0);
-      TEST_CHECK (foo_datawriter_servant_->data_allocator()->allocs_from_heap_ == static_cast<unsigned long>(i));
-      TEST_CHECK (foo_datawriter_servant_->data_allocator()->allocs_from_pool_ == static_cast<unsigned long>(n_chunks));
+    if (bound) {
+      TEST_CHECK(foo_datawriter_servant_->data_allocator() != 0);
+      TEST_CHECK(foo_datawriter_servant_->data_allocator()->allocs_from_heap_ == static_cast<unsigned long>(i));
+      TEST_CHECK(foo_datawriter_servant_->data_allocator()->allocs_from_pool_ == static_cast<unsigned long>(n_chunks));
+    } else {
+      TEST_CHECK(foo_datawriter_servant_->data_allocator() == 0);
     }
-    else
-    {
-       TEST_CHECK (foo_datawriter_servant_->data_allocator() == 0);
-    }
-  }
   }
 }
 

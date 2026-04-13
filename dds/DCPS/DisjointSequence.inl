@@ -52,7 +52,6 @@ DisjointSequence::disjoint() const
 
 ACE_INLINE
 DisjointSequence::DisjointSequence()
-  : sequences_(SequenceRange_LessThan)
 {
 }
 
@@ -79,6 +78,37 @@ DisjointSequence::insert(const SequenceRange& range,
                          OPENDDS_VECTOR(SequenceRange)& gaps)
 {
   return insert_i(range, &gaps);
+}
+
+ACE_INLINE bool
+DisjointSequence::insert_filtered(const SequenceRange& range, const DisjointSequence& filter)
+{
+  for (SequenceNumber i = range.first; i <= range.second; ++i) {
+    if (filter.contains(i) && !insert(i)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+ACE_INLINE OPENDDS_VECTOR(SequenceRange)
+DisjointSequence::present_sequence_ranges() const
+{
+  OPENDDS_VECTOR(SequenceRange) present;
+  std::copy(sequences_.begin(), sequences_.end(), std::back_inserter(present));
+  return present;
+}
+
+ACE_INLINE bool
+DisjointSequence::contains(SequenceNumber value) const
+{
+  return sequences_.has(value);
+}
+
+ACE_INLINE bool
+DisjointSequence::contains_any(const SequenceRange& range) const
+{
+  return sequences_.has_any(range);
 }
 
 } // namespace DCPS

@@ -1,4 +1,3 @@
-
 /*
  *
  *
@@ -6,11 +5,15 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_RTPS_STUN_H
-#define OPENDDS_RTPS_STUN_H
+#include <dds/OpenDDSConfigWrapper.h>
+
+#if OPENDDS_CONFIG_SECURITY
+#ifndef OPENDDS_DCPS_RTPS_ICE_STUN_H
+#define OPENDDS_DCPS_RTPS_ICE_STUN_H
 
 #include "ace/INET_Addr.h"
 #include "dds/DCPS/Serializer.h"
+#include "dds/DCPS/GuidUtils.h"
 
 #include "dds/DCPS/RTPS/rtps_export.h"
 
@@ -18,6 +21,7 @@
 #pragma once
 #endif /* ACE_LACKS_PRAGMA_ONCE */
 
+#include <cstring>
 #include <map>
 #include <string>
 #include <vector>
@@ -44,6 +48,11 @@ enum Family {
 };
 
 const ACE_UINT32 MAGIC_COOKIE = 0x2112A442;
+const size_t HEADER_SIZE = 20;
+
+const ACE_UINT16 BAD_REQUEST = 400;
+const ACE_UINT16 UNAUTHORIZED = 401;
+const ACE_UINT16 UNKNOWN_ATTRIBUTE = 420;
 
 enum AttributeType {
   MAPPED_ADDRESS     = 0x0001,
@@ -62,11 +71,14 @@ enum AttributeType {
   FINGERPRINT        = 0x8028,
   ICE_CONTROLLED     = 0x8029,
   ICE_CONTROLLING    = 0x802A,
+
+  GUID_PREFIX        = 0xD000,
+
   LAST_ATTRIBUTE     = 0xFFFF
 };
 
-struct Attribute {
-  Attribute() : type(LAST_ATTRIBUTE), unknown_length(0) {}
+struct OpenDDS_Rtps_Export Attribute {
+  Attribute() : type(LAST_ATTRIBUTE), ice_tie_breaker(0), unknown_length(0) {}
 
   AttributeType type;
 
@@ -77,8 +89,10 @@ struct Attribute {
     ACE_UINT32 fingerprint; // FINGERPRINT
     ACE_UINT32 priority; // PRIORITY
     ACE_UINT64 ice_tie_breaker; // ICE_CONTROLLED, ICE_CONTROLLING
+    unsigned char guid_prefix[sizeof(DCPS::GuidPrefix_t)]; // GUID_PREFIX
   };
-  struct {
+  struct Err {
+    Err() : code (0) {}
     ACE_UINT16 code;
     std::string reason;
   } error;
@@ -89,69 +103,121 @@ struct Attribute {
   ACE_UINT16 length() const;
 };
 
+OpenDDS_Rtps_Export
 Attribute make_mapped_address(const ACE_INET_Addr& addr);
-Attribute make_username(const std::string& username);
-Attribute make_message_integrity();
-Attribute make_error_code(ACE_UINT16 code, const std::string& reason);
-Attribute make_unknown_attributes(const std::vector<AttributeType>& unknown_attributes);
-Attribute make_xor_mapped_address(const ACE_INET_Addr& addr);
-Attribute make_unknown_attribute(ACE_UINT16 type, ACE_UINT16 length);
-Attribute make_priority(ACE_UINT32 priority);
-Attribute make_use_candidate();;
 
+OpenDDS_Rtps_Export
+Attribute make_username(const std::string& username);
+
+OpenDDS_Rtps_Export
+Attribute make_message_integrity();
+
+OpenDDS_Rtps_Export
+Attribute make_error_code(ACE_UINT16 code, const std::string& reason);
+
+OpenDDS_Rtps_Export
+Attribute make_unknown_attributes(const std::vector<AttributeType>& unknown_attributes);
+
+OpenDDS_Rtps_Export
+Attribute make_xor_mapped_address(const ACE_INET_Addr& addr);
+
+OpenDDS_Rtps_Export
+Attribute make_unknown_attribute(ACE_UINT16 type, ACE_UINT16 length);
+
+OpenDDS_Rtps_Export
+Attribute make_priority(ACE_UINT32 priority);
+
+OpenDDS_Rtps_Export
+Attribute make_use_candidate();
+
+OpenDDS_Rtps_Export
 Attribute make_fingerprint();
+
+OpenDDS_Rtps_Export
 Attribute make_ice_controlling(ACE_UINT64 ice_tie_breaker);
+
+OpenDDS_Rtps_Export
 Attribute make_ice_controlled(ACE_UINT64 ice_tie_breaker);
 
-bool operator>>(DCPS::Serializer& serializer, Attribute& attribute);
-bool operator<<(DCPS::Serializer& serializer, const Attribute& attribute);
+OpenDDS_Rtps_Export
+Attribute make_guid_prefix(const DCPS::GuidPrefix_t& guid_prefix);
 
-struct TransactionId {
+struct OpenDDS_Rtps_Export TransactionId {
   ACE_UINT8 data[12];
+  TransactionId()
+  {
+    std::memset(data, 0, sizeof data);
+  }
   bool operator<(const TransactionId& other) const;
   bool operator==(const TransactionId& other) const;
   bool operator!=(const TransactionId& other) const;
 };
 
-struct Message {
+struct AttributeHolder {
+  Attribute& attribute;
+  const TransactionId& tid;
+
+  AttributeHolder(Attribute& a, const TransactionId& t)
+    : attribute(a)
+    , tid(t)
+  {}
+};
+
+struct ConstAttributeHolder {
+  const Attribute& attribute;
+  const TransactionId& tid;
+
+  ConstAttributeHolder(const Attribute& a, const TransactionId& t)
+    : attribute(a)
+    , tid(t)
+  {}
+};
+
+OpenDDS_Rtps_Export
+bool operator>>(DCPS::Serializer& serializer, AttributeHolder& holder);
+
+OpenDDS_Rtps_Export
+bool operator<<(DCPS::Serializer& serializer, ConstAttributeHolder& holder);
+
+class OpenDDS_Rtps_Export Message {
+public:
   typedef std::vector<Attribute> AttributesType;
   typedef AttributesType::const_iterator const_iterator;
 
-  Class class_;
-  Method method;
-  TransactionId transaction_id;
+  Message(Class c = REQUEST, Method m = BINDING)
+    : class_(c), method_(m), block_(0), length_(0), length_for_message_integrity_(0) {}
 
-  Message()
-  : class_(REQUEST), method(BINDING), block(0), length_(0), length_for_message_integrity_(0) {}
+  ~Message()
+  {
+    ACE_Message_Block::release(block_);
+  }
+
+  Message(const Message& val)
+    : block_(0)
+  {
+    *this = val;
+  }
 
   void generate_transaction_id();
+  TransactionId transaction_id() const;
+  void transaction_id(const TransactionId& id);
+  void clear_transaction_id();
 
-  void append_attribute(const Attribute& attribute)
-  {
-    attributes_.push_back(attribute);
-    length_ += (4 + attribute.length() + 3) & ~3;
+  void append_attribute(const Attribute& attribute);
 
-    if (attribute.type == MESSAGE_INTEGRITY) {
-      length_for_message_integrity_ = length_;
-    }
-  }
+  ACE_UINT16 length() const;
+  ACE_UINT16 length_for_message_integrity() const;
 
-  const_iterator begin() const
-  {
-    return attributes_.begin();
-  }
-  const_iterator end() const
-  {
-    return attributes_.end();
-  }
-  ACE_UINT16 length() const
-  {
-    return length_;
-  }
-  ACE_UINT16 length_for_message_integrity() const
-  {
-    return length_for_message_integrity_;
-  }
+  void password(const std::string& password);
+  std::string password() const;
+
+  Class get_class() const;
+  void set_class(Class val);
+
+  Method method() const;
+  void method(Method method);
+
+  void block(ACE_Message_Block* block);
 
   std::vector<AttributeType> unknown_comprehension_required_attributes() const;
   bool get_mapped_address(ACE_INET_Addr& address) const;
@@ -159,22 +225,38 @@ struct Message {
   bool get_username(std::string& username) const;
   bool has_message_integrity() const;
   bool verify_message_integrity(const std::string& password) const;
-  void compute_message_integrity(const std::string& password, unsigned char message_integrity[20]) const;
   bool has_error_code() const;
   ACE_UINT16 get_error_code() const;
   std::string get_error_reason() const;
   bool has_unknown_attributes() const;
   std::vector<AttributeType> get_unknown_attributes() const;
   bool has_fingerprint() const;
-  ACE_UINT32 compute_fingerprint() const;
   bool has_ice_controlled() const;
   bool has_ice_controlling() const;
   bool has_use_candidate() const;
+  bool get_guid_prefix(DCPS::GuidPrefix_t& guid_pefix) const;
 
-  ACE_Message_Block* block;
-  std::string password; // For integrity hashing.
+  void reset(Class c = REQUEST, Method m = BINDING);
+
+  Message& operator=(const Message& message);
+
+  bool serialize(DCPS::Serializer& serializer) const;
+  bool deserialize(DCPS::Serializer& serializer);
 
 private:
+
+  void append_attribute_i(const Attribute& attribute);
+  ACE_UINT32 compute_fingerprint_i() const;
+  void compute_message_integrity_i(const std::string& password, unsigned char message_integrity[20]) const;
+
+  mutable ACE_Thread_Mutex mutex_;
+  Class class_;
+  Method method_;
+  TransactionId transaction_id_;
+
+  ACE_Message_Block* block_;
+  std::string password_; // For integrity hashing.
+
   AttributesType attributes_;
   ACE_UINT16 length_;
   ACE_UINT16 length_for_message_integrity_;
@@ -204,9 +286,12 @@ private:
   void error_response(const ACE_INET_Addr& /*address*/, const Message& /*message*/);
 };
 
+const DCPS::Encoding encoding(DCPS::Encoding::KIND_UNALIGNED_CDR, DCPS::ENDIAN_BIG);
+
 } // namespace STUN
 } // namespace OpenDDS
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
 
 #endif /* OPENDDS_RTPS_STUN_H */
+#endif

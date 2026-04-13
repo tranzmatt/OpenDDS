@@ -9,9 +9,9 @@
 #define OPENDDS_DCPS_CONDITIONIMPL_H
 
 #include "dds/DdsDcpsInfrastructureC.h"
-#include "dds/DCPS/Definitions.h"
-#include "dds/DCPS/PoolAllocator.h"
-#include "dds/DCPS/WaitSet.h"
+#include "Definitions.h"
+#include "PoolAllocator.h"
+#include "WaitSet.h"
 
 #include "ace/Recursive_Thread_Mutex.h"
 
@@ -24,7 +24,7 @@ OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 namespace OpenDDS {
 namespace DCPS {
 
-class ConditionImpl
+class OpenDDS_Dcps_Export ConditionImpl
   : public virtual OpenDDS::DCPS::LocalObject<DDS::Condition> {
 public:
   DDS::ReturnCode_t attach_to_ws(DDS::WaitSet_ptr ws);

@@ -6,10 +6,10 @@
 #include "dds/DCPS/transport/framework/TransportImpl.h"
 #include "dds/DCPS/transport/tcp/TcpInst.h"
 #include "dds/DCPS/transport/framework/TransportRegistry.h"
-#include "dds/DCPS/transport/framework/NetworkAddress.h"
 #include "dds/DCPS/transport/framework/EntryExit.h"
 
 #include "dds/DCPS/AssociationData.h"
+#include "dds/DCPS/NetworkResource.h"
 #include "dds/DCPS/RepoIdBuilder.h"
 #include "dds/DCPS/Service_Participant.h"
 
@@ -23,7 +23,6 @@
 PubDriver::PubDriver()
   : pub_id_(OpenDDS::DCPS::GuidBuilder::create())
   , sub_id_(OpenDDS::DCPS::GuidBuilder::create())
-  , writer_(pub_id_)
   , num_msgs_(1)
   , msg_size_(0)
   , shmem_(false)
@@ -236,7 +235,7 @@ PubDriver::run()
   VDBG((LM_DEBUG, "(%P|%t) DBG:   "
              "Initialize our SimplePublisher object.\n"));
 
-  this->writer_.enable_transport(false /*reliable*/, false /*durable*/);
+  this->writer_.enable_transport(false /*reliable*/, false /*durable*/, pub_id_);
 
   VDBG((LM_DEBUG, "(%P|%t) DBG:   Create the 'subscriptions'.\n"));
 
@@ -266,14 +265,16 @@ PubDriver::run()
     std::memcpy(subscription.remote_data_[0].data.get_buffer(),
                 str.c_str(), str.size());
 
+    ACE_OS::sleep(2); // wait for assoc (shmem doesn't support notification-based association)
+
   } else { // tcp
     subscription.remote_data_[0].transport_type = "tcp";
 
-    OpenDDS::DCPS::NetworkAddress network_order_address(
+    OpenDDS::DCPS::NetworkResource network_resource(
       ACE_TEXT_ALWAYS_CHAR(this->sub_addr_str_.c_str()));
 
     ACE_OutputCDR cdr;
-    cdr << network_order_address;
+    cdr << network_resource;
     CORBA::ULong len = static_cast<CORBA::ULong>(cdr.total_length());
 
     subscription.remote_data_[0].data =
@@ -283,7 +284,9 @@ PubDriver::run()
   this->writer_.init(subscription);
 
   // Wait for a fully association establishment and then start sending samples.
-  ACE_OS::sleep(2);
+  while (!writer_.associated()) {
+    ACE_OS::sleep(1);
+  }
 
   VDBG((LM_DEBUG, "(%P|%t) DBG:   "
              "Run our SimplePublisher object.\n"));
@@ -361,6 +364,8 @@ PubDriver::parse_pub_arg(const ACE_TString& arg)
   builder.entityKey(ACE_OS::atoi(pub_id_str.c_str()));
   builder.entityKind(OpenDDS::DCPS::ENTITYKIND_USER_WRITER_WITH_KEY);
 
+  writer_.set_guid(pub_id_);
+
   this->pub_addr_ = ACE_INET_Addr(this->pub_addr_str_.c_str());
 
   return 0;
@@ -408,7 +413,7 @@ PubDriver::parse_sub_arg(const ACE_TString& arg)
 
   builder.participantId(1);
   builder.entityKey(ACE_OS::atoi(sub_id_str.c_str()));
-  builder.entityKind(OpenDDS::DCPS::ENTITYKIND_USER_WRITER_WITH_KEY);
+  builder.entityKind(OpenDDS::DCPS::ENTITYKIND_USER_READER_WITH_KEY);
 
   // Find the (only) ':' char in the remainder, and make sure it is in
   // a legal spot.

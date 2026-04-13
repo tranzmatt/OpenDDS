@@ -9,6 +9,8 @@
 #include "dds/DCPS/MonitorFactory.h"
 
 #include "dds/DCPS/RTPS/RtpsDiscovery.h"
+#include "dds/DCPS/XTypes/TypeObject.h"
+#include "dds/DCPS/XTypes/TypeLookupService.h"
 
 #include "tao/PortableServer/PortableServer.h"
 
@@ -30,8 +32,10 @@ bool failed = false;
 class DDS_TEST
 {
 public:
-  static void set_part_bit_subscriber(OpenDDS::DCPS::Discovery_rch disc, DDS::DomainId_t domain,
-    OpenDDS::DCPS::RepoId partId, const DDS::Subscriber_var& bit_subscriber)
+  static void set_part_bit_subscriber(OpenDDS::DCPS::Discovery_rch disc,
+                                      DDS::DomainId_t domain,
+                                      OpenDDS::DCPS::GUID_t partId,
+                                      OpenDDS::DCPS::RcHandle<OpenDDS::DCPS::BitSubscriber> bit_subscriber)
   {
     OpenDDS::RTPS::RtpsDiscovery* rtpsDisc = dynamic_cast<OpenDDS::RTPS::RtpsDiscovery*>(disc.in());
     if (!rtpsDisc) {
@@ -85,16 +89,15 @@ bool pubsub(OpenDDS::DCPS::Discovery_rch disc, CORBA::ORB_var orb)
 
   CORBA::Long domain = 9;
 
-  OpenDDS::DCPS::RepoId pubPartId = OpenDDS::DCPS::GUID_UNKNOWN;
-  OpenDDS::DCPS::RepoId pubTopicId = OpenDDS::DCPS::GUID_UNKNOWN;
-  OpenDDS::DCPS::RepoId pubId = OpenDDS::DCPS::GUID_UNKNOWN;
+  OpenDDS::DCPS::GUID_t pubPartId = OpenDDS::DCPS::GUID_UNKNOWN;
+  OpenDDS::DCPS::GUID_t pubTopicId = OpenDDS::DCPS::GUID_UNKNOWN;
   OpenDDS::DCPS::RcHandle<TAO_DDS_DCPSDataWriter_i> dwImpl(OpenDDS::DCPS::make_rch<TAO_DDS_DCPSDataWriter_i>());
 
   DDS::DomainParticipantFactory_var dpf = TheServiceParticipant->get_domain_participant_factory();
 
   ::DDS::DomainParticipantQos_var partQos = new ::DDS::DomainParticipantQos;
   *partQos = TheServiceParticipant->initial_DomainParticipantQos();
-  OpenDDS::DCPS::AddDomainStatus value = disc->add_domain_participant(domain, partQos.in());
+  OpenDDS::DCPS::AddDomainStatus value = disc->add_domain_participant(domain, partQos, OpenDDS::DCPS::make_rch<OpenDDS::XTypes::TypeLookupService>());
   pubPartId = value.id;
   if (OpenDDS::DCPS::GUID_UNKNOWN == pubPartId)
     {
@@ -102,10 +105,10 @@ bool pubsub(OpenDDS::DCPS::Discovery_rch disc, CORBA::ORB_var orb)
       ACE_ERROR((LM_ERROR, ACE_TEXT("ERROR: add_domain_participant failed!\n") ));
     }
 
-  DDS::Subscriber_var sub;
-  DDS::Subscriber_var sub2;
+  OpenDDS::DCPS::RcHandle<OpenDDS::DCPS::BitSubscriber> sub;
+  OpenDDS::DCPS::RcHandle<OpenDDS::DCPS::BitSubscriber> sub2;
   if (use_rtps) {
-    sub = new TAO_DDS_DCPSSubscriber_i;
+    sub = OpenDDS::DCPS::make_rch<OpenDDS::DCPS::BitSubscriber>(new TAO_DDS_DCPSSubscriber_i);
     DDS_TEST::set_part_bit_subscriber(disc, domain, pubPartId, sub);
   }
 
@@ -118,7 +121,7 @@ bool pubsub(OpenDDS::DCPS::Discovery_rch disc, CORBA::ORB_var orb)
 
   if (use_rtps) { // check that topic/type name string bounds are enforced
     const std::string longname(300, 'a');
-    OpenDDS::DCPS::RepoId topicId;
+    OpenDDS::DCPS::GUID_t topicId;
     const bool key = false;
     OpenDDS::DCPS::TopicStatus ts =
       disc->assert_topic(topicId, domain, pubPartId,
@@ -162,24 +165,65 @@ bool pubsub(OpenDDS::DCPS::Discovery_rch disc, CORBA::ORB_var orb)
       failed = true;
     }
 
+  // "assert" the same topic - may create a new GUID or find the existing one
+  OpenDDS::DCPS::GUID_t secondTopicId = OpenDDS::DCPS::GUID_UNKNOWN;
+  const OpenDDS::DCPS::TopicStatus topicStatus2 = disc->assert_topic(secondTopicId, domain, pubPartId, tname,
+                                                                     dname, topicQos, false, &callbacks);
+  bool removeTopic2 = false;
+  switch (topicStatus2) {
+  case OpenDDS::DCPS::CREATED:
+    if (pubTopicId == secondTopicId) {
+      failed = true;
+      ACE_ERROR((LM_ERROR, "ERROR: Topic assertion (2nd time) CREATED a topic with the same GUID\n"));
+    } else {
+      removeTopic2 = true;
+      ACE_DEBUG((LM_DEBUG, "2nd topic assertion CREATED a topic\n"));
+    }
+    break;
+  case OpenDDS::DCPS::FOUND:
+    if (pubTopicId != secondTopicId) {
+      failed = true;
+      ACE_ERROR((LM_ERROR, "ERROR: Topic assertion (2nd time) FOUND a topic with a different GUID\n"));
+    } else {
+      removeTopic2 = true;
+      ACE_DEBUG((LM_DEBUG, "2nd topic assertion FOUND a topic\n"));
+    }
+    break;
+  default:
+    failed = true;
+    ACE_ERROR((LM_ERROR, "ERROR: Topic assertion (2nd time) failed with status %d\n", static_cast<int>(topicStatus2)));
+  }
+
+  if (removeTopic2) {
+    const OpenDDS::DCPS::TopicStatus topicStatusRemove = disc->remove_topic(domain, pubPartId, secondTopicId);
+    if (topicStatusRemove != OpenDDS::DCPS::REMOVED) {
+      failed = true;
+      ACE_ERROR((LM_ERROR, "ERROR: Topic remove (for 2nd topic) failed with status %d\n", static_cast<int>(topicStatusRemove)));
+    }
+  }
+
   ::DDS::DataWriterQos_var dwQos = new ::DDS::DataWriterQos;
   *dwQos = TheServiceParticipant->initial_DataWriterQos();
   dwQos->reliability.kind = DDS::RELIABLE_RELIABILITY_QOS;
-
+  dwQos->representation.value.length(1);
+  dwQos->representation.value[0] = OpenDDS::DCPS::UNALIGNED_CDR_DATA_REPRESENTATION;
   OpenDDS::DCPS::TransportLocatorSeq tii;
   tii.length(1);
   tii[0].transport_type = "fake transport for test";
 
+  OpenDDS::DCPS::TypeInformation type_info;
+
   ::DDS::PublisherQos_var pQos = new ::DDS::PublisherQos;
   *pQos = TheServiceParticipant->initial_PublisherQos();
-  pubId = disc->add_publication(domain,
-                                pubPartId,
-                                pubTopicId,
-                                dwImpl.in(),
-                                dwQos.in(),
-                                tii,
-                                pQos.in());
-  if (OpenDDS::DCPS::GUID_UNKNOWN == pubId)
+  disc->add_publication(domain,
+                        pubPartId,
+                        pubTopicId,
+                        rchandle_from(dwImpl.in()),
+                        dwQos.in(),
+                        tii,
+                        pQos.in(),
+                        type_info);
+  if (OpenDDS::DCPS::GUID_UNKNOWN == dwImpl->guid())
     {
       failed = true;
       ACE_ERROR((LM_ERROR, ACE_TEXT("ERROR: add_publication failed!\n") ));
@@ -191,7 +235,7 @@ bool pubsub(OpenDDS::DCPS::Discovery_rch disc, CORBA::ORB_var orb)
     }
 
   // add an inconsistent topic
-  OpenDDS::DCPS::RepoId topicId2;
+  OpenDDS::DCPS::GUID_t topicId2;
   const char* tnameIncompatible = "MYtopic";
   const char* dnameIncompatible = "MYnewdataname";
   ::DDS::TopicQos_var topicQosIncompatible = new ::DDS::TopicQos;
@@ -218,14 +262,14 @@ bool pubsub(OpenDDS::DCPS::Discovery_rch disc, CORBA::ORB_var orb)
       failed = true;
     }
 
-  OpenDDS::DCPS::RepoId subPartId = OpenDDS::DCPS::GUID_UNKNOWN;
-  OpenDDS::DCPS::RepoId subTopicId = OpenDDS::DCPS::GUID_UNKNOWN;
-  OpenDDS::DCPS::RepoId subId = OpenDDS::DCPS::GUID_UNKNOWN;
+  OpenDDS::DCPS::GUID_t subPartId = OpenDDS::DCPS::GUID_UNKNOWN;
+  OpenDDS::DCPS::GUID_t subTopicId = OpenDDS::DCPS::GUID_UNKNOWN;
   TAO_DDS_DCPSDataReader_i drImpl;
   if (use_rtps)
     drImpl.disco_ = disc.in();
 
-  value = disc->add_domain_participant(domain, partQos.in());
+  value = disc->add_domain_participant(domain, partQos, OpenDDS::DCPS::make_rch<OpenDDS::XTypes::TypeLookupService>());
+
   subPartId = value.id;
   if( OpenDDS::DCPS::GUID_UNKNOWN == subPartId)
     {
@@ -239,7 +283,7 @@ bool pubsub(OpenDDS::DCPS::Discovery_rch disc, CORBA::ORB_var orb)
     }
 
   if (use_rtps) {
-    sub2 = new TAO_DDS_DCPSSubscriber_i;
+    sub2 = OpenDDS::DCPS::make_rch<OpenDDS::DCPS::BitSubscriber>(new TAO_DDS_DCPSSubscriber_i);
     DDS_TEST::set_part_bit_subscriber(disc, domain, subPartId, sub2);
   }
 
@@ -279,18 +323,22 @@ bool pubsub(OpenDDS::DCPS::Discovery_rch disc, CORBA::ORB_var orb)
   ::DDS::DataReaderQos_var drQos = new ::DDS::DataReaderQos;
   *drQos = TheServiceParticipant->initial_DataReaderQos();
   drQos->reliability.kind = ::DDS::RELIABLE_RELIABILITY_QOS;
+  drQos->representation.value.length(1);
+  drQos->representation.value[0] = OpenDDS::DCPS::UNALIGNED_CDR_DATA_REPRESENTATION;
 
   ::DDS::SubscriberQos_var subQos = new ::DDS::SubscriberQos;
   *subQos = TheServiceParticipant->initial_SubscriberQos();
-  subId = disc->add_subscription(domain,
-                                 subPartId,
-                                 subTopicId,
-                                 &drImpl,
-                                 drQos.in(),
-                                 tii,
-                                 subQos.in(),
-                                 "", "", DDS::StringSeq());
-  if( OpenDDS::DCPS::GUID_UNKNOWN == subId)
+
+  disc->add_subscription(domain,
+                         subPartId,
+                         subTopicId,
+                         rchandle_from(&drImpl),
+                         drQos.in(),
+                         tii,
+                         subQos.in(),
+                         "", "", DDS::StringSeq(),
+                         type_info);
+  if( OpenDDS::DCPS::GUID_UNKNOWN == drImpl.guid())
     {
       failed = true;
       ACE_ERROR((LM_ERROR, ACE_TEXT("ERROR: add_subscription failed!\n") ));
@@ -305,8 +353,6 @@ bool pubsub(OpenDDS::DCPS::Discovery_rch disc, CORBA::ORB_var orb)
       failed = true;
     }
 
-  if (use_rtps)
-    expected.push_back(DiscReceivedCalls::ASSOC_COMPLETE);
   if (!dwImpl->received().expect(orb, max_delay, expected))
     {
       failed = true;
@@ -317,7 +363,6 @@ bool pubsub(OpenDDS::DCPS::Discovery_rch disc, CORBA::ORB_var orb)
 
 
   // incompatible QOS
-  OpenDDS::DCPS::RepoId pubIncQosId = OpenDDS::DCPS::GUID_UNKNOWN;
   TAO_DDS_DCPSDataWriter_i dwIncQosImpl;
 
   // Add publication
@@ -334,14 +379,16 @@ bool pubsub(OpenDDS::DCPS::Discovery_rch disc, CORBA::ORB_var orb)
 
   pQos = new ::DDS::PublisherQos;
   *pQos = TheServiceParticipant->initial_PublisherQos();
-  pubIncQosId = disc->add_publication(domain,
-                                pubPartId,
-                                pubTopicId,
-                                &dwIncQosImpl,
-                                dwIncQosQos.in(),
-                                tii,
-                                pQos.in());
-  if (OpenDDS::DCPS::GUID_UNKNOWN == pubIncQosId)
+
+  disc->add_publication(domain,
+                        pubPartId,
+                        pubTopicId,
+                        rchandle_from(&dwIncQosImpl),
+                        dwIncQosQos.in(),
+                        tii,
+                        pQos.in(),
+                        type_info);
+  if (OpenDDS::DCPS::GUID_UNKNOWN == dwIncQosImpl.guid())
     {
       failed = true;
       ACE_ERROR((LM_ERROR, ACE_TEXT("ERROR: add_publication failed!\n") ));
@@ -360,9 +407,9 @@ bool pubsub(OpenDDS::DCPS::Discovery_rch disc, CORBA::ORB_var orb)
       failed = true;
     }
 
-  disc->remove_publication(domain, pubPartId, pubIncQosId);
-  disc->remove_subscription(domain, subPartId, subId);
-  disc->remove_publication(domain, pubPartId, pubId);
+  disc->remove_publication(domain, pubPartId, dwIncQosImpl.guid());
+  disc->remove_subscription(domain, subPartId, drImpl.guid());
+  disc->remove_publication(domain, pubPartId, dwImpl->guid());
   disc->remove_topic(domain, pubPartId, pubTopicId);
   disc->remove_topic(domain, subPartId, subTopicId);
   disc->remove_domain_participant(domain, subPartId);
@@ -396,7 +443,7 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[])
 
       if (use_rtps) {
         OpenDDS::RTPS::RtpsDiscovery_rch rtpsDisc(OpenDDS::DCPS::make_rch<OpenDDS::RTPS::RtpsDiscovery>("TestRtpsDiscovery"));
-        rtpsDisc->resend_period(ACE_Time_Value(1));
+        rtpsDisc->resend_period(OpenDDS::DCPS::TimeDuration(1));
         rtpsDisc->sedp_multicast(false);
         disc = rtpsDisc;
       } else {
@@ -412,10 +459,10 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[])
 
       if (disc.is_nil())
         {
-          ACE_ERROR_RETURN ((LM_DEBUG,
-                             "Nil OpenDDS::DCPS::Discovery reference <%s>\n",
-                             ior),
-                            1);
+          ACE_ERROR_RETURN((LM_DEBUG,
+                            "(%P|%t) ERROR: Nil OpenDDS::DCPS::Discovery reference <%s>\n",
+                            ior),
+                           1);
         }
 
 /*
@@ -448,7 +495,7 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[])
   catch (const std::exception& ex)
     {
       ACE_ERROR ((LM_ERROR,
-                  ACE_TEXT("(%P|%t) std::exception caught in main.cpp: %C\n"),
+                  ACE_TEXT("(%P|%t) ERROR: std::exception caught in main.cpp: %C\n"),
                   ex.what()));
       return 1;
     }

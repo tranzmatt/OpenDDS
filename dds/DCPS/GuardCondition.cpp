@@ -31,6 +31,17 @@ GuardCondition_ptr GuardCondition::_duplicate(GuardCondition_ptr obj)
   return obj;
 }
 
+GuardCondition_ptr GuardCondition::_narrow(CORBA::Object_ptr obj)
+{
+  GuardConditionInterf_var gci = GuardConditionInterf::_narrow(obj);
+  const GuardCondition_ptr gc = dynamic_cast<GuardCondition_ptr>(gci.in());
+  if (gc) {
+    gci._retn();
+    return gc;
+  }
+  return 0;
+}
+
 } // namespace DDS
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
@@ -60,4 +71,3 @@ TAO::Objref_Traits<DDS::GuardCondition>::marshal(
 {
   return CORBA::Object::marshal(p, cdr);
 }
-

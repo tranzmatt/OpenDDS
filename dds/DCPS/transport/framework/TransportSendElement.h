@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_TRANSPORTSENDELEMENT_H
-#define OPENDDS_DCPS_TRANSPORTSENDELEMENT_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTSENDELEMENT_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTSENDELEMENT_H
 
 #include "dds/DCPS/dcps_export.h"
 #include "TransportQueueElement.h"
@@ -26,9 +26,11 @@ public:
   virtual ~TransportSendElement();
 
   /// Accessor for the publisher id.
-  virtual RepoId publication_id() const;
+  virtual GUID_t publication_id() const;
 
-  virtual RepoId subscription_id() const;
+  virtual GUID_t subscription_id() const;
+
+  virtual ACE_Message_Block* duplicate_msg() const;
 
   /// Accessor for the ACE_Message_Block
   virtual const ACE_Message_Block* msg() const;
@@ -41,6 +43,8 @@ public:
   const DataSampleElement* sample() const;
 
   virtual bool owned_by_transport();
+
+  virtual bool is_last_fragment() const { return !element_->get_header().more_fragments(); }
 
 protected:
 

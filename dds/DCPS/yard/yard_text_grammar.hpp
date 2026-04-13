@@ -5,8 +5,8 @@
 // Each type in this file represents a separate PEG grammar production
 // (parsing rule).
 
-#ifndef YARD_TEXT_GRAMMAR_HPP
-#define YARD_TEXT_GRAMMAR_HPP
+#ifndef OPENDDS_DCPS_YARD_YARD_TEXT_GRAMMAR_HPP
+#define OPENDDS_DCPS_YARD_YARD_TEXT_GRAMMAR_HPP
 
 namespace yard
 {
@@ -136,9 +136,9 @@ namespace text_grammar
                 template<typename ParserState_T>
                 static bool Match(ParserState_T& p) {
                   if (p.AtEnd()) { return false; }
-                  if (IdentFirstChar::template Match(p))
+                  if (IdentFirstChar::Match(p))
                   {
-                        while (IdentNextChar::template Match(p)) { }
+                        while (IdentNextChar::Match(p)) { }
                         return true;
                   }
                   return false;
@@ -292,4 +292,4 @@ namespace text_grammar
 } // text_grammar
 } // yard
 
-#endif // #ifndef YARD_TEXT_GRAMMAR_HPP
+#endif // OPENDDS_DCPS_YARD_YARD_TEXT_GRAMMAR_HPP

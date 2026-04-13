@@ -5,12 +5,20 @@
 #include "dds/DCPS/PublisherImpl.h"
 #include "dds/DCPS/SubscriberImpl.h"
 #include "dds/DCPS/StaticIncludes.h"
+#include "dds/DCPS/SafetyProfileStreams.h"
+#include "dds/DCPS/DCPS_Utils.h"
+
+#include <dds/DCPS/transport/framework/TransportRegistry.h>
+#include <dds/DCPS/XTypes/DynamicTypeSupport.h>
+
 #include "MessengerTypeSupportImpl.h"
 
 #ifdef ACE_AS_STATIC_LIBS
 # include "dds/DCPS/RTPS/RtpsDiscovery.h"
 # include "dds/DCPS/transport/rtps_udp/RtpsUdp.h"
 #endif
+
+#include <ace/Argv_Type_Converter.h>
 
 #include <cstdlib>
 #include <iostream>
@@ -20,6 +28,85 @@ using namespace OpenDDS::DCPS;
 using namespace Messenger;
 
 const Duration_t max_wait_time = {3, 0};
+bool dynamic = false;
+
+void copy(Message& out, DynamicData* in, const SampleInfo& info)
+{
+  if (info.valid_data) {
+    in->get_int32_value(out.key, in->get_member_id_by_name("key"));
+    in->get_int32_value(out.iteration, in->get_member_id_by_name("iteration"));
+    in->get_string_value(out.name.inout(), in->get_member_id_by_name("name"));
+    DynamicData_var nested;
+    in->get_complex_value(nested, in->get_member_id_by_name("nest"));
+    nested->get_int32_value(reinterpret_cast<ACE_CDR::Long&>(out.nest.value),
+                            nested->get_member_id_by_name("value"));
+  }
+}
+
+void copy(MessageSeq& out, const DynamicDataSeq& in, const SampleInfoSeq& infos)
+{
+  out.length(in.length());
+  for (unsigned int i = 0; i < in.length(); ++i) {
+    copy(out[i], in[i], infos[i]);
+  }
+}
+
+/// Provide a common API for both Plain Language Binding and Dynamic Language Binding
+struct Readers {
+  explicit Readers(DDS::DataReader* dr)
+    : msg_reader_(dynamic ? 0 : MessageDataReader::_narrow(dr))
+    , dyn_reader_(dynamic ? DynamicDataReader::_narrow(dr) : 0)
+  {}
+
+  void reset()
+  {
+    msg_reader_ = 0;
+    dyn_reader_ = 0;
+  }
+
+  DDS::ReturnCode_t read(DDS::ReadCondition* cond)
+  {
+    DDS::SampleInfoSeq infoseq;
+    if (dynamic) {
+      DynamicDataSeq data;
+      return dyn_reader_->read_w_condition(data, infoseq, LENGTH_UNLIMITED, cond);
+    }
+
+    MessageSeq data;
+    return msg_reader_->read_w_condition(data, infoseq, LENGTH_UNLIMITED, cond);
+  }
+
+  DDS::ReturnCode_t take(MessageSeq& data, DDS::SampleInfoSeq& info, DDS::ReadCondition* cond)
+  {
+    if (dynamic) {
+      DynamicDataSeq dyn_data;
+      const DDS::ReturnCode_t ret = dyn_reader_->take_w_condition(dyn_data, info, LENGTH_UNLIMITED, cond);
+      if (ret == RETCODE_OK) {
+        copy(data, dyn_data, info);
+      }
+      return ret;
+    }
+
+    return msg_reader_->take_w_condition(data, info, LENGTH_UNLIMITED, cond);
+  }
+
+  DDS::ReturnCode_t take_next_sample(Message& data, DDS::SampleInfo& info)
+  {
+    if (dynamic) {
+      DynamicData_var dyn;
+      const DDS::ReturnCode_t ret = dyn_reader_->take_next_sample(dyn, info);
+      if (ret == RETCODE_OK) {
+        copy(data, dyn, info);
+      }
+      return ret;
+    }
+
+    return msg_reader_->take_next_sample(data, info);
+  }
+
+  MessageDataReader_var msg_reader_;
+  DynamicDataReader_var dyn_reader_;
+};
 
 class MessengerListener
   : public virtual OpenDDS::DCPS::LocalObject<DDS::DataReaderListener>
@@ -27,6 +114,7 @@ class MessengerListener
 public:
   MessengerListener(DDS::ReadCondition_ptr rd)
     : rc_(DDS::ReadCondition::_duplicate(rd))
+    , enabled_(true)
   {}
 
   virtual void on_requested_deadline_missed(
@@ -51,39 +139,74 @@ public:
 
   virtual void on_data_available(DDS::DataReader_ptr reader)
   {
-    MessageDataReader_var mdr = MessageDataReader::_narrow(reader);
-    MessageSeq data;
-    SampleInfoSeq infoseq;
-    if (mdr->read_w_condition(data, infoseq, LENGTH_UNLIMITED, rc_) == RETCODE_ERROR) {
-      cerr << "ERROR: read_w_condition failed" << endl;
+    ACE_GUARD(ACE_Thread_Mutex, guard, mutex_);
+    if (!enabled_) {
+      return;
+    }
+
+    Readers readers(reader);
+    const ReturnCode_t rc = readers.read(rc_);
+    if (rc != RETCODE_OK && rc != RETCODE_NO_DATA) {
+      cerr << "ERROR: read_w_condition failed: " << retcode_to_string(rc) << endl;
     }
   }
 
   virtual void on_sample_lost(DDS::DataReader_ptr /*reader*/,
                               const DDS::SampleLostStatus& /*status*/) {}
+
+  void disable()
+  {
+    ACE_GUARD(ACE_Thread_Mutex, guard, mutex_);
+    enabled_ = false;
+  }
+
 private:
   DDS::ReadCondition_var rc_;
+  bool enabled_;
+  mutable ACE_Thread_Mutex mutex_;
 };
 
-bool test_setup(const DomainParticipant_var& dp,
-  const MessageTypeSupport_var& ts, const Publisher_var& pub,
+bool test_setup(const MessageTypeSupport_var& ts, const Publisher_var& pub,
   const Subscriber_var& sub, const char* topicName, DataWriter_var& dw,
   DataReader_var& dr)
 {
   CORBA::String_var typeName = ts->get_type_name();
+  DDS::DomainParticipant_var dp = pub->get_participant();
   Topic_var topic = dp->create_topic(topicName, typeName,
                                      TOPIC_QOS_DEFAULT, 0,
                                      DEFAULT_STATUS_MASK);
+  if (!topic) {
+    cerr << "ERROR: test_setup: create_topic failed" << endl;
+    return false;
+  }
 
   DataWriterQos dw_qos;
   pub->get_default_datawriter_qos(dw_qos);
   dw_qos.history.kind = KEEP_ALL_HISTORY_QOS;
   dw = pub->create_datawriter(topic, dw_qos, 0, DEFAULT_STATUS_MASK);
+  if (!dw) {
+    cerr << "ERROR: test_setup: create_datawriter failed" << endl;
+    return false;
+  }
+
+  DDS::Topic_var reader_topic = topic;
+  DDS::DomainParticipant_var sub_participant = sub->get_participant();
+  if (sub_participant != dp) {
+    reader_topic = sub_participant->create_topic(topicName, typeName, TOPIC_QOS_DEFAULT, 0, 0);
+    if (!topic) {
+      cerr << "ERROR: test_setup: create_topic for reader failed" << endl;
+      return false;
+    }
+  }
 
   DataReaderQos dr_qos;
   sub->get_default_datareader_qos(dr_qos);
   dr_qos.history.kind = KEEP_ALL_HISTORY_QOS;
-  dr = sub->create_datareader(topic, dr_qos, 0, DEFAULT_STATUS_MASK);
+  dr = sub->create_datareader(reader_topic, dr_qos, 0, DEFAULT_STATUS_MASK);
+  if (!dr) {
+    cerr << "ERROR: test_setup: create_datareader failed" << endl;
+    return false;
+  }
 
   StatusCondition_var dw_sc = dw->get_statuscondition();
   dw_sc->set_enabled_statuses(PUBLICATION_MATCHED_STATUS);
@@ -98,30 +221,55 @@ bool test_setup(const DomainParticipant_var& dp,
   return true;
 }
 
-bool complex_test_setup(const DomainParticipant_var& dp,
-  const MessageTypeSupport_var& ts, const Publisher_var& pub,
+bool complex_test_setup(const MessageTypeSupport_var& ts, const Publisher_var& pub,
   const Subscriber_var& sub, const char* topicName, DataWriter_var& dw,
   DataReader_var& dr1, DataReader_var& dr2)
 {
   CORBA::String_var typeName = ts->get_type_name();
+  DDS::DomainParticipant_var dp = pub->get_participant();
   Topic_var topic = dp->create_topic(topicName, typeName,
                                      TOPIC_QOS_DEFAULT, 0,
                                      DEFAULT_STATUS_MASK);
+  if (!topic) {
+    cerr << "ERROR: complex_test_setup: create_topic failed" << endl;
+    return false;
+  }
 
   DataWriterQos dw_qos;
   pub->get_default_datawriter_qos(dw_qos);
   dw_qos.history.kind = KEEP_ALL_HISTORY_QOS;
-  dw_qos.durability.kind = TRANSIENT_DURABILITY_QOS;
-  dw_qos.reliability.kind = RELIABLE_RELIABILITY_QOS;
+  dw_qos.durability.kind = TRANSIENT_LOCAL_DURABILITY_QOS;
   dw = pub->create_datawriter(topic, dw_qos, 0, DEFAULT_STATUS_MASK);
+  if (!dw) {
+    cerr << "ERROR: complex_test_setup: create_datawriter failed" << endl;
+    return false;
+  }
+
+  DDS::Topic_var reader_topic = topic;
+  DDS::DomainParticipant_var sub_participant = sub->get_participant();
+  if (sub_participant != dp) {
+    reader_topic = sub_participant->create_topic(topicName, typeName, TOPIC_QOS_DEFAULT, 0, 0);
+    if (!topic) {
+      cerr << "ERROR: complex_test_setup: create_topic for reader failed" << endl;
+      return false;
+    }
+  }
 
   DataReaderQos dr_qos;
   sub->get_default_datareader_qos(dr_qos);
   dr_qos.history.kind = KEEP_ALL_HISTORY_QOS;
   dr_qos.durability.kind = TRANSIENT_LOCAL_DURABILITY_QOS;
   dr_qos.reliability.kind = RELIABLE_RELIABILITY_QOS;
-  dr1 = sub->create_datareader(topic, dr_qos, 0, DEFAULT_STATUS_MASK);
-  dr2 = sub->create_datareader(topic, dr_qos, 0, DEFAULT_STATUS_MASK);
+  dr1 = sub->create_datareader(reader_topic, dr_qos, 0, DEFAULT_STATUS_MASK);
+  if (!dr1) {
+    cerr << "ERROR: complex_test_setup: 1st create_datareader failed" << endl;
+    return false;
+  }
+  dr2 = sub->create_datareader(reader_topic, dr_qos, 0, DEFAULT_STATUS_MASK);
+  if (!dr2) {
+    cerr << "ERROR: complex_test_setup: 2nd create_datareader failed" << endl;
+    return false;
+  }
 
   StatusCondition_var dw_sc = dw->get_statuscondition();
   dw_sc->set_enabled_statuses(PUBLICATION_MATCHED_STATUS);
@@ -129,55 +277,71 @@ bool complex_test_setup(const DomainParticipant_var& dp,
   ws->attach_condition(dw_sc);
   Duration_t infinite = {DURATION_INFINITE_SEC, DURATION_INFINITE_NSEC};
   ConditionSeq active;
-  if (ws->wait(active, infinite) != DDS::RETCODE_OK) {
-    return false;
+  PublicationMatchedStatus status;
+  while (true) {
+    if (dw->get_publication_matched_status(status) != DDS::RETCODE_OK) {
+      return false;
+    }
+    if (status.current_count >= 2) {
+      break;
+    }
+    if (ws->wait(active, infinite) != DDS::RETCODE_OK) {
+      return false;
+    }
   }
   ws->detach_condition(dw_sc);
   return true;
 }
 
-bool test_cleanup(
-  const DomainParticipant_var& dp,
-  const Publisher_var& pub, const Subscriber_var& sub,
+bool test_cleanup(const Publisher_var& pub, const Subscriber_var& sub,
   DataWriter_var& dw, DataReader_var& dr,
   bool complex_test = false)
 {
-  Topic_var topic = dw->get_topic();
+  TopicDescription_var reader_topic_desc = dr->get_topicdescription();
+  Topic_var reader_topic = Topic::_narrow(reader_topic_desc);
   ReturnCode_t r = sub->delete_datareader(dr);
   if (r != DDS::RETCODE_OK) {
-    cerr << "ERROR: "
-      << (complex_test ? "complex_" : "") << "test_cleanup: "
+    cerr << "ERROR: " << (complex_test ? "complex_" : "") << "test_cleanup: "
       << "delete " << (complex_test ? "1st " : "")
-      <<"datareader failed (" << r << ')' << endl;
+      << "datareader failed: " << retcode_to_string(r) << endl;
+    return false;
   }
+  Topic_var writer_topic = dw->get_topic();
   r = pub->delete_datawriter(dw);
   if (r != DDS::RETCODE_OK) {
-    cerr << "ERROR: "
-      << (complex_test ? "complex_" : "") << "test_cleanup: "
-      << "delete datawriter failed (" << r << ')' << endl;
+    cerr << "ERROR: " << (complex_test ? "complex_" : "") << "test_cleanup: "
+      << "delete datawriter failed: " << retcode_to_string(r) << endl;
     return false;
   }
-  r = dp->delete_topic(topic);
+  DDS::DomainParticipant_var dp = pub->get_participant();
+  r = dp->delete_topic(writer_topic);
   if (r != DDS::RETCODE_OK) {
-    cerr << "ERROR: "
-      << (complex_test ? "complex_" : "") << "test_cleanup: "
-      << "delete topic failed (" << r << ')' << endl;
+    cerr << "ERROR: " << (complex_test ? "complex_" : "") << "test_cleanup: "
+      << "delete topic failed: " << retcode_to_string(r) << endl;
     return false;
+  }
+  DDS::DomainParticipant_var dp_sub = sub->get_participant();
+  if (dp_sub != dp) {
+    r = dp_sub->delete_topic(reader_topic);
+    if (r != DDS::RETCODE_OK) {
+      cerr << "ERROR: " << (complex_test ? "complex_" : "") << "test_cleanup: "
+        << "delete topic (reader) failed: " << retcode_to_string(r) << endl;
+      return false;
+    }
   }
   return true;
 }
 
-bool complex_test_cleanup(
-  const DomainParticipant_var& dp,
-  const Publisher_var& pub, const Subscriber_var& sub,
+bool complex_test_cleanup(const Publisher_var& pub, const Subscriber_var& sub,
   DataWriter_var& dw, DataReader_var& dr1, DataReader_var& dr2)
 {
-  if (sub->delete_datareader(dr2) != DDS::RETCODE_OK) {
-    cerr << "ERROR: complex_test_cleanup: "
-      << "delete 2nd datareader failed" << endl;
+  ReturnCode_t rc = sub->delete_datareader(dr2);
+  if (rc != DDS::RETCODE_OK) {
+    cerr << "ERROR: complex_test_cleanup: delete 2nd datareader failed: "
+      << retcode_to_string(rc) << endl;
     return false;
   }
-  return test_cleanup(dp, pub, sub, dw, dr1, true);
+  return test_cleanup(pub, sub, dw, dr1, true);
 }
 
 bool waitForSample(const DataReader_var& dr)
@@ -198,13 +362,12 @@ bool waitForSample(const DataReader_var& dr)
   return true;
 }
 
-bool run_filtering_test(const DomainParticipant_var& dp,
-  const MessageTypeSupport_var& ts, const Publisher_var& pub,
+bool run_filtering_test(const MessageTypeSupport_var& ts, const Publisher_var& pub,
   const Subscriber_var& sub)
 {
   DataWriter_var dw;
   DataReader_var dr;
-  if (!test_setup(dp, ts, pub, sub, "MyTopic2", dw, dr)) {
+  if (!test_setup(ts, pub, sub, "MyTopic2", dw, dr)) {
     cerr << "ERROR: run_filtering_test: setup failed" << endl;
     return false;
   }
@@ -212,8 +375,12 @@ bool run_filtering_test(const DomainParticipant_var& dp,
   MessageDataWriter_var mdw = MessageDataWriter::_narrow(dw);
   Message sample;
   sample.key = 1;
+  sample.nest.value = B;
   ReturnCode_t ret = mdw->write(sample, HANDLE_NIL);
-  if (ret != RETCODE_OK) return false;
+  if (ret != RETCODE_OK) {
+    cerr << "ERROR: run_filtering_test: write failed: " << retcode_to_string(ret) << endl;
+    return false;
+  }
   if (!waitForSample(dr)) return false;
 
   ReadCondition_var dr_qc = dr->create_querycondition(ANY_SAMPLE_STATE,
@@ -233,23 +400,29 @@ bool run_filtering_test(const DomainParticipant_var& dp,
   }
   ws->detach_condition(dr_qc);
 
-  MessageDataReader_var mdr = MessageDataReader::_narrow(dr);
+  Readers readers(dr);
   MessageSeq data;
   SampleInfoSeq infoseq;
-  ret = mdr->take_w_condition(data, infoseq, LENGTH_UNLIMITED, dr_qc);
+  ret = readers.take(data, infoseq, dr_qc);
   if (ret != RETCODE_NO_DATA) {
-    cerr << "ERROR: take_w_condition(qc) shouldn't have returned data" << endl;
+    cerr << "ERROR: expected no data, but take_w_condition(qc) returned: "
+      << retcode_to_string(ret) << endl;
     return false;
   }
 
   SampleInfo info;
-  if (mdr->take_next_sample(sample, info) != RETCODE_OK) {
-    cerr << "ERROR: take_next_sample() should have returned data" << endl;
+  ret = readers.take_next_sample(sample, info);
+  if (ret != RETCODE_OK) {
+    cerr << "ERROR: take_next_sample() failed: " << retcode_to_string(ret) << endl;
     return false;
   }
 
   sample.key = 2;
-  if (mdw->write(sample, HANDLE_NIL) != RETCODE_OK) return false;
+  ret = mdw->write(sample, HANDLE_NIL);
+  if (ret != RETCODE_OK) {
+    cerr << "ERROR: take_next_sample() failed: " << retcode_to_string(ret) << endl;
+    return false;
+  }
   if (!waitForSample(dr)) return false;
 
   ws->attach_condition(dr_qc);
@@ -260,28 +433,31 @@ bool run_filtering_test(const DomainParticipant_var& dp,
   }
   ws->detach_condition(dr_qc);
 
-  ret = mdr->take_w_condition(data, infoseq, LENGTH_UNLIMITED, dr_qc);
+  ret = readers.take(data, infoseq, dr_qc);
   if (ret != RETCODE_OK) {
-    cerr << "ERROR: take_w_condition(qc) should have returned data" << endl;
+    cerr << "ERROR: take_w_condition(qc) failed: " << retcode_to_string(ret) << endl;
     return false;
   }
 
-  dr->delete_readcondition(dr_qc);
-  if (!test_cleanup(dp, pub, sub, dw, dr)) {
+  ret = dr->delete_readcondition(dr_qc);
+  if (ret != RETCODE_OK) {
+    cerr << "ERROR: delete dr_qc failed: " << retcode_to_string(ret) << endl;
+    return false;
+  }
+  if (!test_cleanup(pub, sub, dw, dr)) {
     cerr << "ERROR: run_filtering_test: cleanup failed" << endl;
     return false;
   }
   return true;
 }
 
-bool run_complex_filtering_test(const DomainParticipant_var& dp,
-  const MessageTypeSupport_var& ts, const Publisher_var& pub,
+bool run_complex_filtering_test(const MessageTypeSupport_var& ts, const Publisher_var& pub,
   const Subscriber_var& sub)
 {
   DataWriter_var dw;
   DataReader_var dr1;
   DataReader_var dr2;
-  if (!complex_test_setup(dp, ts, pub, sub, "MyTopicComplex", dw, dr1, dr2)) {
+  if (!complex_test_setup(ts, pub, sub, "MyTopicComplex", dw, dr1, dr2)) {
     cerr << "ERROR: run_complex_filtering_test: setup failed" << endl;
     return false;
   }
@@ -303,27 +479,31 @@ bool run_complex_filtering_test(const DomainParticipant_var& dp,
     return false;
   }
 
-  DDS::DataReaderListener_var ml1 = new MessengerListener(dr_qc1);
-  DDS::DataReaderListener_var ml2 = new MessengerListener(dr_qc2);
-  MessageDataReader_var mdr1 = MessageDataReader::_narrow(dr1);
-  MessageDataReader_var mdr2 = MessageDataReader::_narrow(dr2);
-  mdr1->set_listener(ml1, DDS::DATA_AVAILABLE_STATUS);
-  mdr2->set_listener(ml2, DDS::DATA_AVAILABLE_STATUS);
+  MessengerListener* ml1p = new MessengerListener(dr_qc1);
+  DDS::DataReaderListener_var ml1 = ml1p;
+  MessengerListener* ml2p = new MessengerListener(dr_qc2);
+  DDS::DataReaderListener_var ml2 = ml2p;
+
+  dr1->set_listener(ml1, DDS::DATA_AVAILABLE_STATUS);
+  dr2->set_listener(ml2, DDS::DATA_AVAILABLE_STATUS);
+  // No need to call on_data_available since samples are written later.
+  Readers readers1(dr1), readers2(dr2);
   MessageSeq data;
   SampleInfoSeq infoseq;
-  ReturnCode_t ret = mdr1->take_w_condition(data, infoseq, LENGTH_UNLIMITED, dr_qc1);
+  ReturnCode_t ret = readers1.take(data, infoseq, dr_qc1);
   if (ret != RETCODE_NO_DATA) {
-    cerr << "ERROR: take_w_condition(qc1) shouldn't have returned data" << endl;
+    cerr << "ERROR: take_w_condition(qc1): expected no data but got: " << retcode_to_string(ret) << endl;
     return false;
   }
-  ret = mdr2->take_w_condition(data, infoseq, LENGTH_UNLIMITED, dr_qc2);
+  ret = readers2.take(data, infoseq, dr_qc2);
   if (ret != RETCODE_NO_DATA) {
-    cerr << "ERROR: take_w_condition(qc2) shouldn't have returned data" << endl;
+    cerr << "ERROR: take_w_condition(qc2): expected no data but got: " << retcode_to_string(ret) << endl;
     return false;
   }
 
   MessageDataWriter_var mdw = MessageDataWriter::_narrow(dw);
   Message sample;
+  sample.nest.value = A;
   for (CORBA::Long i = 0; i < 6; i++) {
     sample.key = i;
     if (mdw->register_instance(sample) == HANDLE_NIL) {
@@ -341,7 +521,12 @@ bool run_complex_filtering_test(const DomainParticipant_var& dp,
         return false;
       }
       sample.iteration = j;
-      if (mdw->write(sample, hnd) != RETCODE_OK) return false;
+      ret = mdw->write(sample, hnd);
+      if (ret != RETCODE_OK) {
+        cerr << "ERROR: run_complex_filtering_test: write failed: "
+          << retcode_to_string(ret) << endl;
+        return false;
+      }
     }
   }
 
@@ -352,32 +537,48 @@ bool run_complex_filtering_test(const DomainParticipant_var& dp,
       cerr << "ERROR: Lookup instance failed" << endl;
       return false;
     }
-    if (mdw->dispose(sample, hnd) != RETCODE_OK) {
-      cerr << "ERROR: Dispose instance failed" << endl;
+    ret = mdw->dispose(sample, hnd);
+    if (ret != RETCODE_OK) {
+      cerr << "ERROR: Dispose instance " << i << " failed: " << retcode_to_string(ret) << endl;
       return false;
     }
-    if (mdw->unregister_instance(sample, hnd) != RETCODE_OK) {
-      cerr << "ERROR: Unregistering instance failed" << endl;
+    ret = mdw->unregister_instance(sample, hnd);
+    if (ret != RETCODE_OK) {
+      cerr << "ERROR: Unregistering instance " << i << " failed: "<< retcode_to_string(ret) << endl;
       return false;
     }
   }
 
-  dr1->delete_readcondition(dr_qc1);
-  dr2->delete_readcondition(dr_qc2);
-  if (!complex_test_cleanup(dp, pub, sub, dw, dr1, dr2)) {
+  ml1p->disable();
+  dr1->set_listener(0, 0);
+  ml2p->disable();
+  dr2->set_listener(0, 0);
+  readers1.reset();
+  readers2.reset();
+
+  ret = dr1->delete_readcondition(dr_qc1);
+  if (ret != RETCODE_OK) {
+    cerr << "ERROR: delete dr_qc1 failed: " << retcode_to_string(ret) << endl;
+    return false;
+  }
+  ret = dr2->delete_readcondition(dr_qc2);
+  if (ret != RETCODE_OK) {
+    cerr << "ERROR: delete dr_qc2 failed: " << retcode_to_string(ret) << endl;
+    return false;
+  }
+  if (!complex_test_cleanup(pub, sub, dw, dr1, dr2)) {
     cerr << "ERROR: run_complex_filtering_test: cleanup failed" << endl;
     return false;
   }
   return true;
 }
 
-bool run_sorting_test(const DomainParticipant_var& dp,
-  const MessageTypeSupport_var& ts, const Publisher_var& pub,
+bool run_sorting_test(const MessageTypeSupport_var& ts, const Publisher_var& pub,
   const Subscriber_var& sub)
 {
   DataWriter_var dw;
   DataReader_var dr;
-  if (!test_setup(dp, ts, pub, sub, "MyTopic", dw, dr)) {
+  if (!test_setup(ts, pub, sub, "MyTopic", dw, dr)) {
     cerr << "ERROR: run_sorting_test: setup failed" << endl;
     return false;
   }
@@ -386,6 +587,7 @@ bool run_sorting_test(const DomainParticipant_var& dp,
   MessageDataWriter_var mdw = MessageDataWriter::_narrow(dw);
   Message sample;
   sample.key = 0;
+  sample.iteration = 0;
   sample.name = "data_X";
   sample.nest.value = B;
   for (int i(0); i < 20; ++i, ++sample.key) {
@@ -415,14 +617,15 @@ bool run_sorting_test(const DomainParticipant_var& dp,
   }
   WaitSet_var ws = new WaitSet;
   ws->attach_condition(dr_qc);
-  MessageDataReader_var mdr = MessageDataReader::_narrow(dr);
   Duration_t five_seconds = {5, 0};
   bool passed = true, done = false;
   if (sub->delete_datareader(dr) != DDS::RETCODE_PRECONDITION_NOT_MET) {
-    cerr << "ERROR: the deletion of a DataReader is not allowed if there are any existing QueryCondition objects that are attached to the DataReader." << endl;
+    cerr << "ERROR: the deletion of a DataReader is not allowed if there are "
+      "any existing QueryCondition objects that are attached to the DataReader." << endl;
     passed = false;
     done = true;
   }
+  Readers readers(dr);
   while (!done) {
     ConditionSeq active;
     ret = ws->wait(active, five_seconds);
@@ -436,7 +639,7 @@ bool run_sorting_test(const DomainParticipant_var& dp,
     cout << "wait returned" << endl;
     MessageSeq data;
     SampleInfoSeq info;
-    ret = mdr->take_w_condition(data, info, LENGTH_UNLIMITED, dr_qc);
+    ret = readers.take(data, info, dr_qc);
     if (ret == RETCODE_NO_DATA) {
       // fall-through
     } else if (ret != RETCODE_OK) {
@@ -468,27 +671,26 @@ bool run_sorting_test(const DomainParticipant_var& dp,
 
   MessageSeq data;
   SampleInfoSeq info;
-  ret = mdr->take_w_condition(data, info, LENGTH_UNLIMITED, dr_qc);
+  ret = readers.take(data, info, dr_qc);
   if (ret != RETCODE_NO_DATA) {
     cerr << "WARNING: there is still data in the reader\n";
   }
 
   ws->detach_condition(dr_qc);
   dr->delete_readcondition(dr_qc);
-  if (!test_cleanup(dp, pub, sub, dw, dr)) {
+  if (!test_cleanup(pub, sub, dw, dr)) {
     cerr << "ERROR: run_sorting_test: cleanup failed" << endl;
     return false;
   }
   return passed;
 }
 
-bool run_change_parameter_test(const DomainParticipant_var& dp,
-  const MessageTypeSupport_var& ts, const Publisher_var& pub,
+bool run_change_parameter_test(const MessageTypeSupport_var& ts, const Publisher_var& pub,
   const Subscriber_var& sub)
 {
   DataWriter_var dw;
   DataReader_var dr;
-  if (!test_setup(dp, ts, pub, sub, "MyTopic3", dw, dr)) {
+  if (!test_setup(ts, pub, sub, "MyTopic3", dw, dr)) {
     cerr << "ERROR: run_change_parameter_test: setup failed" << endl;
     return false;
   }
@@ -496,6 +698,8 @@ bool run_change_parameter_test(const DomainParticipant_var& dp,
   MessageDataWriter_var mdw = MessageDataWriter::_narrow(dw);
   Message sample;
   sample.key = 3;
+  sample.name = "data_B";
+  sample.nest.value = A;
   ReturnCode_t ret = mdw->write(sample, HANDLE_NIL);
   if (ret != RETCODE_OK) return false;
   if (!waitForSample(dr)) return false;
@@ -505,26 +709,29 @@ bool run_change_parameter_test(const DomainParticipant_var& dp,
   ReadCondition_var dr_qc = dr->create_querycondition(ANY_SAMPLE_STATE,
     ANY_VIEW_STATE, ALIVE_INSTANCE_STATE, "key = %0", params_empty);
   if (dr_qc) {
-    cerr << "ERROR: Creating QueryCondition with 1 token and 0 parameters should have failed " << endl;
+    cerr << "ERROR: Creating QueryCondition with 1 token and 0 parameters should have failed" << endl;
     return false;
   }
 
-  DDS::StringSeq params_two(2);
-  params_two.length(2);
-  params_two[0] = "2";
-  params_two[1] = "2";
+  DDS::StringSeq params_three(3);
+  params_three.length(3);
+  params_three[0] = "2";
+  params_three[1] = "2";
+  params_three[2] = "2";
   dr_qc = dr->create_querycondition(ANY_SAMPLE_STATE,
-    ANY_VIEW_STATE, ALIVE_INSTANCE_STATE, "key = %0", params_two);
+    ANY_VIEW_STATE, ALIVE_INSTANCE_STATE, "key = %0", params_three);
   if (dr_qc) {
-    cerr << "ERROR: Creating QueryCondition with 1 token and 2 parameters should have failed " << endl;
+    cerr << "ERROR: Creating QueryCondition with 1 token and 3 parameters should have failed" << endl;
     return false;
   }
 
-  DDS::StringSeq params(1);
-  params.length(1);
+  const char* params1_value = "data_B";
+  DDS::StringSeq params(2);
+  params.length(2);
   params[0] = "2";
+  params[1] = params1_value;
   dr_qc = dr->create_querycondition(ANY_SAMPLE_STATE,
-    ANY_VIEW_STATE, ALIVE_INSTANCE_STATE, "key = %0", params);
+    ANY_VIEW_STATE, ALIVE_INSTANCE_STATE, "key = %0 AND name = %1", params);
   if (!dr_qc) {
     cerr << "ERROR: failed to create QueryCondition" << endl;
     return false;
@@ -532,7 +739,7 @@ bool run_change_parameter_test(const DomainParticipant_var& dp,
 
   QueryCondition_var query_cond = QueryCondition::_narrow(dr_qc);
   CORBA::String_var expr = query_cond->get_query_expression();
-  if (std::string("key = %0") != expr.in()) {
+  if (std::string("key = %0 AND name = %1") != expr.in()) {
     cerr << "ERROR: get_query_expression() query expression should match " << endl;
     return false;
   }
@@ -542,7 +749,7 @@ bool run_change_parameter_test(const DomainParticipant_var& dp,
   if (ret != RETCODE_OK) {
     cerr << "ERROR: get_query_parameters() failed " << endl;
     return false;
-  } else if (params.length() != 1 || std::string(params[0]) != "2") {
+  } else if (params.length() != 2 || std::string(params[0]) != "2" || std::string(params[1]) != params1_value) {
     cerr << "ERROR: get_query_parameters() query parameters doesn't match " << endl;
     return false;
   }
@@ -558,28 +765,29 @@ bool run_change_parameter_test(const DomainParticipant_var& dp,
   }
   ws->detach_condition(dr_qc);
 
-  MessageDataReader_var mdr = MessageDataReader::_narrow(dr);
+  Readers readers(dr);
   MessageSeq data;
   SampleInfoSeq infoseq;
-  ret = mdr->take_w_condition(data, infoseq, LENGTH_UNLIMITED, dr_qc);
+  ret = readers.take(data, infoseq, dr_qc);
   if (ret != RETCODE_NO_DATA) {
     cerr << "ERROR: take_w_condition(qc) shouldn't have returned data" << endl;
     return false;
   }
 
   if (query_cond->set_query_parameters(params_empty) != RETCODE_ERROR) {
-    cerr << "ERROR: Setting 0 parameters for query condition with 1 token should have failed " << endl;
+    cerr << "ERROR: Setting 0 parameters for query condition with 2 tokens should have failed " << endl;
     return false;
   }
 
-  if (query_cond->set_query_parameters(params_two) != RETCODE_ERROR) {
-    cerr << "ERROR: Setting 2 parameters for query condition with 1 token should have failed " << endl;
+  if (query_cond->set_query_parameters(params_three) != RETCODE_ERROR) {
+    cerr << "ERROR: Setting 3 parameters for query condition with 2 tokens should have failed" << endl;
     return false;
   }
 
-  params = DDS::StringSeq(1);
-  params.length(1);
+  params = DDS::StringSeq(2);
+  params.length(2);
   params[0] = "3";
+  params[1] = params1_value;
   ret = query_cond->set_query_parameters(params);
 
   params = DDS::StringSeq();
@@ -587,7 +795,7 @@ bool run_change_parameter_test(const DomainParticipant_var& dp,
   if (ret != RETCODE_OK) {
     cerr << "ERROR: get_query_parameters() failed " << endl;
     return false;
-  } else if (params.length() != 1 || std::string(params[0]) != "3") {
+  } else if (params.length() != 2 || std::string(params[0]) != "3" || std::string(params[1]) != params1_value) {
     cerr << "ERROR: get_query_parameters() query parameters doesn't match " << endl;
     return false;
   }
@@ -597,25 +805,35 @@ bool run_change_parameter_test(const DomainParticipant_var& dp,
   if (ret != RETCODE_OK) {
     cerr << "ERROR: wait(qc) should not time out" << endl;
     return false;
+  } else {
+    for (CORBA::ULong i(0); i < data.length(); ++i) {
+      cout << "Info:\tinstance_handle = " << infoseq[i].instance_handle <<
+        "\tsample_rank = " << infoseq[i].sample_rank << '\n';
+      if (infoseq[i].valid_data) {
+        cout << "Data:\tkey = " << data[i].key <<
+          " \tname = " << data[i].name <<
+          "\tnest.value = " << data[i].nest.value <<
+          '\n';
+      }
+    }
   }
   ws->detach_condition(dr_qc);
 
-  ret = mdr->take_w_condition(data, infoseq, LENGTH_UNLIMITED, dr_qc);
+  ret = readers.take(data, infoseq, dr_qc);
   if (ret != RETCODE_OK) {
     cerr << "ERROR: take_w_condition(qc) should have returned data" << endl;
     return false;
   }
 
   dr->delete_readcondition(dr_qc);
-  if (!test_cleanup(dp, pub, sub, dw, dr)) {
+  if (!test_cleanup(pub, sub, dw, dr)) {
     cerr << "ERROR: run_change_parameter_test: cleanup failed" << endl;
     return false;
   }
   return true;
 }
 
-bool run_single_dispose_filter_test(const DomainParticipant_var& dp,
-  const MessageTypeSupport_var& ts, const Publisher_var& pub,
+bool run_single_dispose_filter_test(const MessageTypeSupport_var& ts, const Publisher_var& pub,
   const Subscriber_var& sub,
   const char* query, bool expect_dispose)
 {
@@ -625,7 +843,7 @@ bool run_single_dispose_filter_test(const DomainParticipant_var& dp,
   DataReader_var dr;
   const char* topic_name = expect_dispose ?
     "Dispose with Safe Query" : "Dispose with Unsafe Query";
-  if (!test_setup(dp, ts, pub, sub, topic_name, dw, dr)) {
+  if (!test_setup(ts, pub, sub, topic_name, dw, dr)) {
     cerr << "ERROR: run_single_dispose_filter_test: setup failed" << endl;
     return false;
   }
@@ -647,14 +865,21 @@ bool run_single_dispose_filter_test(const DomainParticipant_var& dp,
   Message sample;
   sample.key = 0;
   sample.iteration = 0;
+  sample.nest.value = A;
   ret = mdw->write(sample, HANDLE_NIL);
   if (ret != RETCODE_OK) {
-    cerr << "ERROR: run_single_dispose_filter_test: write failed" << endl;
+    cerr << "ERROR: run_single_dispose_filter_test: write failed: "
+      << retcode_to_string(ret) << endl;
     return false;
   }
 
   // Create Dispose Sample with Invalid Data by Disposing the Sample Instance
-  mdw->dispose(sample, HANDLE_NIL);
+  ret = mdw->dispose(sample, HANDLE_NIL);
+  if (ret != RETCODE_OK) {
+    cerr << "ERROR: run_single_dispose_filter_test: "
+      "Dispose instance failed: " << retcode_to_string(ret) << endl;
+    return false;
+  }
 
   // Wait for samples matching the query from the disposed instance
   if (ws->wait(active, max_wait_time) != RETCODE_OK) {
@@ -664,12 +889,13 @@ bool run_single_dispose_filter_test(const DomainParticipant_var& dp,
   ws->detach_condition(dr_qc);
 
   // Read the Number of Invalid Messages Taken
-  MessageDataReader_var mdr = MessageDataReader::_narrow(dr);
+  Readers readers(dr);
   MessageSeq data;
   SampleInfoSeq infoseq;
-  ret = mdr->take_w_condition(data, infoseq, LENGTH_UNLIMITED, dr_qc);
+  ret = readers.take(data, infoseq, dr_qc);
   if (ret != RETCODE_OK) {
-    cerr << "ERROR: run_single_dispose_filter_test: take_w_condition failed" << endl;
+    cerr << "ERROR: run_single_dispose_filter_test: take_w_condition failed: "
+      << retcode_to_string(ret) << endl;
     return false;
   }
   unsigned num_valid = 0;
@@ -683,12 +909,12 @@ bool run_single_dispose_filter_test(const DomainParticipant_var& dp,
   }
 
   // Compare Numbers to what was Expected
-  if (num_valid != 1) {
+  if (num_valid != 1u) {
     cerr << "ERROR: run_single_dispose_filter_test: "
       "expected one sample with valid data, got " << num_valid << endl;
     return false;
   }
-  if (num_invalid != (expect_dispose ? 1 : 0)) {
+  if (num_invalid != (expect_dispose ? 1u : 0u)) {
     cerr << "ERROR: run_single_dispose_filter_test: expected "
       << (expect_dispose ? "one sample" : "no samples")
       << " with invalid data, got " << num_invalid << endl;
@@ -696,8 +922,12 @@ bool run_single_dispose_filter_test(const DomainParticipant_var& dp,
   }
 
   // Cleanup
-  dr->delete_readcondition(dr_qc);
-  if (!test_cleanup(dp, pub, sub, dw, dr)) {
+  ret = dr->delete_readcondition(dr_qc);
+  if (ret != RETCODE_OK) {
+    cerr << "ERROR: run_single_dispose_filter_test: delete_readcondition failed: "
+        << retcode_to_string(ret) << endl;
+  }
+  if (!test_cleanup(pub, sub, dw, dr)) {
     cerr << "ERROR: run_single_dispose_filter_test: setup failed" << endl;
     return false;
   }
@@ -705,15 +935,14 @@ bool run_single_dispose_filter_test(const DomainParticipant_var& dp,
   return true;
 }
 
-bool run_dispose_filter_tests(const DomainParticipant_var& dp,
-  const MessageTypeSupport_var& ts, const Publisher_var& pub,
+bool run_dispose_filter_tests(const MessageTypeSupport_var& ts, const Publisher_var& pub,
   const Subscriber_var& sub)
 {
   /*
    * Run a "Safe" Query that just references key;
    * assert a normal message and a dispose message are in the results.
    */
-  if (!run_single_dispose_filter_test(dp, ts, pub, sub, "key >= 0", true)) {
+  if (!run_single_dispose_filter_test(ts, pub, sub, "key >= 0", true)) {
     cerr << "ERROR: run_dispose_filter_tests: safe query test failed!" << endl;
     return false;
   }
@@ -722,7 +951,7 @@ bool run_dispose_filter_tests(const DomainParticipant_var& dp,
    * Setup a "Unsafe" Query that references key and a normal field;
    * assert just a normal message is in the results.
    */
-  if (!run_single_dispose_filter_test(dp, ts, pub, sub, "key >= 0 AND iteration >= 0", false)) {
+  if (!run_single_dispose_filter_test(ts, pub, sub, "key >= 0 AND iteration >= 0", false)) {
     cerr << "ERROR: run_dispose_filter_tests: unsafe query test failed!" << endl;
     return false;
   }
@@ -730,9 +959,19 @@ bool run_dispose_filter_tests(const DomainParticipant_var& dp,
   return true;
 }
 
-int run_test(int argc, ACE_TCHAR *argv[])
+int run_test(int argc, ACE_TCHAR* argv[])
 {
   DomainParticipantFactory_var dpf = TheParticipantFactoryWithArgs(argc, argv);
+
+  ACE_Argv_Type_Converter conv(argc, argv);
+  char** const argva = conv.get_ASCII_argv();
+  for (int i = 1; i < argc; ++i) {
+    if (0 == std::strcmp("-dynamic", argva[i])) {
+      dynamic = true;
+      break;
+    }
+  }
+
   DomainParticipant_var dp =
     dpf->create_participant(23, PARTICIPANT_QOS_DEFAULT, 0,
                             DEFAULT_STATUS_MASK);
@@ -742,36 +981,54 @@ int run_test(int argc, ACE_TCHAR *argv[])
   Publisher_var pub = dp->create_publisher(PUBLISHER_QOS_DEFAULT, 0,
                                            DEFAULT_STATUS_MASK);
 
-  Subscriber_var sub = dp->create_subscriber(SUBSCRIBER_QOS_DEFAULT, 0,
-                                             DEFAULT_STATUS_MASK);
+  DomainParticipant_var dp_reader = dp;
+  if (dynamic) {
+    dp_reader = dpf->create_participant(23, PARTICIPANT_QOS_DEFAULT, 0, 0);
+    DDS::DynamicType_var dt = ts->get_type();
+    DDS::TypeSupport_var dts = new DDS::DynamicTypeSupport(dt);
+    CORBA::String_var type_name = ts->get_type_name();
+    dts->register_type(dp_reader, type_name);
+    TransportConfig_rch cfg = TheTransportRegistry->get_config("config2");
+    if (cfg) {
+      TheTransportRegistry->bind_config(cfg, dp_reader);
+    }
+  }
+
+  Subscriber_var sub = dp_reader->create_subscriber(SUBSCRIBER_QOS_DEFAULT, 0, 0);
 
   bool passed = true;
-  passed &= run_sorting_test(dp, ts, pub, sub);
-  passed &= run_filtering_test(dp, ts, pub, sub);
-  passed &= run_change_parameter_test(dp, ts, pub, sub);
-  passed &= run_complex_filtering_test(dp, ts, pub, sub);
-  passed &= run_dispose_filter_tests(dp, ts, pub, sub);
+  passed &= run_sorting_test(ts, pub, sub);
+  passed &= run_filtering_test(ts, pub, sub);
+  passed &= run_change_parameter_test(ts, pub, sub);
+  passed &= run_complex_filtering_test(ts, pub, sub);
+  passed &= run_dispose_filter_tests(ts, pub, sub);
 
+  pub = 0;
+  ts = 0;
+  sub = 0;
   dp->delete_contained_entities();
+
   dpf->delete_participant(dp);
+  if (dynamic) {
+    dp_reader->delete_contained_entities();
+    dpf->delete_participant(dp_reader);
+  }
   return passed ? 0 : 1;
 }
 
 
-int ACE_TMAIN(int argc, ACE_TCHAR *argv[])
+int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
 {
   int ret = 1;
-  try
-  {
+  try {
     ret = run_test(argc, argv);
-  }
-  catch (const CORBA::BAD_PARAM& ex) {
+  } catch (const CORBA::BAD_PARAM& ex) {
     ex._tao_print_exception("Exception caught in QueryConditionTest.cpp:");
     return 1;
   }
 
   // cleanup
-  TheServiceParticipant->shutdown ();
+  TheServiceParticipant->shutdown();
   ACE_Thread_Manager::instance()->wait();
   return ret;
 }

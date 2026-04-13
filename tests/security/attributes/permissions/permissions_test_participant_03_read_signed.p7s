@@ -1,21 +1,21 @@
 MIME-Version: 1.0
-Content-Type: multipart/signed; protocol="application/x-pkcs7-signature"; micalg="sha-256"; boundary="----691EE3D80E414D8952A0FC56F7302C22"
+Content-Type: multipart/signed; protocol="application/x-pkcs7-signature"; micalg="sha-256"; boundary="----D154F53208F9274B15C8B41E0879D6A9"
 
 This is an S/MIME signed message
 
-------691EE3D80E414D8952A0FC56F7302C22
+------D154F53208F9274B15C8B41E0879D6A9
 Content-Type: text/plain
 
-<?xml version="1.0"?>
-<dds xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.omg.org/spec/DDS-SECURITY/20160303/omg_shared_ca_permissions.xsd">
+<?xml version="1.0" encoding="utf-8"?>
+<dds xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.omg.org/spec/DDS-SECURITY/20170901/omg_shared_ca_permissions.xsd">
   <permissions>
     <grant name="factory_grant_read_domain_0">
       <!-- only allow join domain 0 and read protected topics. No explicit permission to write any topic -->
-      <subject_name>/C=GB/ST=JQ/O=Bob's Magical Widget Factory/CN=Roberto Gonzales/emailAddress=bob@magicalwidgets.com</subject_name>
+      <subject_name>emailAddress=bob@magicalwidgets.com,CN=Roberto Gonzales,O=Bob's Magical Widget Factory,ST=JQ,C=GB</subject_name>
       <validity>
         <!-- Format is CCYY-MM-DDThh:mm:ss[Z|(+|-)hh:mm] in GMT -->
         <not_before>2015-09-15T01:00:00</not_before>
-        <not_after>2025-09-15T01:00:00</not_after>
+        <not_after>2035-06-27T03:13:14.908199+00:00</not_after>
       </validity>
       <allow_rule>
         <domains>
@@ -278,7 +278,7 @@ Content-Type: text/plain
   </permissions>
 </dds>
 
-------691EE3D80E414D8952A0FC56F7302C22
+------D154F53208F9274B15C8B41E0879D6A9
 Content-Type: application/x-pkcs7-signature; name="smime.p7s"
 Content-Transfer-Encoding: base64
 Content-Disposition: attachment; filename="smime.p7s"
@@ -311,16 +311,16 @@ T2JqZWN0IENvbXB1dGluZyAoVGVzdCBQZXJtaXNzaW9ucyBDQSkxLzAtBgNVBAMM
 Jk9iamVjdCBDb21wdXRpbmcgKFRlc3QgUGVybWlzc2lvbnMgQ0EpMScwJQYJKoZI
 hvcNAQkBFhhpbmZvQG9iamVjdGNvbXB1dGluZy5jb20CCQCkjopvwK438jANBglg
 hkgBZQMEAgEFAKCB5DAYBgkqhkiG9w0BCQMxCwYJKoZIhvcNAQcBMBwGCSqGSIb3
-DQEJBTEPFw0xODA3MjMxNjUwMTJaMC8GCSqGSIb3DQEJBDEiBCCLQks5LHZdSCoF
-s0BAml0kCsoprPfqhKiW6v/AvmHNOTB5BgkqhkiG9w0BCQ8xbDBqMAsGCWCGSAFl
+DQEJBTEPFw0yNTA5MjcwMzEzMjJaMC8GCSqGSIb3DQEJBDEiBCBikDyD1X7CzAjq
+0dLlPPaHFozkmqKpJkDSo61/ei2OxzB5BgkqhkiG9w0BCQ8xbDBqMAsGCWCGSAFl
 AwQBKjALBglghkgBZQMEARYwCwYJYIZIAWUDBAECMAoGCCqGSIb3DQMHMA4GCCqG
 SIb3DQMCAgIAgDANBggqhkiG9w0DAgIBQDAHBgUrDgMCBzANBggqhkiG9w0DAgIB
-KDANBgkqhkiG9w0BAQEFAASCAQB5W8C7EiIeWlJ0TTmt1wYg8QpnT8Bh/+doRkAe
-K3eHyG+dloXaubwtbza0kCna7PjrzjciFqe86GTEWWKl8yzNZO4EhXtwXAM+T42X
-tPE31aFzH7AeJBIeyKVe8qz3Bsj3k5uFE1ftsRlzCDk/DsdEN9gfShC4vKLflMUg
-afLzyaWXKO+KWhZikR9Jm0njMU4il/AzScnrhjYHzfRCtC+wsysoPdqoGTD/kT6x
-Dxfa+51q+RmWn8BHim9IGUCslL8xRfRxGc35OOcEETI52fa/1jNhPF3LLOPpL6D3
-tde76C+xnVb+82xGOJqCm9LirKzbuFvFpw1STv3Y74EOpK05
+KDANBgkqhkiG9w0BAQEFAASCAQA/eczF1UlxaG/evQGFAt8kkWBReJgun6+JaWqd
+He/4dPLSoCn9ewgyOD8bIhhmT+4oakmTGJTYEYZoJLD+l1uU+XfaEZIdt+2zKtuX
+hvWFWo7h9lG7xWcDroH9Wv3Spn6jLbFWNPOdRRi9i5a2/HGl9bcQp6taH270sKWL
+nuoC3Bd8H/fatGDhUsfdg5eILGcAC6bJtOK/FbGop56NrBhiH0VZs9U1+dA7Vx/W
+jL6T9MGb5bRSwmjTb0kArs1jcM+agZGYhs2U7QXQ/m1VJ0Unj+cvZabNzTp7I25E
+MCbfONd7VgZRfINR47PwZzA+h9DOIDIj+b27+qgF01YaJRKt
 
-------691EE3D80E414D8952A0FC56F7302C22--
+------D154F53208F9274B15C8B41E0879D6A9--
 

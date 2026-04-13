@@ -2,8 +2,6 @@ eval '(exit $?0)' && eval 'exec perl -S $0 ${1+"$@"}'
     & eval 'exec perl -S $0 $argv:q'
     if 0;
 
-# -*- perl -*-
-
 my @original_ARGV = @ARGV;
 
 use Env (DDS_ROOT);
@@ -17,6 +15,7 @@ my $status = 0;
 
 my $test = new PerlDDS::TestFramework();
 
+$test->{dcps_log_level} = 'debug';
 $test->{dcps_debug_level} = 4;
 $test->{dcps_transport_debug_level} = 2;
 # will manually set -DCPSConfigFile
@@ -39,9 +38,18 @@ if ($test->flag('udp')) {
     $pub_opts .= " -DCPSConfigFile pub_udp.ini";
     $sub_opts .= " -DCPSConfigFile sub_udp.ini";
 }
+elsif ($test->flag('udp_free')) {
+    #similar to udp, but don't set localaddress / use localhost
+    $pub_opts .= " -DCPSConfigFile pub_udp_free.ini";
+    $sub_opts .= " -DCPSConfigFile sub_udp_free.ini";
+}
 elsif ($test->flag('multicast')) {
     $pub_opts .= " -DCPSConfigFile pub_multicast.ini";
     $sub_opts .= " -DCPSConfigFile sub_multicast.ini";
+}
+elsif ($test->flag('multicast_be')) {
+    $pub_opts .= " -DCPSConfigFile pub_multicast_be.ini";
+    $sub_opts .= " -DCPSConfigFile sub_multicast_be.ini";
 }
 elsif ($test->flag('default_tcp')) {
     $pub_opts .= " -t tcp";
@@ -143,7 +151,4 @@ $test->process("subscriber", $sub_exe, $sub_opts);
 $test->start_process("subscriber");
 $test->start_process("publisher");
 
-# ignore this issue that is already being tracked in redmine
-$test->ignore_error("(Redmine Issue# 1446)");
-# start killing processes in 300 seconds
 exit $test->finish(120);

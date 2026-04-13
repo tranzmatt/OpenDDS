@@ -1,17 +1,17 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
 #include "itl_generator.h"
+
 #include "be_extern.h"
 #include "global_extern.h"
 
-#include "utl_identifier.h"
-#include "utl_labellist.h"
+#include <dds/DCPS/Definitions.h>
 
+#include <utl_identifier.h>
+#include <utl_labellist.h>
 #include <ast_fixed.h>
 
 using namespace AstTypeClassification;
@@ -52,7 +52,7 @@ std::ostream&
 operator<<(std::ostream& out,
            const InlineType& it)
 {
-  AST_Typedef* td = AST_Typedef::narrow_from_decl(it.type);
+  AST_Typedef* td = dynamic_cast<AST_Typedef*>(it.type);
   if (td) {
     be_global->itl_ << '"' << it.type->repoID() << '"';
     return out;
@@ -69,7 +69,7 @@ operator<<(std::ostream& out,
     }
   }
   else if (c & CL_PRIMITIVE) {
-    switch (AST_PredefinedType::narrow_from_decl(it.type)->pt()) {
+    switch (dynamic_cast<AST_PredefinedType*>(it.type)->pt()) {
     case AST_PredefinedType::PT_long:
       be_global->itl_ << "{ \"kind\" : \"int\", \"bits\" : 32 }";
       break;
@@ -107,8 +107,17 @@ operator<<(std::ostream& out,
       be_global->itl_ << "{ \"kind\" : \"int\", \"bits\" : 1, \"note\" : { \"presentation\" : { \"type\" : \"bool\" } } }";
       break;
     case AST_PredefinedType::PT_octet:
+      be_global->itl_ << "{ \"kind\" : \"int\", \"bits\" : 8, \"unsigned\" : true, "
+        "\"note\" : { \"presentation\" : { \"type\" : \"byte\" } }  }";
+      break;
+#if OPENDDS_HAS_EXPLICIT_INTS
+    case AST_PredefinedType::PT_uint8:
       be_global->itl_ << "{ \"kind\" : \"int\", \"bits\" : 8, \"unsigned\" : true }";
       break;
+    case AST_PredefinedType::PT_int8:
+      be_global->itl_ << "{ \"kind\" : \"int\", \"bits\" : 8 }";
+      break;
+#endif
     case AST_PredefinedType::PT_any:
     case AST_PredefinedType::PT_object:
     case AST_PredefinedType::PT_value:
@@ -199,7 +208,7 @@ bool itl_generator::gen_typedef(AST_Typedef*, UTL_ScopedName* /*name*/,
   switch (base->node_type()) {
   case AST_Decl::NT_sequence:
     {
-      AST_Sequence *seq = AST_Sequence::narrow_from_decl(base);
+      AST_Sequence *seq = dynamic_cast<AST_Sequence*>(base);
       be_global->itl_ << Open(this)
                       << Indent(this) << "{\n"
                       << Open(this)
@@ -224,7 +233,7 @@ bool itl_generator::gen_typedef(AST_Typedef*, UTL_ScopedName* /*name*/,
     }
   case AST_Decl::NT_array:
     {
-      AST_Array* arr = AST_Array::narrow_from_decl(base);
+      AST_Array* arr = dynamic_cast<AST_Array*>(base);
       be_global->itl_ << Open(this)
                       << Indent(this) << "{\n"
                       << Open(this)
@@ -254,7 +263,7 @@ bool itl_generator::gen_typedef(AST_Typedef*, UTL_ScopedName* /*name*/,
     }
   case AST_Decl::NT_fixed:
     {
-      AST_Fixed* fixed = AST_Fixed::narrow_from_decl(base);
+      AST_Fixed* fixed = dynamic_cast<AST_Fixed*>(base);
       unsigned digits = fixed->digits()->ev()->u.ulval;
       unsigned scale = fixed->scale()->ev()->u.ulval;
       be_global->itl_

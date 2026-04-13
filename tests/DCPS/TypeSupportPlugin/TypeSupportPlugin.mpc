@@ -1,0 +1,7 @@
+project: dcps_cm {
+  Source_Files {
+    TypeSupportPlugin.cpp
+  }
+  IDL_Files {
+  }
+}

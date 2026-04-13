@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_TRANSPORTSENDBUFFER_H
-#define DCPS_TRANSPORTSENDBUFFER_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTSENDBUFFER_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTSENDBUFFER_H
 
 #include "dds/DCPS/dcps_export.h"
 
@@ -40,7 +40,7 @@ public:
   size_t capacity() const;
   void bind(TransportSendStrategy* strategy);
 
-  virtual void retain_all(const RepoId& pub_id) = 0;
+  virtual void retain_all(const GUID_t& pub_id);
   virtual void insert(SequenceNumber sequence,
                       TransportSendStrategy::QueueType* queue,
                       ACE_Message_Block* chain) = 0;
@@ -76,10 +76,10 @@ public:
   static const size_t UNLIMITED;
 
   void release_all();
+  typedef OPENDDS_VECTOR(BufferType) BufferVec;
   typedef OPENDDS_MAP(SequenceNumber, BufferType) BufferMap;
   void release_acked(SequenceNumber seq);
-  void release(BufferMap::iterator buffer_iter);
-
+  void remove_acked(SequenceNumber seq, BufferVec& removed);
   size_t n_chunks() const;
 
   SingleSendBuffer(size_t capacity, size_t max_samples_per_packet);
@@ -87,34 +87,144 @@ public:
 
   bool resend(const SequenceRange& range, DisjointSequence* gaps = 0);
 
-  // caller must already have the send strategy lock
-  bool resend_i(const SequenceRange& range, DisjointSequence* gaps = 0);
-  bool resend_i(const SequenceRange& range, DisjointSequence* gaps,
-                const RepoId& destination);
-
-  void resend_fragments_i(const SequenceNumber& sequence,
-                          const DisjointSequence& fragments);
-
-  SequenceNumber low() const;
-  SequenceNumber high() const;
-  bool empty() const;
-  bool contains(const SequenceNumber& seq) const;
-
-  void retain_all(const RepoId& pub_id);
+  void retain_all(const GUID_t& pub_id);
   void insert(SequenceNumber sequence,
               TransportSendStrategy::QueueType* queue,
               ACE_Message_Block* chain);
   void insert_fragment(SequenceNumber sequence,
                        SequenceNumber fragment,
+                       bool is_last_fragment,
                        TransportSendStrategy::QueueType* queue,
                        ACE_Message_Block* chain);
 
+  void pre_insert(SequenceNumber sequence);
+
+  class Proxy {
+  public:
+    Proxy(SingleSendBuffer& ssb)
+      : ssb_(ssb)
+    {
+      ssb_.mutex_.acquire();
+    }
+
+    ~Proxy()
+    {
+      ssb_.mutex_.release();
+    }
+
+    SequenceNumber low() const
+    {
+      if (ssb_.buffers_.empty()) throw std::exception();
+      return ssb_.buffers_.begin()->first;
+    }
+
+    SequenceNumber high() const
+    {
+      if (ssb_.buffers_.empty()) throw std::exception();
+      return ssb_.buffers_.rbegin()->first;
+    }
+
+    bool empty() const
+    {
+      return ssb_.buffers_.empty();
+    }
+
+    bool contains(SequenceNumber seq) const
+    {
+      return ssb_.buffers_.count(seq);
+    }
+
+    bool contains(SequenceNumber seq, GUID_t& destination) const
+    {
+      if (ssb_.buffers_.count(seq)) {
+        DestinationMap::const_iterator pos = ssb_.destinations_.find(seq);
+        destination = pos == ssb_.destinations_.end() ? GUID_UNKNOWN : pos->second;
+        return true;
+      }
+      return false;
+    }
+
+    SequenceNumber pre_low() const
+    {
+      if (ssb_.pre_seq_.empty()) throw std::exception();
+      return *ssb_.pre_seq_.begin();
+    }
+
+    SequenceNumber pre_high() const
+    {
+      if (ssb_.pre_seq_.empty()) throw std::exception();
+      return *ssb_.pre_seq_.rbegin();
+    }
+
+    bool pre_empty() const
+    {
+      return ssb_.pre_seq_.empty();
+    }
+
+    bool pre_contains(SequenceNumber sequence) const
+    {
+      return ssb_.pre_seq_.count(sequence);
+    }
+
+    // caller must already have the send strategy lock
+    bool resend_i(const SequenceRange& range, DisjointSequence* gaps = 0)
+    {
+      return ssb_.resend_i(range, gaps);
+    }
+
+    bool resend_i(const SequenceRange& range, DisjointSequence* gaps,
+                  const GUID_t& destination)
+    {
+      return ssb_.resend_i(range, gaps, destination);
+    }
+
+    void resend_fragments_i(SequenceNumber sequence,
+                            const DisjointSequence& fragments,
+                            size_t& cumulative_send_count)
+    {
+      ssb_.resend_fragments_i(sequence, fragments, cumulative_send_count);
+    }
+
+    bool has_frags(const SequenceNumber& seq) const
+    {
+      return ssb_.has_frags(seq);
+    }
+
+
+  private:
+    SingleSendBuffer& ssb_;
+    OPENDDS_DELETED_COPY_MOVE_CTOR_ASSIGN(Proxy)
+  };
+
+  void pre_clear()
+  {
+    ACE_GUARD(ACE_Thread_Mutex, g, mutex_);
+    pre_seq_.clear();
+  }
+
+  bool has_frags(const SequenceNumber& seq) const;
+
+  /// Measure of overall memory used by this object
+  /// The number itself is not meaningful but can be used for tracking trends over time
+  size_t size() const;
+
 private:
-  void check_capacity();
-  RemoveResult retain_buffer(const RepoId& pub_id, BufferType& buffer);
+  void check_capacity_i(BufferVec& removed);
+  void release_i(BufferMap::iterator buffer_iter);
+  void remove_i(BufferMap::iterator buffer_iter, BufferVec& removed);
+
+  RemoveResult retain_buffer(const GUID_t& pub_id, BufferType& buffer);
   void insert_buffer(BufferType& buffer,
                      TransportSendStrategy::QueueType* queue,
                      ACE_Message_Block* chain);
+
+  // caller must already have the send strategy lock
+  bool resend_i(const SequenceRange& range, DisjointSequence* gaps = 0);
+  bool resend_i(const SequenceRange& range, DisjointSequence* gaps,
+                const GUID_t& destination);
+  void resend_fragments_i(SequenceNumber sequence,
+                          const DisjointSequence& fragments,
+                          size_t& cumulative_send_count);
 
   size_t n_chunks_;
 
@@ -128,8 +238,15 @@ private:
   typedef OPENDDS_MAP(SequenceNumber, BufferMap) FragmentMap;
   FragmentMap fragments_;
 
-  typedef OPENDDS_MAP(SequenceNumber, RepoId) DestinationMap;
+  typedef OPENDDS_MAP(SequenceNumber, GUID_t) DestinationMap;
   DestinationMap destinations_;
+
+  typedef OPENDDS_SET(SequenceNumber) SequenceNumberSet;
+  SequenceNumberSet pre_seq_;
+
+  SequenceNumber minimum_sn_allowed_;
+
+  mutable ACE_Thread_Mutex mutex_;
 };
 
 } // namespace DCPS

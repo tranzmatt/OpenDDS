@@ -9,11 +9,13 @@
 #ifndef OPENDDS_DCPS_REPLAYER_H
 #define OPENDDS_DCPS_REPLAYER_H
 
-#include "dds/DCPS/PoolAllocator.h"
-#include "dds/DCPS/RcObject.h"
-#include "dds/DCPS/RcHandle_T.h"
-#include "dds/DCPS/RawDataSample.h"
-#include "dds/DdsDcpsInfrastructureC.h"
+#include "PoolAllocator.h"
+#include "RcObject.h"
+#include "RcHandle_T.h"
+#include "RawDataSample.h"
+#include "LocalObject.h"
+
+#include <dds/DdsDcpsInfrastructureC.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -29,7 +31,7 @@ class Replayer;
  *
  * This class is for handling callbacks from the Replayer object.
  */
-class OpenDDS_Dcps_Export ReplayerListener : public RcObject {
+class OpenDDS_Dcps_Export ReplayerListener : public virtual RcObject {
 public:
   ~ReplayerListener();
   /**
@@ -56,7 +58,7 @@ typedef TAO_Objref_Var_T<Replayer> Replayer_var;
  * a recorder, this allows the data to be replayed to DataReaders.
  */
 class OpenDDS_Dcps_Export Replayer
-  : public virtual RcObject {
+  : public virtual LocalObjectBase {
 public:
   typedef Replayer_ptr _ptr_type;
   typedef Replayer_var _var_type;
@@ -70,48 +72,44 @@ public:
    *
    * @note Only samples of type SAMPLE_DATA should be sent.
    */
-  virtual DDS::ReturnCode_t write (const RawDataSample& sample )=0;
+  virtual DDS::ReturnCode_t write (const RawDataSample& sample) = 0;
 
   /**
    * Send the sample to the specified DataReader.
    *
    * @note Only samples of type SAMPLE_DATA should be sent.
    */
-  virtual DDS::ReturnCode_t write_to_reader (DDS::InstanceHandle_t subscription,                                                       // from PublicationMatchedStatus
-                                             const RawDataSample&  sample )=0;
+  virtual DDS::ReturnCode_t write_to_reader (DDS::InstanceHandle_t subscription, // from PublicationMatchedStatus
+                                             const RawDataSample&  sample) = 0;
 
   /**
    * Send the samples to the specified DataReader.
    *
    * @note Only samples of type SAMPLE_DATA should be sent.
    */
-  virtual DDS::ReturnCode_t write_to_reader (DDS::InstanceHandle_t    subscription,                                                    // from PublicationMatchedStatus
-                                             const RawDataSampleList& samples )=0;
+  virtual DDS::ReturnCode_t write_to_reader (DDS::InstanceHandle_t    subscription, // from PublicationMatchedStatus
+                                             const RawDataSampleList& samples ) = 0;
 
   /**
    * Set the Quality of Service settings for the Replayer.
-   *
    */
   virtual DDS::ReturnCode_t set_qos (const DDS::PublisherQos &  publisher_qos,
-                                     const DDS::DataWriterQos & datawriter_qos)=0;
+                                     const DDS::DataWriterQos & datawriter_qos) = 0;
 
   /**
    * Get the Quality of Service settings for the Replayer.
-   *
    */
   virtual DDS::ReturnCode_t get_qos (DDS::PublisherQos &  publisher_qos,
-                                     DDS::DataWriterQos & datawriter_qos)=0;
+                                     DDS::DataWriterQos & datawriter_qos) = 0;
 
   /**
    * Change the listener for this Replayer.
-   *
    */
   virtual DDS::ReturnCode_t set_listener (const ReplayerListener_rch & a_listener,
-                                          DDS::StatusMask              mask = DEFAULT_STATUS_MASK)=0;
+                                          DDS::StatusMask              mask = DEFAULT_STATUS_MASK) = 0;
 
   /**
    * Get the listener for this Replayer.
-   *
    */
   virtual ReplayerListener_rch get_listener() = 0;
 };

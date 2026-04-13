@@ -5,11 +5,14 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_BUILTIN_SECURITY_INST_H
-#define OPENDDS_DCPS_BUILTIN_SECURITY_INST_H
+#ifndef OPENDDS_DCPS_SECURITY_BUILTINSECURITYPLUGININST_H
+#define OPENDDS_DCPS_SECURITY_BUILTINSECURITYPLUGININST_H
 
-#include "dds/DCPS/security/DdsSecurity_Export.h"
-#include "dds/DCPS/security/framework/SecurityPluginInst.h"
+#include "OpenDDS_Security_Export.h"
+
+#include "framework/SecurityPluginInst.h"
+
+#include <dds/OpenDDSConfigWrapper.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -21,31 +24,31 @@ namespace Security {
  *
  * @brief Factory object to create interfaces for the BuiltIn plugin.
  */
-class DdsSecurity_Export BuiltInSecurityPluginInst : public SecurityPluginInst {
+class OpenDDS_Security_Export BuiltInSecurityPluginInst : public SecurityPluginInst {
 public:
 
   BuiltInSecurityPluginInst();
   ~BuiltInSecurityPluginInst();
 
-#ifdef OPENDDS_SECURITY
+#if OPENDDS_CONFIG_SECURITY
   virtual Authentication_var create_authentication();
   virtual AccessControl_var create_access_control();
   virtual CryptoKeyFactory_var create_crypto_key_factory();
   virtual CryptoKeyExchange_var create_crypto_key_exchange();
   virtual CryptoTransform_var create_crypto_transform();
-  virtual Utility* create_utility();
+  virtual DCPS::RcHandle<Utility> create_utility();
 #endif
 
   virtual void shutdown();
 
 private:
-#ifdef OPENDDS_SECURITY
+#if OPENDDS_CONFIG_SECURITY
   Authentication_var authentication_;
   AccessControl_var access_control_;
   CryptoKeyFactory_var key_factory_;
   CryptoKeyExchange_var key_exchange_;
   CryptoTransform_var transform_;
-  Utility* utility_;
+  DCPS::RcHandle<Utility> utility_;
 #endif
 
   BuiltInSecurityPluginInst(const BuiltInSecurityPluginInst&);

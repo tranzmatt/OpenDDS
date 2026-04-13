@@ -1,5 +1,5 @@
-#ifndef Allocation_Macros_h
-#define Allocation_Macros_h
+#ifndef OPENDDS_CORBA_TAO_ALLOCATION_MACROS_H
+#define OPENDDS_CORBA_TAO_ALLOCATION_MACROS_H
 
 #include "ace/Malloc_Base.h"
 
@@ -9,12 +9,12 @@
      else { POINTER = new (ptr) CONSTRUCTOR; } \
    } while (0)
 # define ACE_ALLOCATOR_NEW_RETURN(POINTER,CONSTRUCTOR) \
-  do { void* ptr = ACE_Allocator::instance ()->malloc (sizeof (CONSTRUCTOR));; \
+  do { void* ptr = ACE_Allocator::instance ()->malloc (sizeof (CONSTRUCTOR)); \
      if (ptr == 0) { POINTER = 0; errno = ENOMEM; return;}                \
      else { POINTER = new (POINTER) CONSTRUCTOR; } \
   } while (0)
 # define ACE_ALLOCATOR_NEW_NORETURN(POINTER,CONSTRUCTOR) \
-  do { void* ptr = ACE_Allocator::instance ()->malloc (sizeof (CONSTRUCTOR));; \
+  do { void* ptr = ACE_Allocator::instance ()->malloc (sizeof (CONSTRUCTOR)); \
      if (ptr == 0) { POINTER = 0; errno = ENOMEM;}                        \
      else { (POINTER = new (POINTER) CONSTRUCTOR; } \
   } while (0)

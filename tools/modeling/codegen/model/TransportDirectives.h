@@ -1,5 +1,5 @@
-#ifndef TRANSPORT_DIRECTIVES_H
-#define TRANSPORT_DIRECTIVES_H
+#ifndef OPENDDS_MODEL_TRANSPORTDIRECTIVES_H
+#define OPENDDS_MODEL_TRANSPORTDIRECTIVES_H
 
 // Needed here to avoid the pragma below when necessary.
 #include /**/ "ace/pre.h"
@@ -41,6 +41,8 @@ namespace OpenDDS { namespace Model { namespace Transport {
 }; }; };
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
+
+#include /**/ "ace/post.h"
 
 #endif
 

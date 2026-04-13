@@ -35,7 +35,7 @@
 namespace {
 
 void cleanup_directory(const OPENDDS_VECTOR(OPENDDS_STRING) & path,
-                       const ACE_CString & data_dir)
+                       const OpenDDS::DCPS::String& data_dir)
 {
   if (path.empty()) return;
 
@@ -60,20 +60,18 @@ void cleanup_directory(const OPENDDS_VECTOR(OPENDDS_STRING) & path,
  * @brief Event handler that is called when @c service_cleanup_delay
  *        period expires.
  */
-class Cleanup_Handler : public OpenDDS::DCPS::RcEventHandler {
+class Cleanup_Handler : public virtual OpenDDS::DCPS::RcEventHandler {
 public:
 
-  typedef
-  OpenDDS::DCPS::DataDurabilityCache::sample_data_type data_type;
-  typedef
-  OpenDDS::DCPS::DataDurabilityCache::sample_list_type list_type;
-  typedef ptrdiff_t list_difference_type;
+  typedef OpenDDS::DCPS::DataDurabilityCache::sample_data_type data_type;
+  typedef OpenDDS::DCPS::DataDurabilityCache::sample_list_type list_type;
+  typedef list_type::size_type list_index_type;
 
-  Cleanup_Handler(list_type & sample_list,
-                  list_difference_type index,
-                  ACE_Allocator * allocator,
-                  const OPENDDS_VECTOR(OPENDDS_STRING) & path,
-                  const ACE_CString & data_dir)
+  Cleanup_Handler(list_type& sample_list,
+                  list_index_type index,
+                  ACE_Allocator* allocator,
+                  const OPENDDS_VECTOR(OpenDDS::DCPS::String)& path,
+                  const OpenDDS::DCPS::String& data_dir)
   : sample_list_(sample_list)
   , index_(index)
   , allocator_(allocator)
@@ -85,7 +83,10 @@ public:
   }
 
   virtual int handle_timeout(const ACE_Time_Value& /* current_time */,
-                             const void* /* act */) {
+                             const void* /* act */)
+  {
+    OpenDDS::DCPS::ThreadStatusManager::Event ev(TheServiceParticipant->get_thread_status_manager());
+
     if (OpenDDS::DCPS::DCPS_debug_level >= 4) {
       ACE_DEBUG((LM_DEBUG,
                  ACE_TEXT("(%P|%t) OpenDDS - Cleaning up ")
@@ -139,7 +140,7 @@ private:
   list_type & sample_list_;
 
   /// Location in list/array of queue to be deallocated.
-  list_difference_type const index_;
+  list_index_type const index_;
 
   /// Allocator to be used when deallocating data queue.
   ACE_Allocator * const allocator_;
@@ -157,9 +158,9 @@ private:
   OpenDDS::DCPS::DataDurabilityCache::timer_id_list_type *
   timer_ids_;
 
-  OPENDDS_VECTOR(OPENDDS_STRING) path_;
+  OPENDDS_VECTOR(OpenDDS::DCPS::String) path_;
 
-  ACE_CString data_dir_;
+  OpenDDS::DCPS::String data_dir_;
 };
 
 } // namespace
@@ -293,9 +294,8 @@ OpenDDS::DCPS::DataDurabilityCache::DataDurabilityCache(
   init();
 }
 
-OpenDDS::DCPS::DataDurabilityCache::DataDurabilityCache(
-  DDS::DurabilityQosPolicyKind kind,
-  ACE_CString & data_dir)
+OpenDDS::DCPS::DataDurabilityCache::DataDurabilityCache(DDS::DurabilityQosPolicyKind kind,
+                                                        const String& data_dir)
   : allocator_(new ACE_New_Allocator)
   , kind_(kind)
   , data_dir_(data_dir)
@@ -394,7 +394,7 @@ void OpenDDS::DCPS::DataDurabilityCache::init()
               ACE_Message_Block * current = &mb;
 
               while (!is.eof()) {
-                is.read(current->wr_ptr(), current->space());
+                is.read(current->wr_ptr(), static_cast<std::streamsize>(current->space()));
 
                 if (is.bad()) break;
 
@@ -644,7 +644,7 @@ OpenDDS::DCPS::DataDurabilityCache::insert(
           sample.get_sample(data, len, timestamp);
 
           os << timestamp.sec << ' ' << timestamp.nanosec << ' ';
-          os.write(data, len);
+          os.write(data, static_cast<std::streamsize>(len));
 
         } catch (const std::exception& ex) {
           if (DCPS_debug_level > 0) {
@@ -662,10 +662,9 @@ OpenDDS::DCPS::DataDurabilityCache::insert(
 
   // Schedule cleanup timer.
   //FUTURE: The cleanup delay needs to be persisted (if QoS is persistent)
-  ACE_Time_Value const cleanup_delay(
-    duration_to_time_value(qos.service_cleanup_delay));
+  const TimeDuration cleanup_delay(qos.service_cleanup_delay);
 
-  if (cleanup_delay > ACE_Time_Value::zero) {
+  if (!cleanup_delay.is_zero()) {
     if (OpenDDS::DCPS::DCPS_debug_level >= 4) {
       ACE_DEBUG((LM_DEBUG,
                  ACE_TEXT("OpenDDS (%P|%t) Scheduling durable data ")
@@ -677,9 +676,9 @@ OpenDDS::DCPS::DataDurabilityCache::insert(
                  type_name));
     }
 
-    Cleanup_Handler * const cleanup =
+    Cleanup_Handler* const cleanup =
       new Cleanup_Handler(*sample_list,
-                          slot - &(*sample_list)[0],
+                          static_cast<size_t>(slot - &(*sample_list)[0]),
                           this->allocator_.get(),
                           path,
                           this->data_dir_);
@@ -687,7 +686,7 @@ OpenDDS::DCPS::DataDurabilityCache::insert(
     long const tid =
       this->reactor_->schedule_timer(cleanup,
                                      0, // ACT
-                                     cleanup_delay);
+                                     cleanup_delay.value());
     if (tid == -1) {
       ACE_GUARD_RETURN(ACE_SYNCH_MUTEX, guard, this->lock_, false);
 
@@ -782,8 +781,8 @@ OpenDDS::DCPS::DataDurabilityCache::get_data(
    */
   DDS::ReturnCode_t ret =
     data_writer->register_instance_from_durable_data(handle,
-                                     move(registration_sample),
-                                     registration_timestamp);
+                                                     OPENDDS_MOVE_NS::move(registration_sample),
+                                                     registration_timestamp);
 
   if (ret != DDS::RETCODE_OK)
     return false;
@@ -833,10 +832,11 @@ OpenDDS::DCPS::DataDurabilityCache::get_data(
                      sample_length);
       mb->wr_ptr(sample_length);
 
-      const DDS::ReturnCode_t ret = data_writer->write(move(mb), handle,
-        source_timestamp, 0 /* no content filtering */);
-
-      if (ret != DDS::RETCODE_OK) {
+      if (data_writer->write(OPENDDS_MOVE_NS::move(mb),
+                             handle,
+                             source_timestamp,
+                             0 /* no content filtering */,
+                             0 /* no pointer to data */) != DDS::RETCODE_OK) {
         return false;
       }
     }

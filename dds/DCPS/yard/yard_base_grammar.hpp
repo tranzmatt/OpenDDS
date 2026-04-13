@@ -14,8 +14,8 @@
 // any single rule from a set of rules, or "Seq" which attempts to match a sequence
 // of rules.
 
-#ifndef YARD_BASE_GRAMMAR_HPP
-#define YARD_BASE_GRAMMAR_HPP
+#ifndef OPENDDS_DCPS_YARD_YARD_BASE_GRAMMAR_HPP
+#define OPENDDS_DCPS_YARD_YARD_BASE_GRAMMAR_HPP
 
 namespace yard
 {
@@ -34,7 +34,7 @@ namespace yard
             bool b = false;
 
             try {
-                b = Rule_T::template Match(p);
+                b = Rule_T::Match(p);
             }
             catch(...)
             {
@@ -61,7 +61,7 @@ namespace yard
     {
         template<typename ParserState_T>
         static bool Match(ParserState_T& p) {
-            if (!Rule_T::template Match(p)) {
+            if (!Rule_T::Match(p)) {
                 printf("Ill formed input, expected rule %s failed to match\n",
                     typeid(Rule_T).name());
                 p.template OutputLocation<Rule_T>();
@@ -116,7 +116,7 @@ namespace yard
         template<typename ParserState_T>
         static bool Match(ParserState_T& p) {
             typename ParserState_T::Iterator pos = p.GetPos();
-            if (Rule_T::template Match(p)) {
+            if (Rule_T::Match(p)) {
                 p.SetPos(pos);
                 return true;
             }
@@ -132,7 +132,7 @@ namespace yard
         template<typename ParserState_T>
         static bool Match(ParserState_T& p) {
             typename ParserState_T::Iterator pos = p.GetPos();
-            if (Rule_T::template Match(p)) {
+            if (Rule_T::Match(p)) {
                 p.SetPos(pos);
                 return false;
             }
@@ -159,16 +159,16 @@ namespace yard
         template<typename ParserState_T>
         static bool Match(ParserState_T& p) {
           return
-              T0::template Match(p)
-            || T1::template Match(p)
-            || T2::template Match(p)
-            || T3::template Match(p)
-            || T4::template Match(p)
-            || T5::template Match(p)
-            || T6::template Match(p)
-            || T7::template Match(p)
-            || T8::template Match(p)
-            || T9::template Match(p);
+              T0::Match(p)
+            || T1::Match(p)
+            || T2::Match(p)
+            || T3::Match(p)
+            || T4::Match(p)
+            || T5::Match(p)
+            || T6::Match(p)
+            || T7::Match(p)
+            || T8::Match(p)
+            || T9::Match(p);
         }
     };
 
@@ -193,16 +193,16 @@ namespace yard
         static bool Match(ParserState_T& p) {
             typename ParserState_T::Iterator pos = p.GetPos();
             if (
-            T0::template Match(p)
-            && T1::template Match(p)
-            && T2::template Match(p)
-            && T3::template Match(p)
-            && T4::template Match(p)
-            && T5::template Match(p)
-            && T6::template Match(p)
-            && T7::template Match(p)
-            && T8::template Match(p)
-            && T9::template Match(p)
+            T0::Match(p)
+            && T1::Match(p)
+            && T2::Match(p)
+            && T3::Match(p)
+            && T4::Match(p)
+            && T5::Match(p)
+            && T6::Match(p)
+            && T7::Match(p)
+            && T8::Match(p)
+            && T9::Match(p)
             )
             {
                 return true;
@@ -226,7 +226,7 @@ namespace yard
         static bool Match(ParserState_T& p) {
             if (!p.AtEnd())
             {
-                while (Rule_T::template Match(p))
+                while (Rule_T::Match(p))
                 { }
             }
             return true;
@@ -242,10 +242,10 @@ namespace yard
     {
         template<typename ParserState_T>
         static bool Match(ParserState_T& p) {
-            if (!Rule_T::template Match(p)) {
+            if (!Rule_T::Match(p)) {
                 return false;
             }
-            Star<Rule_T>::template Match(p);
+            Star<Rule_T>::Match(p);
             return true;
         }
     };
@@ -258,7 +258,7 @@ namespace yard
         template<typename ParserState_T>
         static bool Match(ParserState_T& p) {
             if (!p.AtEnd())
-                Rule_T::template Match(p);
+                Rule_T::Match(p);
             return true;
         }
     };
@@ -272,7 +272,7 @@ namespace yard
         {
             typename ParserState_T::Iterator pos = p.GetPos();
             for (int i=0; i < N; ++i) {
-                if (!Rule_T::template Match(p)) {
+                if (!Rule_T::Match(p)) {
                   p.SetPos(pos);
                   return false;
                 }
@@ -291,7 +291,7 @@ namespace yard
         static bool Match(ParserState_T& p) {
             typename ParserState_T::Iterator pos = p.GetPos();
             while (true) {
-                if (Rule_T::template Match(p)) {
+                if (Rule_T::Match(p)) {
                     return true;
                 }
                 p.GotoNext();
@@ -380,7 +380,7 @@ namespace yard
             int nCurLogMsg = nUniqueLogMsg++;
             printf("#%d : matching parse rule %s\n", nCurLogMsg, typeid(T).name());
             p.template OutputLocation<T>();
-            bool b = T::template Match(p);
+            bool b = T::Match(p);
             if (b) {
                 printf("#%d : succeeded for rule %s\n", nCurLogMsg, typeid(T).name());
             }
@@ -397,4 +397,4 @@ namespace yard
     { };
 }
 
-#endif // #ifndef YARD_BASE_GRAMMAR_HPP
+#endif // OPENDDS_DCPS_YARD_YARD_BASE_GRAMMAR_HPP

@@ -8,12 +8,16 @@
 #ifndef OPENDDS_DCPS_DATASAMPLEHEADER_H
 #define OPENDDS_DCPS_DATASAMPLEHEADER_H
 
+#include "Cached_Allocator_With_Overflow_T.h"
 #include "Definitions.h"
 #include "GuidUtils.h"
+#include "Message_Block_Ptr.h"
 #include "PoolAllocationBase.h"
 #include "SequenceNumber.h"
-#include "RepoIdTypes.h"
-#include "Message_Block_Ptr.h"
+
+#include <ace/Guard_T.h>
+#include <ace/Lock.h>
+
 #include <iosfwd>
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
@@ -170,11 +174,11 @@ struct OpenDDS_Dcps_Export DataSampleHeader : public PoolAllocationBase {
 
   /// Identify the DataWriter that produced the sample data being
   /// sent.
-  PublicationId publication_id_;
+  GUID_t publication_id_;
 
   /// Id representing the coherent group.  Optional field that's only present if
   /// the flag for group_coherent_ is set.
-  RepoId publisher_id_;
+  GUID_t publisher_id_;
 
   /// Optional field present if the content_filter_ flag bit is set.
   /// Indicates which readers should not receive the data.
@@ -222,10 +226,10 @@ struct OpenDDS_Dcps_Export DataSampleHeader : public PoolAllocationBase {
   DataSampleHeader& operator=(ACE_Message_Block& buffer);
 
   /// Amount of data read when initializing from a buffer.
-  size_t marshaled_size() const;
+  size_t get_serialized_size() const;
 
   /// Similar to IDL compiler generated methods.
-  static size_t max_marshaled_size();
+  static size_t get_max_serialized_size();
 
   /// Implement load from buffer.
   void init(ACE_Message_Block* buffer);
@@ -244,16 +248,55 @@ struct OpenDDS_Dcps_Export DataSampleHeader : public PoolAllocationBase {
   static void split_payload(const ACE_Message_Block& orig, size_t size,
                             Message_Block_Ptr& head, Message_Block_Ptr& tail);
 
-  /// Returns false if the sample is dispose and/or unregister,
+  /// Returns true if the sample has a complete serialized payload.
   bool valid_data() const;
+
+  DDS::InstanceStateKind instance_state() const
+  {
+    switch (message_id_) {
+    case UNREGISTER_INSTANCE:
+      return DDS::NOT_ALIVE_NO_WRITERS_INSTANCE_STATE;
+    case DISPOSE_INSTANCE:
+    case DISPOSE_UNREGISTER_INSTANCE:
+      return DDS::NOT_ALIVE_DISPOSED_INSTANCE_STATE;
+    default:
+      return DDS::ALIVE_INSTANCE_STATE;
+    }
+  }
 
 private:
   /// Keep track of the amount of data read from a buffer.
-  size_t marshaled_size_;
+  size_t serialized_size_;
+
+  // If the constructor argument is null this object does nothing.
+  // Otherwise it is an ACE_Guard for the lock constructor argument.
+  struct MaybeGuard {
+    explicit MaybeGuard(ACE_Lock* a) : guard_(a ? *a : non_lock) {}
+
+    ACE_Guard<ACE_Lock> guard_;
+
+    struct NoOpLock : ACE_Lock {
+      int remove() { return 0; }
+      int acquire() { return 0; }
+      int tryacquire() { return 0; }
+      int release() { return 0; }
+      int acquire_read() { return 0; }
+      int acquire_write() { return 0; }
+      int tryacquire_read() { return 0; }
+      int tryacquire_write() { return 0; }
+      int tryacquire_write_upgrade() { return 0; }
+    };
+    static NoOpLock non_lock;
+  };
 };
 
-const char* to_string(const MessageId value);
-const char* to_string(const SubMessageId value);
+typedef Cached_Allocator_With_Overflow<DataSampleHeader, ACE_Null_Mutex> DataSampleHeaderAllocator;
+
+OpenDDS_Dcps_Export
+const char* to_string(MessageId value);
+OpenDDS_Dcps_Export
+const char* to_string(SubMessageId value);
+OpenDDS_Dcps_Export
 OPENDDS_STRING to_string(const DataSampleHeader& value);
 
 /// Marshal/Insertion into a buffer.
@@ -263,11 +306,11 @@ bool operator<<(ACE_Message_Block&, const DataSampleHeader& value);
 #ifndef OPENDDS_SAFETY_PROFILE
 /// Message Id enumeration insertion onto an ostream.
 OpenDDS_Dcps_Export
-std::ostream& operator<<(std::ostream& str, const MessageId value);
+std::ostream& operator<<(std::ostream& os, MessageId value);
 
 /// Sub-Message Id enumeration insertion onto an ostream.
 OpenDDS_Dcps_Export
-std::ostream& operator<<(std::ostream& os, const SubMessageId rhs);
+std::ostream& operator<<(std::ostream& os, SubMessageId value);
 
 /// Message header insertion onto an ostream.
 OpenDDS_Dcps_Export

@@ -9,19 +9,29 @@
 #include "DataReaderListenerImpl.h"
 #include "TestMsgTypeSupportC.h"
 #include "TestMsgTypeSupportImpl.h"
+#include "dds/DCPS/DomainParticipantImpl.h"
+#include "dds/DCPS/DataReaderImpl.h"
+#include "dds/DCPS/GuidConverter.h"
 #if !defined (DDS_HAS_MINIMUM_BIT)
 #include "dds/DdsDcpsCoreTypeSupportC.h"
 #endif // !defined (DDS_HAS_MINIMUM_BIT)
 
 DataReaderListenerImpl::~DataReaderListenerImpl()
 {
-  ACE_DEBUG((LM_DEBUG, "(%P|%t) DataReader %C is done\n", id_.c_str()));
+  ACE_DEBUG((LM_DEBUG, "(%P|%t) DataReader %C is being destroyed\n", OpenDDS::DCPS::LogGuid(reader_guid_).c_str()));
   if (expected_samples_ && received_samples_ != expected_samples_) {
     ACE_ERROR((LM_ERROR, "ERROR: expected %d but received %d\n",
                expected_samples_, received_samples_));
   } else if (expected_samples_) {
     ACE_DEBUG((LM_DEBUG, "(%P|%t) Expected number of samples received\n"));
   }
+}
+
+void
+DataReaderListenerImpl::set_guid(const OpenDDS::DCPS::GUID_t& guid)
+{
+  reader_guid_ = guid;
+  ACE_DEBUG((LM_DEBUG, "(%P|%t) DataReader %C created\n", OpenDDS::DCPS::LogGuid(reader_guid_).c_str()));
 }
 
 void
@@ -70,34 +80,59 @@ DataReaderListenerImpl::on_data_available(DDS::DataReader_ptr reader)
 
   DDS::ReturnCode_t error = reader_i->take_next_sample(message, info);
 
-  if (error == DDS::RETCODE_OK) {
+  while (error == DDS::RETCODE_OK) {
     if (info.valid_data) {
-      if (++received_samples_ == expected_samples_) {
-        subscriber_->delete_datareader(reader);
-        ACE_DEBUG((LM_DEBUG, "(%P|%t) datareader deleted\n"));
-        done_callback_(builtin_read_error_);
-      } else {
-        if (static_cast<int>(writers_.size()) == total_writers_) {
-          ACE_DEBUG((LM_INFO, "(%P|%t) Reader %C got message %d (#%d from known writer %C)\n", id_.data(), received_samples_, message.value, writers_[message.src].data()));
-        } else {
-          ACE_DEBUG((LM_INFO, "(%P|%t) Reader %C got message %d (#%d from (ambiguous) writer #%d)\n", id_.data(), received_samples_, message.value, message.src));
+      DDS::Subscriber_var subscriber = reader->get_subscriber();
+      DDS::DomainParticipant_var participant = subscriber->get_participant();
+      OpenDDS::DCPS::DomainParticipantImpl* participant_impl = dynamic_cast<OpenDDS::DCPS::DomainParticipantImpl*>(participant.in());
+      if (!participant_impl) {
+        ACE_ERROR((LM_ERROR,
+                   ACE_TEXT("ERROR: %N:%l: on_data_available() -")
+                   ACE_TEXT(" could not cast participant!\n")));
+        ACE_OS::exit(-1);
+        return;
+      }
+      const OpenDDS::DCPS::GUID_t writer_guid = participant_impl->get_repoid(info.publication_handle);
+      SampleSetMap::iterator it = guid_received_samples_.find(writer_guid);
+      if (it == guid_received_samples_.end()) {
+        it = guid_received_samples_.insert(SampleSetMap::value_type(writer_guid, std::set<int>())).first;
+        if (expect_all_samples_) {
+          it->second.insert(0);
         }
       }
+
+      ACE_DEBUG((LM_INFO, "(%P|%t) Reader %C got message %d (#%d from writer %C)\n", OpenDDS::DCPS::LogGuid(reader_guid_).c_str(), received_samples_, message.value, OpenDDS::DCPS::LogGuid(writer_guid).c_str()));
+
+      if (reliable_ && !it->second.empty()) {
+        int expected = *(it->second.rbegin()) + 1;
+        if (message.value != expected) {
+          ACE_ERROR((LM_ERROR, "(%P|%t) Missing Data Detected Between Reliable Endpoints: expected message %d but got %d\n", expected, message.value));
+        }
+        OPENDDS_ASSERT(message.value == expected);
+      }
+      it->second.insert(message.value);
+
+      if (++received_samples_ == expected_samples_) {
+        done_callback_(builtin_read_error_, reader_guid_);
+      }
     }
-  } else {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("ERROR: %N:%l: on_data_available() -")
-               ACE_TEXT(" take_next_sample failed!\n")));
+    error = reader_i->take_next_sample(message, info);
   }
 }
 
 void
 DataReaderListenerImpl::on_subscription_matched(
   DDS::DataReader_ptr /*reader*/,
-  const DDS::SubscriptionMatchedStatus& /*status*/)
+  const DDS::SubscriptionMatchedStatus& status)
 {
+  OPENDDS_ASSERT(status.current_count >= 0);
+  if (status.current_count > total_writers_) {
+    ACE_ERROR((LM_ERROR, "(%P|%t) DataReaderListenerImpl::on_subscription_matched: more writers than expected\n"));
+  }
+  OPENDDS_ASSERT(previous_count_ + status.current_count_change == status.current_count);
+  previous_count_ = status.current_count;
 #ifndef DDS_HAS_MINIMUM_BIT
-  if (check_bits_) {
+  if (check_bits_ && status.current_count_change > 0) {
     DDS::PublicationBuiltinTopicDataDataReader_var rdr =
       DDS::PublicationBuiltinTopicDataDataReader::_narrow(builtin_);
     DDS::PublicationBuiltinTopicDataSeq data;
@@ -112,12 +147,11 @@ DataReaderListenerImpl::on_subscription_matched(
       return;
     }
 
-    ACE_DEBUG((LM_DEBUG, "(%P|%t) Successfully read publication BITs\n"));
-
-    if (OpenDDS::DCPS::DCPS_debug_level > 4) {
-      for (CORBA::ULong i = 0; i < data.length(); ++i) {
-        if (infos[i].valid_data) {
-
+    bool found_valid = false;
+    for (CORBA::ULong i = 0; i < data.length(); ++i) {
+      if (infos[i].valid_data) {
+        found_valid = true;
+        if (OpenDDS::DCPS::DCPS_debug_level > 4) {
           ACE_DEBUG((LM_DEBUG,
                      "(%P|%t) Read Publication BIT with key: %x %x %x and handle %d\n"
                      "\tTopic: %C\tType: %C\n",
@@ -125,11 +159,17 @@ DataReaderListenerImpl::on_subscription_matched(
                      data[i].key.value[2], infos[i].instance_handle,
                      data[i].topic_name.in(),
                      data[i].type_name.in()));
-
         }
       }
     }
+
+    if (found_valid) {
+      ACE_DEBUG((LM_DEBUG, "(%P|%t) Successfully read publication BITs\n"));
+    }
+
   }
+#else
+ACE_UNUSED_ARG(status);
 #endif /* DDS_HAS_MINIMUM_BIT */
 }
 

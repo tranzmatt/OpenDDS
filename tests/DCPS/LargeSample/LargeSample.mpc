@@ -1,4 +1,3 @@
-
 project(DDS*idl): dcps_test_idl_only_lib {
   idlflags      += -Wb,stub_export_include=LargeSample_export.h \
                    -Wb,stub_export_macro=LargeSample_Export -SS
@@ -8,15 +7,12 @@ project(DDS*idl): dcps_test_idl_only_lib {
   TypeSupport_Files {
     Messenger.idl
   }
-
-
 }
 
-
-project(DDS*Publisher): dcpsexe, dcps_test, dcps_transports_for_test {
-  exename   = publisher
-  after    += DDS*idl
-  libs   += DDS*idl
+project(DDS*Publisher): dcpsexe, dcps_test, dcps_transports_for_test, opendds_optional_security {
+  exename = publisher
+  after += DDS*idl
+  libs += DDS*idl
 
   Idl_Files {
   }
@@ -24,13 +20,14 @@ project(DDS*Publisher): dcpsexe, dcps_test, dcps_transports_for_test {
   Source_Files {
     publisher.cpp
     Writer.cpp
+    common.cpp
   }
 }
 
-project(DDS*Subscriber): dcpsexe, dcps_test, dcps_transports_for_test {
-  exename   = subscriber
-  after    += DDS*idl
-  libs   += DDS*idl
+project(DDS*Subscriber): dcpsexe, dcps_test, dcps_transports_for_test, opendds_optional_security {
+  exename = subscriber
+  after += DDS*idl
+  libs += DDS*idl
 
   Idl_Files {
   }
@@ -38,5 +35,6 @@ project(DDS*Subscriber): dcpsexe, dcps_test, dcps_transports_for_test {
   Source_Files {
     subscriber.cpp
     DataReaderListener.cpp
+    common.cpp
   }
 }

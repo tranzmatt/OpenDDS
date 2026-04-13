@@ -1,23 +1,22 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef RAKERESULTS_H
-#define RAKERESULTS_H
+#ifndef OPENDDS_DCPS_RAKERESULTS_T_H
+#define OPENDDS_DCPS_RAKERESULTS_T_H
 
-#include /**/ "ace/pre.h"
+#include <ace/config-macros.h>
+#ifndef ACE_LACKS_PRAGMA_ONCE
+#  pragma once
+#endif
 
-#if !defined (ACE_LACKS_PRAGMA_ONCE)
-# pragma once
-#endif /* ACE_LACKS_PRAGMA_ONCE */
-
-#include "dds/DdsDcpsSubscriptionC.h"
-#include "RakeData.h"
 #include "Comparator_T.h"
 #include "PoolAllocator.h"
+#include "RakeData.h"
+#include "TypeSupportImpl.h"
+
+#include <dds/DdsDcpsSubscriptionC.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -29,13 +28,17 @@ enum Operation_t { DDS_OPERATION_READ, DDS_OPERATION_TAKE };
 /// Rake is an abbreviation for "read or take".  This class manages the
 /// results from a read() or take() operation, which are the received_data
 /// and the info_seq sequences passed in by-reference from the user.
-template <class SampleSeq>
+template <class MessageType>
 class RakeResults {
+
+  typedef typename DDSTraits<MessageType>::MessageSequenceType SampleSeq;
+  typedef typename DDSTraits<MessageType>::MessageSequenceAdapterType MessageSequenceAdapterType;
+
 public:
   RakeResults(DataReaderImpl* reader,
               SampleSeq& received_data,
               DDS::SampleInfoSeq& info_seq,
-              CORBA::Long max_samples,
+              CORBA::ULong max_samples,
               DDS::PresentationQosPolicy presentation,
 #ifndef OPENDDS_NO_QUERY_CONDITION
               DDS::QueryCondition_ptr cond,
@@ -45,7 +48,9 @@ public:
   /// Returns false if the sample will definitely not be part of the
   /// resulting dataset, however if this returns true it still may be
   /// excluded (due to sorting and max_samples).
-  bool insert_sample(ReceivedDataElement* sample, SubscriptionInstance_rch i,
+  bool insert_sample(ReceivedDataElement* sample,
+                     ReceivedDataElementList* rdel,
+                     SubscriptionInstance_rch instance,
                      size_t index_in_instance);
 
   bool copy_to_user();
@@ -53,7 +58,7 @@ public:
 private:
   template <class FwdIter>
   bool copy_into(FwdIter begin, FwdIter end,
-                 typename SampleSeq::PrivateMemberAccess& received_data_p);
+                 MessageSequenceAdapterType& received_data_p);
 
   RakeResults(const RakeResults&); // no copy construction
   RakeResults& operator=(const RakeResults&); // no assignment
@@ -115,10 +120,6 @@ private:
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
 
-#if defined (ACE_TEMPLATES_REQUIRE_SOURCE)
-#include "dds/DCPS/RakeResults_T.cpp"
-#endif /* ACE_TEMPLATES_REQUIRE_SOURCE */
-
-#include /**/ "ace/post.h"
+#include "RakeResults_T.cpp"
 
 #endif /* RAKERESULTS_H  */

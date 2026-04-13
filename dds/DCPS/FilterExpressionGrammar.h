@@ -1,6 +1,4 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
@@ -8,16 +6,25 @@
 #ifndef OPENDDS_DCPS_FILTER_EXPRESSION_GRAMMAR_H
 #define OPENDDS_DCPS_FILTER_EXPRESSION_GRAMMAR_H
 
-#include "dds/DCPS/Definitions.h"
+#include "Definitions.h"
 
 #ifndef OPENDDS_NO_CONTENT_SUBSCRIPTION_PROFILE
 
 #include <typeinfo>
 
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#endif
+
 #include "yard/yard_base_grammar.hpp"
 #include "yard/yard_char_set.hpp"
 #include "yard/yard_tree.hpp"
 #include "yard/yard_text_grammar.hpp"
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 

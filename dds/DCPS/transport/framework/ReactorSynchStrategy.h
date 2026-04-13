@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_REACTORSYNCHSTRATEGY_H
-#define OPENDDS_DCPS_REACTORSYNCHSTRATEGY_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_REACTORSYNCHSTRATEGY_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_REACTORSYNCHSTRATEGY_H
 
 #include "dds/DCPS/dcps_export.h"
 #include "ThreadSynchStrategy.h"
@@ -49,7 +49,7 @@ public:
   virtual ThreadSynch* create_synch_object(
     ThreadSynchResource* synch_resource,
     long                 priority = 0,
-    int                  scheduler = 0);
+    long                 scheduler = 0);
 
   private:
     /// Raw pointer to the strategy.  This is the strategy that contains
@@ -72,4 +72,3 @@ OPENDDS_END_VERSIONED_NAMESPACE_DECL
 #endif /* __ACE_INLINE__ */
 
 #endif  /* OPENDDS_DCPS_REACTORSYNCHSTRATEGY_H */
-

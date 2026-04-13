@@ -5,39 +5,41 @@
  * See: http://www.opendds.org/license.html
  */
 
-#include "ace/Reactor.h"
-#include "debug.h"
-
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
-ACE_INLINE ACE_Reactor*
-OpenDDS::DCPS::ReactorTask::get_reactor()
+namespace OpenDDS {
+namespace DCPS {
+
+ACE_INLINE
+ACE_Reactor* ReactorTask::get_reactor()
 {
-  return this->reactor_;
+  ACE_Guard<ACE_SYNCH_MUTEX> guard(lock_);
+  return reactor_;
 }
 
-ACE_INLINE const ACE_Reactor*
-OpenDDS::DCPS::ReactorTask::get_reactor() const
+ACE_INLINE
+const ACE_Reactor* ReactorTask::get_reactor() const
 {
-  return this->reactor_;
+  ACE_Guard<ACE_SYNCH_MUTEX> guard(lock_);
+  wait_for_startup_i();
+  return reactor_;
 }
 
-ACE_INLINE ACE_thread_t
-OpenDDS::DCPS::ReactorTask::get_reactor_owner() const
+ACE_INLINE
+ACE_Proactor* ReactorTask::get_proactor()
 {
-  return this->reactor_owner_;
+  ACE_Guard<ACE_SYNCH_MUTEX> guard(lock_);
+  return proactor_;
 }
 
-ACE_INLINE ACE_Proactor*
-OpenDDS::DCPS::ReactorTask::get_proactor()
+ACE_INLINE
+const ACE_Proactor* ReactorTask::get_proactor() const
 {
-  return this->proactor_;
+  ACE_Guard<ACE_SYNCH_MUTEX> guard(lock_);
+  return proactor_;
 }
 
-ACE_INLINE const ACE_Proactor*
-OpenDDS::DCPS::ReactorTask::get_proactor() const
-{
-  return this->proactor_;
-}
+} // namespace DCPS
+} // namespace OpenDDS
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL

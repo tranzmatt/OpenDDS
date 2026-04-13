@@ -107,19 +107,26 @@ my $tsreg  = 'TypeSupport\.idl';
 # ************************************************************
 
 sub do_cached_parse {
-  my($self, $file, $flags, $called_from_base) = @_;
+  my($self, $file, $flags) = @_;
 
-  ## If we are being called from the base type (i.e., IDLBase::get_output)
-  ## we need to set the default_nested to true.  Otherwise, in certain
-  ## environments, we can get extra output files being added to the project
-  ## that are never going to exist.
-  $self->{'default_nested'} = $called_from_base;
+  # By default opendds_idl considers all types not to be topic types (aka
+  # "nested") unless --no-default-nested was passed or annotations say
+  # otherwise.
+  $self->{'default_nested'} = 1;
 
   ## Set up the macros and include paths supplied in the command flags
-  my %macros;
+  my %macros = (
+    __OPENDDS_IDL => 1,
+    __OPENDDS_MPC => 1,
+    OPENDDS_HIDE_DYNAMIC_DATA => 1,
+  );
   my %mparams;
   my @include;
   if (defined $flags) {
+    if (-e "$ENV{TAO_ROOT}/tao/idl_features.h") {
+      $macros{"__TAO_IDL_FEATURES"} = "\"tao/idl_features.h\"";
+      $macros{"TAO_IDL_HAS_EXPLICIT_INTS"} = 1;
+    }
     foreach my $arg (split /\s+/, $flags) {
       if ($arg =~ /^\-D(\w+)(?:=(.+))?/) {
         $macros{$1} = $2 || 1;
@@ -127,8 +134,8 @@ sub do_cached_parse {
       elsif ($arg =~ /^\-I(.+)/) {
         push(@include, $1);
       }
-      elsif ($arg eq '--default-nested') {
-        $self->{'default_nested'} = 1;
+      elsif ($arg =~ /^--(no-)?default-nested$/) {
+        $self->{'default_nested'} = !$1;
       }
     }
   }
@@ -159,10 +166,8 @@ sub get_output {
   my @filenames;
   my %seen;
 
-  ## Parse the IDL file and get back the types and names.  We pass the
-  ## file, flags and a boolean that indicates that the method is being
-  ## called from the base project (and not from the TYPESUPPORTHelper).
-  my($data, $fwd) = $self->do_cached_parse($file, $flags, 1);
+  ## Parse the IDL file and get back the types and names.
+  my($data, $fwd) = $self->do_cached_parse($file, $flags);
 
   ## Get the file names based on the type and name of each entry
   my @tmp;
@@ -267,6 +272,28 @@ sub get_scope {
   return \@scope;
 }
 
+sub locate_file {
+  my($self, $file) = @_;
+
+  ## Look through the idl2jni files to see if we can find our files actual
+  ## location according to the MPC file.  It is possible that the
+  ## TypeSupport.idl will not be generated in the same directory as the source
+  ## idl file.
+  my $base = $self->{'creator'}->mpc_basename($file);
+  my @comps = $self->{'creator'}->get_component_list('idl2jni_files');
+  foreach my $comp (@comps) {
+    if ($self->{'creator'}->mpc_basename($comp) eq $base) {
+      ## There should only be one that matches.  Some build tools, such as
+      ## Visual Studio, ignore duplicate file names (even if they are in
+      ## different directories).
+      return $comp;
+    }
+  }
+
+  ## Give back what we were given.  That's all we can do here.
+  return $file;
+}
+
 sub cached_parse {
   my($self, $file, $includes, $macros, $mparams) = @_;
 
@@ -293,6 +320,15 @@ sub cached_parse {
   my $ts = defined $self->{'strs'}->{$actual} ||
            ($actual =~ /$tsreg$/ && -r $actual) ?
                    undef : ($actual =~ s/$tsreg$/.idl/);
+
+  ## MPC v4.1.41 and older does not provide the ProjectCreator to the
+  ## CommandHelper.  If we have the ProjectCreator and the original file was
+  ## a TypeSupport.idl, but does not yet exist.  We will attempt to find the
+  ## location of the idl file from which the TypeSupport.idl will be generated.
+  if (exists $self->{'creator'} && $file ne $actual) {
+    $actual = $self->locate_file($actual);
+  }
+
   my($data, $forwards, $ts_str, $ts_pragma) =
        $self->parse($actual, $includes, $macros, $mparams);
 
@@ -366,14 +402,14 @@ sub parse {
     elsif ($str =~ s/^L'(.|\\.|\\[0-7]{1,3}|\\x[a-f\d]{1,2}|\\u[a-f\d]{1,4})'//i) {
       ## Wchar literal
     }
-    elsif ($str =~ s/^@([a-z_]+)(?:\s*\((TRUE|FALSE)\))?//) {
-      my $nkey = $1;
-      my $val  = (defined $2 && $2 eq 'FALSE' ? 0 : 1);
-      if ($nkey eq 'default_nested' || $nkey eq 'nested') {
-        $cnested = $val;
-      }
-      elsif ($nkey eq 'topic') {
-        $cnested = !$val;
+    elsif ($str =~ s/^@([A-Za-z0-9:_]+)(?:\s*\(([^\)]*)\))?//) {
+      ## Annotation
+      my $name = $1;
+      if ($name eq 'default_nested' || $name eq 'nested') {
+        $cnested = (defined $2 && $2 eq 'FALSE') ? 0 : 1;
+      } elsif ($name eq 'topic') {
+        # TODO: Take platform member into consideration
+        $cnested = 0;
       }
     }
     elsif ($str =~ s/^([a-z_][\w]*)//i) {
@@ -734,17 +770,23 @@ sub preprocess {
           elsif (!$$skip[scalar(@$skip) - 1]) {
             ## If we're not skipping text, see if the preprocessor
             ## directive was an include.
-            if ($pline =~ /^include\s+(["<])(.*)([>"])$/) {
-              my $s     = $1;
-              my $file  = $2;
-              my $e     = $3;
-
-              ## Make sure that we have matching include file delimiters
-              if (!(($s eq '<' && $e eq '>') || $s eq $e)) {
-                ## Unmatched character
+            if ($pline =~ /^include\s+(.*)$/) {
+              my $expr = $1;
+              if (defined $macros->{$expr}) {
+                $expr = $macros->{$expr};
               }
-              else {
-                $self->include_file($file, $includes, $macros, $mparams);
+              if ($expr =~ /^(["<])(.*)([>"])$/) {
+                my $s     = $1;
+                my $file  = $2;
+                my $e     = $3;
+
+                ## Make sure that we have matching include file delimiters
+                if (!(($s eq '<' && $e eq '>') || $s eq $e)) {
+                  ## Unmatched character
+                }
+                else {
+                  $self->include_file($file, $includes, $macros, $mparams);
+                }
               }
             }
             elsif ($pline =~ /^define\s+(([a-z_]\w+)(\(([^\)]+)\))?)(\s+(.*))?$/i) {
@@ -859,7 +901,7 @@ sub evaluate_if {
   else {
     ## For #if, we only support defined, macro and numeric values.
     ## All others are considered a syntax error.
-    if ($value =~ /^(!)?\s*defined\s*\(\s*([_a-z]\w*)\s*\)$/i) {
+    if ($value =~ /^(!)?\s*defined\s*\(?\s*([_a-z]\w*)\s*\)?$/i) {
       my $not   = $1;
       my $macro = $2;
       $status = (defined $macros->{$macro} ? 1 : 0);
@@ -872,6 +914,11 @@ sub evaluate_if {
       $status = (defined $macros->{$macro} &&
                  $macros->{$macro} eq $val ? 1 : 0);
       $status = !$status if ($not);
+    }
+    elsif ($value =~ /^([_a-z]\w*)$/i) {
+      my $macro = $1;
+      $status = (defined $macros->{$macro} &&
+                 $self->evaluate_if($macros, $macros->{$macro}));
     }
     elsif ($value =~ /^\d+$/) {
       $status = ($value ? 1 : 0);
@@ -928,7 +975,7 @@ sub replace_macros {
                   $usee = $i + 1;
                 }
                 else {
-                  ## This isn't the end of the paramters, so keep going
+                  ## This isn't the end of the parameters, so keep going
                   next;
                 }
               }
@@ -966,7 +1013,7 @@ sub replace_macros {
         }
       }
       else {
-        ## There were no macro paramters, so just do a simple search and
+        ## There were no macro parameters, so just do a simple search and
         ## replace.
         $line =~ s/\b$macro\b/$val/g;
       }

@@ -1,17 +1,14 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_DISJOINTSEQUENCE_H
-#define DCPS_DISJOINTSEQUENCE_H
+#ifndef OPENDDS_DCPS_DISJOINTSEQUENCE_H
+#define OPENDDS_DCPS_DISJOINTSEQUENCE_H
 
 #include "dcps_export.h"
 #include "Definitions.h"
 #include "SequenceNumber.h"
-
 #include "PoolAllocator.h"
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
@@ -57,6 +54,8 @@ public:
 
   bool contains(SequenceNumber value) const;
 
+  bool contains_any(const SequenceRange& range) const;
+
   /// All insert() methods return true upon modifying the set and false if
   /// the set already contained the SequenceNumber(s) that were to be inserted.
   /// This is the general form of insert() whereby the caller receives a list of
@@ -72,6 +71,8 @@ public:
   /// Shorthand for "insert(SequenceRange(value, value))"
   bool insert(SequenceNumber value);
 
+  void erase(SequenceNumber value);
+
   /// Insert using the RTPS compact representation of a set.  The three
   /// parameters, taken together, describe a set with each 1 bit starting
   /// at the msb of bits[0] and extending through num_bits (which are located at
@@ -80,8 +81,11 @@ public:
   /// bit_index is 0-based.
   /// Precondition: the array 'bits' has at least ceil(num_bits / 32) entries.
   bool insert(SequenceNumber value,
-              CORBA::ULong num_bits,
-              const CORBA::Long bits[]);
+              ACE_CDR::ULong num_bits,
+              const ACE_CDR::Long bits[]);
+
+  /// Insert the intersection of range and filter
+  bool insert_filtered(const SequenceRange& range, const DisjointSequence& filter);
 
   /// Inverse of insert(value, num_bits, bits).  Populates array of
   /// bitmap[length] with the bitmap of ranges above the cumulative_ack() value.
@@ -92,9 +96,10 @@ public:
   /// true, the 1's in the bitmap represent the missing_sequence_ranges()
   /// instead of the present_sequence_ranges().
   /// Precondition: the array 'bits' has 'length' entries allocated.
-  bool to_bitmap(CORBA::Long bitmap[],
-                 CORBA::ULong length,
-                 CORBA::ULong& num_bits,
+  bool to_bitmap(ACE_CDR::Long bitmap[],
+                 ACE_CDR::ULong length,
+                 ACE_CDR::ULong& num_bits,
+                 ACE_CDR::ULong& cumulative_bits_added,
                  bool invert = false) const;
 
   /// Returns missing ranges of SequenceNumbers (internal gaps in the sequence)
@@ -106,34 +111,205 @@ public:
 
   void dump() const;
 
+  /// Core data structure of DisjointSequence:
+  /// Use a balanced binary tree (std::set) to store a list of ranges (std::pair of T).
+  /// Maintain invariants (in addition to those from std::set):
+  /// - For any element x of the set, x.second >= x.first
+  /// - No adjacent or overlapping ranges.  Given two elements ordered "x before y", y.first > x.second + 1
+  /// Common non-mutating operations on the underlying set are public members of this class.
+  /// Note that due to this design, size() is the number of contiguous ranges, not individual values.
+  /// Some mutating operations on the underlying set that can't violate the invariants are also provided (like clear).
+  /// Type T needs to support value-initialization, construction from int, copying,
+  /// addition, subtraction, and comparison using == and <.
+  template <typename T>
+  class OrderedRanges {
+  public:
+    typedef std::pair<T, T> TPair;
+    typedef bool (*Compare)(const TPair&, const TPair&);
+    typedef OPENDDS_SET_CMP(TPair, Compare) Container;
+    typedef typename Container::size_type size_type;
+    typedef typename Container::const_iterator const_iterator;
+    typedef const_iterator iterator;
+    typedef typename Container::const_reverse_iterator const_reverse_iterator;
+    typedef const_reverse_iterator reverse_iterator;
+
+    static bool range_less(const TPair& lhs, const TPair& rhs)
+    {
+      return lhs.second < rhs.second;
+    }
+
+    OrderedRanges()
+      : ranges_(range_less)
+    {}
+
+    const_iterator begin() const { return ranges_.begin(); }
+    const_iterator cbegin() const { return ranges_.begin(); }
+
+    const_iterator end() const { return ranges_.end(); }
+    const_iterator cend() const { return ranges_.end(); }
+
+    const_reverse_iterator rbegin() const { return ranges_.rbegin(); }
+    const_reverse_iterator crbegin() const { return ranges_.rbegin(); }
+
+    const_reverse_iterator rend() const { return ranges_.rend(); }
+    const_reverse_iterator crend() const { return ranges_.rend(); }
+
+    bool empty() const { return ranges_.empty(); }
+    size_type size() const { return ranges_.size(); }
+    void clear() { ranges_.clear(); }
+
+    void add(T lower, T upper)
+    {
+      OPENDDS_ASSERT(upper >= lower);
+      if (has(lower, upper)) {
+        return;
+      }
+
+      typename Container::iterator pos = lower_bound_i(lower);
+      if (pos != ranges_.begin()) {
+        std::advance(pos, -1);
+      }
+
+      typename Container::iterator limit = lower_bound_i(upper);
+      if (limit != ranges_.end()) {
+        std::advance(limit, 1);
+      }
+
+      while (pos != limit) {
+        if ((upper < pos->first || lower > pos->second) &&
+            !(static_cast<T>(pos->first - 1) == upper || static_cast<T>(pos->second + 1) == lower)) {
+          ++pos;
+        } else {
+          lower = (std::min)(lower, pos->first);
+          upper = (std::max)(upper, pos->second);
+          ranges_.erase(pos++);
+        }
+      }
+
+      ranges_.insert(TPair(lower, upper));
+    }
+
+    void add(T value)
+    {
+      add(value, value);
+    }
+
+    void remove(T value)
+    {
+      const typename Container::iterator iter = lower_bound_i(value);
+      if (iter == end() || value < iter->first) {
+        return;
+      }
+      remove_i(iter, value);
+    }
+
+    T pop_front()
+    {
+      const T value = begin()->first;
+      remove_i(ranges_.begin(), value);
+      return value;
+    }
+
+    bool has(T lower, T upper) const
+    {
+      const const_iterator iter = lower_bound(upper);
+      return iter != end() && !(lower < iter->first);
+    }
+
+    bool has(const TPair& range) const
+    {
+      return has(range.first, range.second);
+    }
+
+    bool has(T value) const
+    {
+      return has(value, value);
+    }
+
+    bool has_any(T lower, T upper) const
+    {
+      const const_iterator iter = lower_bound(lower);
+      return iter != end() && !(upper < iter->first);
+    }
+
+    bool has_any(const TPair& range) const
+    {
+      return has_any(range.first, range.second);
+    }
+
+    template <typename Type> friend
+    bool operator==(const OrderedRanges<Type>& a, const OrderedRanges<Type>& b);
+
+  private:
+    const_iterator lower_bound(const TPair& p) const { return ranges_.lower_bound(p); }
+
+    const_iterator lower_bound(T t) const
+    {
+      return ranges_.lower_bound(TPair(T() /*ignored*/, t));
+    }
+
+    // explicitly get a non-const iterator for use with methods like erase()
+    typename Container::iterator lower_bound_i(T t)
+    {
+      return ranges_.lower_bound(TPair(T() /*ignored*/, t));
+    }
+
+    const_iterator upper_bound(const TPair& p) const { return ranges_.upper_bound(p); }
+
+    const_iterator upper_bound(T t) const
+    {
+      return ranges_.upper_bound(TPair(T() /*ignored*/, t));
+    }
+
+    // 'iter' must be a valid iterator to a range that contains 'value'
+    void remove_i(typename Container::iterator iter, T value)
+    {
+      const TPair orig = *iter;
+      ranges_.erase(iter);
+      if (value == orig.first) {
+        if (value < orig.second) {
+          ranges_.insert(TPair(value + T(1), orig.second));
+        }
+      } else if (value == orig.second) {
+        ranges_.insert(TPair(orig.first, value - T(1)));
+      } else {
+        ranges_.insert(TPair(orig.first, value - T(1)));
+        ranges_.insert(TPair(value + T(1), orig.second));
+      }
+    }
+
+    friend class DisjointSequence;
+    Container ranges_;
+  };
+
 private:
-  static void validate(const SequenceRange& range);
-
-  static bool SequenceRange_LessThan(const SequenceRange& lhs,
-                                     const SequenceRange& rhs)
-  {
-    return lhs.second < rhs.second;
-  }
-
-  typedef bool (*SRCompare)(const SequenceRange&, const SequenceRange&);
-  typedef OPENDDS_SET_CMP(SequenceRange, SRCompare) RangeSet;
+  typedef OrderedRanges<SequenceNumber> RangeSet;
   RangeSet sequences_;
-
 
   // helper methods:
 
   bool insert_i(const SequenceRange& range,
                 OPENDDS_VECTOR(SequenceRange)* gaps = 0);
 
-  bool insert_bitmap_range(RangeSet::iterator& iter, const SequenceRange& sr);
+  bool insert_bitmap_range(RangeSet::Container::iterator& iter, const SequenceRange& sr);
 
 public:
   /// Set the bits in range [low, high] in the bitmap, updating num_bits.
-  static bool fill_bitmap_range(CORBA::ULong low, CORBA::ULong high,
-                                CORBA::Long bitmap[], CORBA::ULong length,
-                                CORBA::ULong& num_bits);
+  static bool fill_bitmap_range(ACE_CDR::ULong low, ACE_CDR::ULong high,
+                                ACE_CDR::Long bitmap[], ACE_CDR::ULong length,
+                                ACE_CDR::ULong& num_bits, ACE_CDR::ULong& cumulative_bits_added);
+
+  /// Return the number of CORBA::Longs required for the bitmap representation of
+  /// sequence numbers between low and high, inclusive (maximum 8 longs).
+  static ACE_CDR::ULong bitmap_num_longs(const SequenceNumber& low, const SequenceNumber& high);
 };
 
+template <typename T>
+bool operator==(
+  const DisjointSequence::OrderedRanges<T>& a, const DisjointSequence::OrderedRanges<T>& b)
+{
+  return a.ranges_ == b.ranges_;
+}
 
 } // namespace DCPS
 } // namespace OpenDDS

@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_RECEIVEDDATASTRATEGY_H
-#define DCPS_RECEIVEDDATASTRATEGY_H
+#ifndef OPENDDS_DCPS_RECEIVEDDATASTRATEGY_H
+#define OPENDDS_DCPS_RECEIVEDDATASTRATEGY_H
 
 #include "CoherentChangeControl.h"
 #include "PoolAllocationBase.h"
@@ -27,11 +27,11 @@ public:
   virtual void add(ReceivedDataElement* data_sample);
 
 #ifndef OPENDDS_NO_OBJECT_MODEL_PROFILE
-  virtual void accept_coherent(PublicationId& writer,
-                               RepoId& publisher);
+  virtual void accept_coherent(const GUID_t& writer,
+                               const GUID_t& publisher);
 
-  virtual void reject_coherent(PublicationId& writer,
-                               RepoId& publisher);
+  virtual void reject_coherent(const GUID_t& writer,
+                               const GUID_t& publisher);
 #endif
 
 protected:

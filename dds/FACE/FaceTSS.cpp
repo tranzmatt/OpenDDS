@@ -80,7 +80,7 @@ void Initialize(const CONFIGURATION_RESOURCE configuration_file,
       return_code = INVALID_PARAM;
     } else {
       return_code = RC_NO_ERROR;
-#if defined OPENDDS_SAFETY_PROFILE && defined ACE_HAS_ALLOC_HOOKS
+#if OPENDDS_POOL_ALLOCATOR
       TheServiceParticipant->configure_pool();
 #endif
     }
@@ -354,7 +354,7 @@ void receive_header(/*in*/    FACE::CONNECTION_ID_TYPE connection_id,
     if (!readers.count(connection_id) || transaction_id == 0) {
       if (OpenDDS::DCPS::DCPS_debug_level > 3) {
         ACE_DEBUG((LM_DEBUG, "(%P|%t) receive_header - INVALID_PARAM - "
-          "could not find reader for connection_id: %d OR transaction id[%d] == 0 \n",
+          "could not find reader for connection_id: %d OR transaction id[%d] == 0\n",
           connection_id,
           transaction_id));
       }
@@ -364,7 +364,7 @@ void receive_header(/*in*/    FACE::CONNECTION_ID_TYPE connection_id,
 
     if (message_size < 0 || (unsigned)message_size < sizeof(FACE::TS::MessageHeader)) {
       if (OpenDDS::DCPS::DCPS_debug_level) {
-        ACE_DEBUG((LM_DEBUG, "(%P|%t) receive_header - INVALID_PARAM - message_size: %d is < %d \n",
+        ACE_DEBUG((LM_DEBUG, "(%P|%t) receive_header - INVALID_PARAM - message_size: %d is < %d\n",
           message_size,
           sizeof(FACE::TS::MessageHeader)));
       }
@@ -430,7 +430,7 @@ namespace {
       return;
     }
     if (OpenDDS::DCPS::DCPS_debug_level > 3) {
-      ACE_DEBUG((LM_DEBUG, "(%P|%t) find_or_create_dp - found existing participant for domainId: %d \n", domainId));
+      ACE_DEBUG((LM_DEBUG, "(%P|%t) find_or_create_dp - found existing participant for domainId: %d\n", domainId));
     }
     dp = temp_dp;
   }
@@ -806,7 +806,7 @@ FACE::SYSTEM_TIME_TYPE convertTime(const DDS::Time_t& timestamp)
 }
 
 FACE::MESSAGE_INSTANCE_GUID
-create_message_instance_guid(const OpenDDS::DCPS::RepoId& pub, const CORBA::LongLong& orig_seq)
+create_message_instance_guid(const OpenDDS::DCPS::GUID_t& pub, const CORBA::LongLong& orig_seq)
 {
   OpenDDS::DCPS::GuidConverter writer(pub);
 
@@ -815,7 +815,7 @@ create_message_instance_guid(const OpenDDS::DCPS::RepoId& pub, const CORBA::Long
   FACE::LongLong masked_seq;
 
   //Until MESSAGE_INSTANCE_GUID becomes 128 bit GUID, use checksum to represent Prefix
-  FACE::Long prefix_representation = ACE::crc32(reinterpret_cast<const void*>(&pub), sizeof(pub));
+  const FACE::UnsignedLong prefix_representation = ACE::crc32(&pub, sizeof(pub));
   masked_seq = orig_seq >> 32;
 
   if (masked_seq) {
@@ -872,13 +872,13 @@ void populate_header_received(const FACE::CONNECTION_ID_TYPE& connection_id,
     return_code = FACE::NOT_AVAILABLE;
     return;
   }
-  const OpenDDS::DCPS::RepoId pub = dpi->get_repoid(sinfo.publication_handle);
+  const OpenDDS::DCPS::GUID_t pub = dpi->get_repoid(sinfo.publication_handle);
   header.message_instance_guid = create_message_instance_guid(pub, sinfo.opendds_reserved_publication_seq);
 
   header.message_timestamp = convertTime(sinfo.source_timestamp);
-  ACE_Time_Value now(ACE_OS::gettimeofday());
+  const OpenDDS::DCPS::SystemTimePoint now = OpenDDS::DCPS::SystemTimePoint::now();
 
-  readers[connection_id]->sum_recvd_msgs_latency += (convertTime(OpenDDS::DCPS::time_value_to_time(now)) - header.message_timestamp);
+  readers[connection_id]->sum_recvd_msgs_latency += (convertTime(now.to_idl_struct()) - header.message_timestamp);
   ++readers[connection_id]->total_msgs_recvd;
 
   if (OpenDDS::DCPS::DCPS_debug_level > 8) {
@@ -890,7 +890,7 @@ void populate_header_received(const FACE::CONNECTION_ID_TYPE& connection_id,
 
   DDS::UserDataQosPolicy qos_user_data;
   DDS::LifespanQosPolicy qos_lifespan;
-  const OpenDDS::DCPS::RepoId sub = dpi->get_id();
+  const OpenDDS::DCPS::GUID_t sub = dpi->get_id();
 
   // Test if the reader and writer share a participant
   if (std::memcmp(pub.guidPrefix, sub.guidPrefix, sizeof(sub.guidPrefix)) == 0) {
@@ -969,15 +969,14 @@ void populate_header_received(const FACE::CONNECTION_ID_TYPE& connection_id,
       lifespan.nanosec != DDS::DURATION_INFINITE_NSEC) {
     // Finite lifespan.  Check if data has expired.
 
-    DDS::Time_t const tmp = {
+    const DDS::Time_t tmp = {
       sinfo.source_timestamp.sec + lifespan.sec,
       sinfo.source_timestamp.nanosec + lifespan.nanosec
     };
 
     // We assume that the publisher host's clock and subscriber host's
     // clock are synchronized (allowed by the spec).
-    ACE_Time_Value const expiration_time(
-        OpenDDS::DCPS::time_to_time_value(tmp));
+    const OpenDDS::DCPS::SystemTimePoint expiration_time(tmp);
 
     if (now >= expiration_time) {
 //      ACE_DEBUG((LM_DEBUG, "(%P|%t) populate_header_received: Last message expired, setting message_validity to INVALID\n"));

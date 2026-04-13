@@ -11,9 +11,12 @@
 #include "utl_identifier.h"
 #include "utl_string.h"
 
-#include "ace/OS_NS_sys_stat.h"
-#include "ace/OS_NS_string.h"
-#include "ace/Version.h"
+#include <dds/DCPS/Definitions.h>
+
+#include <ace/OS_NS_stdio.h>
+#include <ace/OS_NS_string.h>
+#include <ace/OS_NS_sys_stat.h>
+#include <ace/Version.h>
 
 #include <iostream>
 #include <sstream>
@@ -211,12 +214,16 @@ std::string param_type(AST_Type *t, AST_Argument::Direction dir)
 
   switch (t->node_type()) {
   case AST_Decl::NT_pre_defined: {
-    AST_PredefinedType *p = AST_PredefinedType::narrow_from_decl(t);
+    AST_PredefinedType *p = dynamic_cast<AST_PredefinedType*>(t);
 
     switch (p->pt()) {
     case AST_PredefinedType::PT_boolean:
     case AST_PredefinedType::PT_char:
     case AST_PredefinedType::PT_wchar:
+#if OPENDDS_HAS_EXPLICIT_INTS
+    case AST_PredefinedType::PT_int8:
+    case AST_PredefinedType::PT_uint8:
+#endif
     case AST_PredefinedType::PT_octet:
     case AST_PredefinedType::PT_short:
     case AST_PredefinedType::PT_ushort:
@@ -238,7 +245,7 @@ std::string param_type(AST_Type *t, AST_Argument::Direction dir)
     builtin = true;
     break;
   case AST_Decl::NT_typedef: {
-    AST_Typedef *td = AST_Typedef::narrow_from_decl(t);
+    AST_Typedef *td = dynamic_cast<AST_Typedef*>(t);
     AST_Type *base = td->base_type();
 
     if (base->node_type() == AST_Decl::NT_array
@@ -251,7 +258,7 @@ std::string param_type(AST_Type *t, AST_Argument::Direction dir)
     break;
   }
 
-  if (capitalize) type[0] = toupper(type[0]);
+  if (capitalize) type[0] = static_cast<char>(toupper(type[0]));
 
   if (builtin) type = "org.omg.CORBA." + type;
 
@@ -265,7 +272,7 @@ std::string idl_mapping_java::type(AST_Type *decl)
 {
   switch (decl->node_type()) {
   case AST_Decl::NT_pre_defined: {
-    AST_PredefinedType *p = AST_PredefinedType::narrow_from_decl(decl);
+    AST_PredefinedType *p = dynamic_cast<AST_PredefinedType*>(decl);
 
     switch (p->pt()) {
     case AST_PredefinedType::PT_boolean:
@@ -273,6 +280,10 @@ std::string idl_mapping_java::type(AST_Type *decl)
     case AST_PredefinedType::PT_char:
     case AST_PredefinedType::PT_wchar:
       return "char";
+#if OPENDDS_HAS_EXPLICIT_INTS
+    case AST_PredefinedType::PT_int8:
+    case AST_PredefinedType::PT_uint8:
+#endif
     case AST_PredefinedType::PT_octet:
       return "byte";
     case AST_PredefinedType::PT_short:
@@ -295,24 +306,24 @@ std::string idl_mapping_java::type(AST_Type *decl)
   }
   case AST_Decl::NT_string:
     return "String";
-  case AST_Decl::NT_enum: // fallthrough
-  case AST_Decl::NT_interface: // fallthrough
-  case AST_Decl::NT_interface_fwd: // fallthrough
-  case AST_Decl::NT_native: // fallthrough
-  case AST_Decl::NT_union: // fallthrough
-  case AST_Decl::NT_struct: // fallthrough
+  case AST_Decl::NT_enum:
+  case AST_Decl::NT_interface:
+  case AST_Decl::NT_interface_fwd:
+  case AST_Decl::NT_native:
+  case AST_Decl::NT_union:
+  case AST_Decl::NT_struct:
   case AST_Decl::NT_struct_fwd:
     return scoped(decl->name());
   case AST_Decl::NT_typedef: {
-    AST_Typedef *td = AST_Typedef::narrow_from_decl(decl);
+    AST_Typedef *td = dynamic_cast<AST_Typedef*>(decl);
     return type(td->primitive_base_type());
   }
   case AST_Decl::NT_sequence: {
-    AST_Sequence *seq = AST_Sequence::narrow_from_decl(decl);
+    AST_Sequence *seq = dynamic_cast<AST_Sequence*>(decl);
     return type(seq->base_type()) + "[]";
   }
   case AST_Decl::NT_array: {
-    AST_Array *arr = AST_Array::narrow_from_decl(decl);
+    AST_Array *arr = dynamic_cast<AST_Array*>(decl);
     return type(arr->base_type()) + "[]";
   }
   default:
@@ -327,24 +338,85 @@ std::string idl_mapping_java::type(AST_Type *decl)
 
 namespace { //"ju" helper functions: Java Unsigned type conversion
 
+ACE_CDR::Char ju_c(ACE_CDR::Octet u)
+{
+  return (u > 0x7F) ? -static_cast<ACE_CDR::Char>(~u+1) : static_cast<ACE_CDR::Char>(u);
+}
+
 ACE_CDR::Short ju_s(ACE_CDR::UShort u)
 {
-  return (u > 0x7FFF) ? -static_cast<ACE_CDR::Short>(~u+1) : u;
+  return (u > 0x7FFF) ? -static_cast<ACE_CDR::Short>(~u+1) : static_cast<ACE_CDR::Short>(u);
 }
 
 ACE_CDR::Long ju_l(ACE_CDR::ULong u)
 {
-  return (u > 0x7FFFFFFFUL) ? -static_cast<ACE_CDR::Long>(~u+1) : u;
+  return (u > 0x7FFFFFFFUL) ? -static_cast<ACE_CDR::Long>(~u+1) : static_cast<ACE_CDR::Long>(u);
 }
 
 ACE_CDR::LongLong ju_ll(ACE_CDR::ULongLong u)
 {
   return (u > 0x7FFFFFFFFFFFFFFFULL)
-         ? -static_cast<ACE_CDR::LongLong>(~u+1) : u;
+    ? -static_cast<ACE_CDR::LongLong>(~u+1) : static_cast<ACE_CDR::LongLong>(u);
 }
 
-ostream &operator<< (ostream &o, AST_Expression::AST_ExprValue *ev)
+string unicode_escape(int in, bool char_literal = false)
 {
+  switch (in) {
+  case '\'':
+  case '\"':
+  case '\\':
+    return string("\\") + static_cast<char>(in);
+  case '\b':
+    return "\\b";
+  case '\f':
+    return "\\f";
+  case '\n':
+    return "\\n";
+  case '\r':
+    return "\\r";
+  case '\t':
+    return "\\t";
+  }
+
+  if (in <= UCHAR_MAX && isprint(in)) {
+    return string(1, static_cast<char>(in));
+  }
+
+  if (in > 0x10ffff) {
+    return "error: out-of-range character";
+  }
+
+  if (in <= 0xffff) {
+    string escaped = "\\u____";
+    ACE_OS::snprintf(&escaped[2], 5, "%04x", in);
+    return escaped;
+  }
+
+  if (char_literal) {
+    return "error: char literals larger than \\uffff are not valid in Java";
+  }
+
+  // Java uses a UTF-16 Surrogate Pair to represent larger characters, with
+  // each surrogate represented as its own \uXXXX escape in the source code.
+  const unsigned int lead = 0xd7c0 + static_cast<unsigned>(in >> 10);
+  const unsigned int trail = 0xdc0 + static_cast<unsigned>(in & 0x3ff);
+  string escaped(13, '\0');
+  ACE_OS::snprintf(&escaped[0], escaped.size(), "\\u%04x\\u%04x", lead, trail);
+  return escaped;
+}
+
+string unicode_escape(const char* in)
+{
+  string result;
+  for (const char* i = in; *i; ++i) {
+    result += unicode_escape(*i);
+  }
+  return result;
+}
+
+ostream& operator<<(ostream& o, const AST_Expression::AST_ExprValue& expr)
+{
+  const AST_Expression::AST_ExprValue* ev = &expr;
   switch (ev->et) {
   case AST_Expression::EV_short:
     o << ev->u.sval;
@@ -371,22 +443,28 @@ ostream &operator<< (ostream &o, AST_Expression::AST_ExprValue *ev)
     o << ev->u.dval;
     break;
   case AST_Expression::EV_char:
-    o << '\'' << ev->u.cval << '\'';
+    o << '\'' << unicode_escape(ev->u.cval, true) << '\'';
     break;
   case AST_Expression::EV_wchar:
-    o << ev->u.wcval;
+    o << '\'' << unicode_escape(ev->u.wcval, true) << '\'';
     break;
+#if OPENDDS_HAS_EXPLICIT_INTS
+  case AST_Expression::EV_int8:
+    o << static_cast<short>(ev->u.int8val);
+    break;
+  case AST_Expression::EV_uint8:
+#endif
   case AST_Expression::EV_octet:
-    o << static_cast<int>(ev->u.oval);
+    o << static_cast<short>(ju_c(ev->u.oval));
     break;
   case AST_Expression::EV_bool:
     o << boolalpha << static_cast<bool>(ev->u.bval);
     break;
   case AST_Expression::EV_string:
-    o << '"' << ev->u.strval->get_string() << '"';
+    o << '"' << unicode_escape(ev->u.strval->get_string()) << '"';
     break;
   case AST_Expression::EV_wstring:
-    o << '"' << ev->u.wstrval << '"';
+    o << '"' << unicode_escape(ev->u.wstrval) << '"';
     break;
   case AST_Expression::EV_enum:
     o << ev->u.eval;
@@ -397,8 +475,9 @@ ostream &operator<< (ostream &o, AST_Expression::AST_ExprValue *ev)
   case AST_Expression::EV_void:
   case AST_Expression::EV_none:
   default: {
-    cerr << "ERROR - Constant of type " << ev->et
+    cerr << "ERROR - " << __FILE__ << ":" << __LINE__ << " - Constant of type " << ev->et
          << " is not supported\n";
+    BE_abort();
   }
   }
 
@@ -408,7 +487,7 @@ ostream &operator<< (ostream &o, AST_Expression::AST_ExprValue *ev)
 bool isEnum(AST_Type *t)
 {
   if (t->node_type() == AST_Decl::NT_typedef) {
-    AST_Typedef *td = AST_Typedef::narrow_from_decl(t);
+    AST_Typedef *td = dynamic_cast<AST_Typedef*>(t);
     t = td->primitive_base_type();
   }
 
@@ -452,6 +531,10 @@ bool idl_mapping_java::gen_const(UTL_ScopedName *name, bool nestedInInteface,
   case AST_Expression::EV_wchar:
     type_str = "char";
     break;
+#if OPENDDS_HAS_EXPLICIT_INTS
+  case AST_Expression::EV_int8:
+  case AST_Expression::EV_uint8:
+#endif
   case AST_Expression::EV_octet:
     type_str = "byte";
     break;
@@ -469,14 +552,14 @@ bool idl_mapping_java::gen_const(UTL_ScopedName *name, bool nestedInInteface,
   case AST_Expression::EV_void:
   case AST_Expression::EV_none:
   default: {
-    cerr << "ERROR - Constant of type " << type
+    cerr << "ERROR - " << __FILE__ << ":" << __LINE__ << " - Constant of type " << ev->et
          << " is not supported\n";
-    return false;
+    BE_abort();
   }
   }
 
   ostringstream oss;
-  oss << "  " << type_str << " value = (" << type_str << ") (" << ev << ");\n";
+  oss << "  " << type_str << " value = (" << type_str << ") (" << *ev << ");\n";
 
   return java_class_gen(JavaName(name), JINTERFACE,
                         oss.str().c_str());
@@ -486,46 +569,46 @@ bool idl_mapping_java::gen_enum(UTL_ScopedName *name,
                                 const std::vector<AST_EnumVal *> &contents, const char *repoid)
 {
   ostringstream oss;
-  const char *enum_name = name->last_component()->get_string();
-  oss <<
-  "  private static " << enum_name << "[] __values = {\n";
 
+  const char *enum_name = name->last_component()->get_string();
+  oss << "  private static " << enum_name << "[] __values = {\n";
   for (size_t i = 0; i < contents.size(); ++i) {
-    oss <<
-    "    new " << enum_name << '(' << i << ')';
+    oss << "    new " << enum_name << '(' << i << ')';
 
     if (i < contents.size() - 1) oss << ',';
 
     oss << '\n';
   }
-
-  oss
-  << "  };\n\n";
+  oss << "  };\n\n";
 
   for (size_t i = 0; i < contents.size(); ++i) {
     const char *enumerator_name = contents[i]->local_name()->get_string();
     oss <<
-    "  public static final int _" << enumerator_name
-    << " = " << i << ";\n"
-    "  public static final " << enum_name << ' '
-    << enumerator_name << " = __values[" << i << "];\n\n";
+      "  public static final int _" << enumerator_name << " = " << i << ";\n"
+      "  public static final " << enum_name << ' ' << enumerator_name << " = __values[" << i << "];\n"
+      "\n";
   }
 
   oss <<
-  "  public int value() { return _value; }\n\n"
-  "  private int _value;\n\n"
-  "  public static " << enum_name << " from_int(int value) {\n"
-  "    if (value >= 0 && value < " << contents.size() << ") {\n"
-  "      return __values[value];\n"
-  "    } else {\n"
-  "      return new " << enum_name << "(value);\n"
-  "    }\n"
-  "  }\n\n"
-  "  protected " << enum_name << "(int value) { _value = value; }\n\n"
-  "  public Object readResolve()\n"
-  "      throws java.io.ObjectStreamException {\n"
-  "    return from_int(value());\n"
-  "  }\n\n";
+    "  public int value() { return _value; }\n"
+    "\n"
+    "  private int _value;\n"
+    "\n"
+    "  public static " << enum_name << " from_int(int value) {\n"
+    "    if (value >= 0 && value < " << contents.size() << ") {\n"
+    "      return __values[value];\n"
+    "    } else {\n"
+    "      return new " << enum_name << "(value);\n"
+    "    }\n"
+    "  }\n"
+    "\n"
+    "  protected " << enum_name << "(int value) { _value = value; }\n"
+    "\n"
+    "  public Object readResolve()\n"
+    "      throws java.io.ObjectStreamException {\n"
+    "    return from_int(value());\n"
+    "  }\n"
+    "\n";
 
   JavaName jn(name);
   return java_class_gen(jn, JCLASS,
@@ -607,7 +690,7 @@ string op_signature(AST_Operation *op)
     AST_Decl *item = it.item();
 
     if (item->node_type() == AST_Decl::NT_argument) {
-      AST_Argument *arg = AST_Argument::narrow_from_decl(item);
+      AST_Argument *arg = dynamic_cast<AST_Argument*>(item);
       signature += param_type(arg->field_type(), arg->direction())
                    + " " + arg->local_name()->get_string() + ", ";
     }
@@ -648,11 +731,12 @@ bool idl_mapping_java::gen_interf(UTL_ScopedName *name, bool local,
   string extends_stub = string("i2jrt.TAO") +
                         (local ? "Local" : "") + "Object";
 
-  string allRepoIds = '"' + string(repoid) + '"',
-                      body_ops, body_stub =
-                        "  protected " + jn_stub.clazz_ + "(long ptr) {\n"
-                        "    super(ptr);\n"
-                        "  }\n\n";
+  string allRepoIds = '"' + string(repoid) + '"';
+  string body_ops;
+  string body_stub =
+    "  protected " + jn_stub.clazz_ + "(long ptr) {\n"
+    "    super(ptr);\n"
+    "  }\n\n";
 
   for (size_t i = 0; i < attrs.size(); ++i) {
     AST_Attribute *attr = attrs[i];
@@ -664,16 +748,20 @@ bool idl_mapping_java::gen_interf(UTL_ScopedName *name, bool local,
       "  public native " + signature + ";\n\n";
 
     if (!attr->readonly()) {
-      string signature = attr_signature_w(attr);
+      string signature_w = attr_signature_w(attr);
       body_ops +=
-        "  " + signature + ";\n";
+        "  " + signature_w + ";\n";
       body_stub +=
-        "  public native " + signature + ";\n\n";
+        "  public native " + signature_w + ";\n\n";
     }
   }
 
   for (size_t i = 0; i < ops.size(); ++i) {
     string signature = op_signature(ops[i]);
+    if (is_hidden_op_in_java(ops[i])) {
+      continue;
+    }
+
     body_ops +=
       "  " + signature + ";\n";
     body_stub +=
@@ -690,20 +778,23 @@ bool idl_mapping_java::gen_interf(UTL_ScopedName *name, bool local,
       AST_Decl *item = it.item();
 
       if (item->node_type() == AST_Decl::NT_attr) {
-        AST_Attribute *attr = AST_Attribute::narrow_from_decl(item);
+        AST_Attribute *attr = dynamic_cast<AST_Attribute*>(item);
 
         string signature = attr_signature_r(attr);
         body_stub +=
           "  public native " + signature + ";\n\n";
 
         if (!attr->readonly()) {
-          string signature = attr_signature_w(attr);
+          string signature_w = attr_signature_w(attr);
           body_stub +=
-            "  public native " + signature + ";\n\n";
+            "  public native " + signature_w + ";\n\n";
         }
 
       } else if (item->node_type() == AST_Decl::NT_op) {
-        AST_Operation *op = AST_Operation::narrow_from_decl(item);
+        AST_Operation *op = dynamic_cast<AST_Operation*>(item);
+        if (is_hidden_op_in_java(op)) {
+          continue;
+        }
         body_stub +=
           "  public native " + op_signature(op) + ";\n\n";
       }
@@ -761,11 +852,19 @@ void writeUnionDefaultValue(ostream &os, AST_Expression::ExprType udisc_type,
   case AST_Expression::EV_ulong:
     os << dv.u.ulong_val;
     break;
+#if OPENDDS_HAS_EXPLICIT_INTS
+  case AST_Expression::EV_int8:
+    os << signed(dv.u.char_val);
+    break;
+  case AST_Expression::EV_uint8:
+    os << unsigned(dv.u.char_val);
+    break;
+#endif
   case AST_Expression::EV_char:
     os << dv.u.char_val;
     break;
   case AST_Expression::EV_wchar:
-    os << dv.u.wchar_val;
+    os << unicode_escape(dv.u.wchar_val);
     break;
   case AST_Expression::EV_bool:
     os << boolalpha << static_cast<bool>(dv.u.bool_val);
@@ -780,7 +879,8 @@ void writeUnionDefaultValue(ostream &os, AST_Expression::ExprType udisc_type,
     os << dv.u.ulonglong_val;
     break;
   default:
-    cerr << "ERROR: Bad discriminant type (shouldn't happen here)\n";
+    cerr << "ERROR - " << __FILE__ << ":" << __LINE__ << " - Bad discriminant type '" << udisc_type << "' (shouldn't happen here)\n";
+    BE_abort();
   }
 }
 }
@@ -790,12 +890,12 @@ bool idl_mapping_java::gen_union(UTL_ScopedName *name,
                                  AST_Expression::ExprType udisc_type,
                                  const AST_Union::DefaultValue &default_value, const char *repoid)
 {
-  string body_branches,
-  disc_ty = type(discriminator),
-            disc_val = isEnum(discriminator) ? ".value()" : "",
-                       pre_disc_set = isEnum(discriminator) ? (disc_ty + ".from_int(") : "",
-                                      post_disc_set = isEnum(discriminator) ? ")" : "",
-                                                      default_disc_check;
+  string body_branches;
+  string disc_ty = type(discriminator);
+  string disc_val = isEnum(discriminator) ? ".value()" : "";
+  string pre_disc_set = isEnum(discriminator) ? (disc_ty + ".from_int(") : "";
+  string post_disc_set = isEnum(discriminator) ? ")" : "";
+  string default_disc_check;
   bool hasDefault(false);
 
   for (size_t i = 0; i < branches.size(); ++i) {
@@ -815,7 +915,7 @@ bool idl_mapping_java::gen_union(UTL_ScopedName *name,
         disc_check = "<%default_disc_check%>";
 
       } else {
-        oss << ul->label_val()->ev();
+        oss << *ul->label_val()->ev();
         disc_check += "_discriminator" + disc_val + " != " + oss.str()
                       + ((j == n_labels - 1) ? "" : " && ");
         default_disc_check += (default_disc_check.size() ? " || " : "")

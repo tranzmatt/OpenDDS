@@ -5,11 +5,12 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_MULTICASTTRANSPORT_H
-#define DCPS_MULTICASTTRANSPORT_H
+#ifndef OPENDDS_DCPS_TRANSPORT_MULTICAST_MULTICASTTRANSPORT_H
+#define OPENDDS_DCPS_TRANSPORT_MULTICAST_MULTICASTTRANSPORT_H
 
 #include "Multicast_Export.h"
 
+#include "MulticastInst_rch.h"
 #include "MulticastDataLink_rch.h"
 #include "MulticastTypes.h"
 
@@ -21,19 +22,18 @@ OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 namespace OpenDDS {
 namespace DCPS {
 
-class MulticastInst;
-
 class MulticastSession;
 typedef RcHandle<MulticastSession> MulticastSession_rch;
 
 class OpenDDS_Multicast_Export MulticastTransport : public TransportImpl {
 public:
-  explicit MulticastTransport(MulticastInst& inst);
+  MulticastTransport(const MulticastInst_rch& inst,
+                     DDS::DomainId_t domain);
   ~MulticastTransport();
 
   void passive_connection(MulticastPeer local_peer, MulticastPeer remote_peer);
 
-  MulticastInst& config() const;
+  MulticastInst_rch config() const;
 
 protected:
   virtual AcceptConnectResult connect_datalink(const RemoteTransport& remote,
@@ -45,17 +45,21 @@ protected:
                                               const TransportClient_rch& client);
 
   virtual void stop_accepting_or_connecting(const TransportClient_wrch& client,
-                                            const RepoId& remote_id);
+                                            const GUID_t& remote_id,
+                                            bool disassociate,
+                                            bool association_failed);
 
-  bool configure_i(MulticastInst& config);
+  bool configure_i(const MulticastInst_rch& config);
 
   virtual void shutdown_i();
 
-  virtual bool connection_info_i(TransportLocator& info) const;
+  virtual bool connection_info_i(TransportLocator& info, ConnectionInfoFlags flags) const;
 
   virtual void release_datalink(DataLink* link);
 
   virtual std::string transport_type() const { return "multicast"; }
+
+  void client_stop(const GUID_t& localId);
 
 private:
 
@@ -65,14 +69,12 @@ private:
   typedef ACE_Thread_Mutex         ThreadLockType;
   typedef ACE_Guard<ThreadLockType>     GuardThreadType;
 
-  MulticastDataLink_rch make_datalink(const RepoId& local_id,
+  MulticastDataLink_rch make_datalink(const GUID_t& local_id,
                                       Priority priority,
                                       bool active);
 
   MulticastSession_rch start_session(const MulticastDataLink_rch& link,
                                      MulticastPeer remote_peer, bool active);
-
-  //RcHandle<MulticastInst> config_i_;
 
   ThreadLockType links_lock_;
   /// link for pubs.

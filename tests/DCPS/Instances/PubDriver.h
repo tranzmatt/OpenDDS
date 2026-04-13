@@ -20,7 +20,7 @@
 #include <sstream>
 
 const int default_key = 101010;
-ACE_Atomic_Op<ACE_SYNCH_MUTEX, CORBA::Long> key(0);
+OpenDDS::DCPS::Atomic<CORBA::Long> key(0);
 
 template<typename MessageType>
 class Writer : public ACE_Task_Base
@@ -50,7 +50,7 @@ public:
     finished_(false)
   {
     ACE_DEBUG((LM_DEBUG,
-               ACE_TEXT("(%P|%t) Writer::Writer \n")));
+               ACE_TEXT("(%P|%t) Writer::Writer\n")));
     writer_servant_ = dynamic_cast<OpenDDS::DCPS::DataWriterImpl*>(writer_.in());
   }
 
@@ -58,7 +58,7 @@ public:
   {
     if (OpenDDS::DCPS::DCPS_debug_level > 0) {
       ACE_DEBUG((LM_DEBUG,
-                 ACE_TEXT("(%P|%t) Writer::start \n")));
+                 ACE_TEXT("(%P|%t) Writer::start\n")));
     }
 
     if (activate (THR_NEW_LWP | THR_JOINABLE, num_thread_to_write_) == -1)
@@ -75,7 +75,7 @@ public:
     wait ();
     if (OpenDDS::DCPS::DCPS_debug_level > 0) {
       ACE_DEBUG((LM_DEBUG,
-                 ACE_TEXT("(%P|%t) Writer::end \n")));
+                 ACE_TEXT("(%P|%t) Writer::end\n")));
     }
   }
 
@@ -84,7 +84,7 @@ public:
   {
     if (OpenDDS::DCPS::DCPS_debug_level > 0) {
       ACE_DEBUG((LM_DEBUG,
-                 ACE_TEXT("(%P|%t) Writer::svc \n")));
+                 ACE_TEXT("(%P|%t) Writer::svc\n")));
     }
 
     // Wait for the subscriber to be ready...
@@ -146,7 +146,7 @@ public:
 
         if (OpenDDS::DCPS::DCPS_debug_level > 0) {
           ACE_DEBUG ((LM_DEBUG,
-                      ACE_TEXT("(%P|%t) write sample: %d \n"),
+                      ACE_TEXT("(%P|%t) write sample: %d\n"),
                       msg.sample_sequence));
         }
 
@@ -180,8 +180,8 @@ public:
       ACE_DEBUG((LM_DEBUG,
                  ACE_TEXT("(%P|%t) Writer::svc data_delivered_count=%d ")
                  ACE_TEXT("data_dropped_count=%d\n"),
-                 writer_servant_->data_delivered_count_,
-                 writer_servant_->data_dropped_count_));
+                 writer_servant_->data_delivered_count_.load(),
+                 writer_servant_->data_dropped_count_.load()));
     }
 
     finished_ = true;
@@ -252,7 +252,7 @@ class PubDriver
   {
     if (OpenDDS::DCPS::DCPS_debug_level > 0) {
       ACE_DEBUG((LM_DEBUG,
-                 ACE_TEXT("(%P|%t) PubDriver::PubDriver \n")));
+                 ACE_TEXT("(%P|%t) PubDriver::PubDriver\n")));
     }
   }
 
@@ -260,7 +260,7 @@ class PubDriver
   {
     if (OpenDDS::DCPS::DCPS_debug_level > 0) {
       ACE_DEBUG((LM_DEBUG,
-                 ACE_TEXT("(%P|%t) PubDriver::~PubDriver \n")));
+                 ACE_TEXT("(%P|%t) PubDriver::~PubDriver\n")));
     }
 
     for (int i = 0; i < num_datawriters_; i ++)
@@ -296,7 +296,7 @@ class PubDriver
   {
     if (OpenDDS::DCPS::DCPS_debug_level > 0) {
       ACE_DEBUG((LM_DEBUG,
-                 ACE_TEXT("(%P|%t) PubDriver::run \n")));
+                 ACE_TEXT("(%P|%t) PubDriver::run\n")));
     }
 
     SetHistoryDepthQOS history_depth_qos(history_depth_);
@@ -328,7 +328,7 @@ class PubDriver
 
       if (OpenDDS::DCPS::DCPS_debug_level > 0) {
         ACE_DEBUG((LM_DEBUG,
-                   ACE_TEXT("(%P|%t) PubDriver::Starting Writer %d \n"), i));
+                   ACE_TEXT("(%P|%t) PubDriver::Starting Writer %d\n"), i));
       }
 
       writers_[i]->start ();
@@ -358,7 +358,7 @@ class PubDriver
 
     if (OpenDDS::DCPS::DCPS_debug_level > 0) {
       ACE_DEBUG((LM_DEBUG,
-                 ACE_TEXT("(%P|%t) PubDriver::end \n")));
+                 ACE_TEXT("(%P|%t) PubDriver::end\n")));
     }
     // Record samples been written in the Writer's data map.
     // Verify the number of instances and the number of samples

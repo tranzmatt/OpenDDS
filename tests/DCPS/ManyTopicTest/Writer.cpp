@@ -10,6 +10,7 @@
 #include "tests/DCPS/ManyTopicTypes/Foo1DefTypeSupportC.h"
 #include "tests/DCPS/ManyTopicTypes/Foo2DefTypeSupportC.h"
 #include "tests/DCPS/ManyTopicTypes/Foo3DefTypeSupportC.h"
+#include "tests/Utils/StatusMatching.h"
 
 #include "ace/OS_NS_unistd.h"
 
@@ -30,7 +31,7 @@ void
 Writer::start()
 {
   ACE_DEBUG((LM_DEBUG,
-             ACE_TEXT("(%P|%t) Writer::start \n")));
+             ACE_TEXT("(%P|%t) Writer::start\n")));
   if (activate(THR_NEW_LWP | THR_JOINABLE, num_thread_to_write_) == -1)
   {
     ACE_ERROR((LM_ERROR,
@@ -40,11 +41,17 @@ Writer::start()
   }
 }
 
+int
+Writer::wait_match(const DDS::DataWriter_var& dw, unsigned int count)
+{
+  return Utils::wait_match(dw, count, Utils::GTE);
+}
+
 void
 Writer::end()
 {
   ACE_DEBUG((LM_DEBUG,
-             ACE_TEXT("(%P|%t) Writer::end \n")));
+             ACE_TEXT("(%P|%t) Writer::end\n")));
   wait();
 }
 

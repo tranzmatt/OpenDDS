@@ -43,6 +43,8 @@ public:
   const char *filename() const;
   void filename(const char *fname);
 
+  const std::string& filebase() const { return filebase_; }
+
   bool do_included_files() const;
 
   bool do_server_side() const;
@@ -92,9 +94,20 @@ public:
 
   static bool writeFile(const char *fileName, const std::string &content);
 
+  /**
+   * Give a warning that looks like one from tao_idl
+   */
+  void warning(const char* msg, const char* filename = 0, unsigned lineno = 0);
+
+  /**
+   * Give an error that looks like one from tao_idl
+   */
+  void error(const char* msg, const char* filename = 0, unsigned lineno = 0);
+
 private:
   const char *filename_;
   // Name of the IDL file we are processing.
+  std::string filebase_;
 
   bool do_server_side_;
 

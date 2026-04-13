@@ -44,7 +44,7 @@ ManagerImpl::create(const Update::UTopic& topic)
     return;
   }
 
-  TopicUpdate sample;
+  TopicUpdate sample = TopicUpdate();
   sample.sender      = this->id().id();
   sample.action      = CreateEntity;
 
@@ -78,7 +78,7 @@ ManagerImpl::create(const Update::UParticipant& participant)
     return;
   }
 
-  ParticipantUpdate sample;
+  ParticipantUpdate sample = ParticipantUpdate();
   sample.sender = this->id().id();
   sample.action = CreateEntity;
 
@@ -108,7 +108,7 @@ ManagerImpl::create(const Update::URActor& reader)
     return;
   }
 
-  SubscriptionUpdate sample;
+  SubscriptionUpdate sample = SubscriptionUpdate();
   sample.sender         = this->id().id();
   sample.action         = CreateEntity;
 
@@ -123,6 +123,7 @@ ManagerImpl::create(const Update::URActor& reader)
   sample.filter_class_name = reader.contentSubscriptionProfile.filterClassName;
   sample.filter_expression = reader.contentSubscriptionProfile.filterExpr;
   sample.expression_params = reader.contentSubscriptionProfile.exprParams;
+  sample.serialized_type_info = reader.serializedTypeInfo;
 
   if (OpenDDS::DCPS::DCPS_debug_level > 9) {
     OpenDDS::DCPS::RepoIdConverter part_converter(sample.participant);
@@ -147,7 +148,7 @@ ManagerImpl::create(const Update::UWActor& writer)
     return;
   }
 
-  PublicationUpdate sample;
+  PublicationUpdate sample = PublicationUpdate();
   sample.sender         = this->id().id();
   sample.action         = CreateEntity;
 
@@ -159,6 +160,7 @@ ManagerImpl::create(const Update::UWActor& writer)
   sample.datawriter_qos = writer.drdwQos;
   sample.publisher_qos  = writer.pubsubQos;
   sample.transport_info = writer.transportInterfaceInfo;
+  sample.serialized_type_info = writer.serializedTypeInfo;
 
   if (OpenDDS::DCPS::DCPS_debug_level > 9) {
     OpenDDS::DCPS::RepoIdConverter part_converter(sample.participant);
@@ -183,7 +185,7 @@ ManagerImpl::create(const Update::OwnershipData& data)
     return;
   }
 
-  OwnerUpdate sample;
+  OwnerUpdate sample = OwnerUpdate();
   sample.sender      = this->id().id();
   sample.action      = CreateEntity;
 
@@ -227,7 +229,7 @@ ManagerImpl::destroy(
       return;
     }
 
-    TopicUpdate sample;
+    TopicUpdate sample = TopicUpdate();
     sample.sender      = this->id().id();
     sample.action      = DestroyEntity;
 
@@ -257,7 +259,7 @@ ManagerImpl::destroy(
       return;
     }
 
-    ParticipantUpdate sample;
+    ParticipantUpdate sample = ParticipantUpdate();
     sample.sender = this->id().id();
     sample.action = DestroyEntity;
 
@@ -288,7 +290,7 @@ ManagerImpl::destroy(
         return;
       }
 
-      PublicationUpdate sample;
+      PublicationUpdate sample = PublicationUpdate();
       sample.sender         = this->id().id();
       sample.action         = DestroyEntity;
 
@@ -318,7 +320,7 @@ ManagerImpl::destroy(
         return;
       }
 
-      SubscriptionUpdate sample;
+      SubscriptionUpdate sample = SubscriptionUpdate();
       sample.sender         = this->id().id();
       sample.action         = DestroyEntity;
 
@@ -355,7 +357,7 @@ ManagerImpl::update(const Update::IdPath& id, const DDS::DomainParticipantQos& q
     return;
   }
 
-  ParticipantUpdate sample;
+  ParticipantUpdate sample = ParticipantUpdate();
   sample.sender = this->id().id();
   sample.action = UpdateQosValue1;
 
@@ -384,7 +386,7 @@ ManagerImpl::update(const Update::IdPath& id, const DDS::TopicQos& qos)
     return;
   }
 
-  TopicUpdate sample;
+  TopicUpdate sample = TopicUpdate();
   sample.sender      = this->id().id();
   sample.action      = UpdateQosValue1;
 
@@ -416,7 +418,7 @@ ManagerImpl::update(const Update::IdPath& id, const DDS::DataWriterQos& qos)
     return;
   }
 
-  PublicationUpdate sample;
+  PublicationUpdate sample = PublicationUpdate();
   sample.sender         = this->id().id();
   sample.action         = UpdateQosValue1;
 
@@ -448,7 +450,7 @@ ManagerImpl::update(const Update::IdPath& id, const DDS::PublisherQos& qos)
     return;
   }
 
-  PublicationUpdate sample;
+  PublicationUpdate sample = PublicationUpdate();
   sample.sender         = this->id().id();
   sample.action         = UpdateQosValue2;
 
@@ -480,7 +482,7 @@ ManagerImpl::update(const Update::IdPath& id, const DDS::DataReaderQos& qos)
     return;
   }
 
-  SubscriptionUpdate sample;
+  SubscriptionUpdate sample = SubscriptionUpdate();
   sample.sender         = this->id().id();
   sample.action         = UpdateQosValue1;
 
@@ -512,7 +514,7 @@ ManagerImpl::update(const Update::IdPath& id, const DDS::StringSeq& params)
     return;
   }
 
-  SubscriptionUpdate sample;
+  SubscriptionUpdate sample = SubscriptionUpdate();
   sample.sender            = this->id().id();
   sample.action            = UpdateFilterExpressionParams;
   sample.domain            = id.domain;
@@ -543,7 +545,7 @@ ManagerImpl::update(const Update::IdPath& id, const DDS::SubscriberQos& qos)
     return;
   }
 
-  SubscriptionUpdate sample;
+  SubscriptionUpdate sample = SubscriptionUpdate();
   sample.sender         = this->id().id();
   sample.action         = UpdateQosValue2;
 
@@ -632,7 +634,9 @@ ManagerImpl::processCreate(const PublicationUpdate* sample, const DDS::SampleInf
                                             sample->callback,
                                             sample->datawriter_qos,
                                             sample->transport_info,
+                                            sample->transport_context,
                                             sample->publisher_qos,
+                                            sample->serialized_type_info,
                                             true)) {
     {
       ACE_GUARD(ACE_Thread_Mutex,
@@ -673,10 +677,12 @@ ManagerImpl::processCreate(const SubscriptionUpdate* sample, const DDS::SampleIn
                                              sample->callback,
                                              sample->datareader_qos,
                                              sample->transport_info,
+                                             sample->transport_context,
                                              sample->subscriber_qos,
                                              sample->filter_class_name,
                                              sample->filter_expression,
                                              sample->expression_params,
+                                             sample->serialized_type_info,
                                              true)) {
     {
       ACE_GUARD(ACE_Thread_Mutex,
@@ -842,7 +848,9 @@ ManagerImpl::processDeferred()
                                                current->callback,
                                                current->datawriter_qos,
                                                current->transport_info,
+                                               current->transport_context,
                                                current->publisher_qos,
+                                               current->serialized_type_info,
                                                true)) {
         if (OpenDDS::DCPS::DCPS_debug_level > 9) {
           OpenDDS::DCPS::RepoIdConverter part_converter(current->participant);
@@ -876,10 +884,12 @@ ManagerImpl::processDeferred()
                                                 current->callback,
                                                 current->datareader_qos,
                                                 current->transport_info,
+                                                current->transport_context,
                                                 current->subscriber_qos,
                                                 current->filter_class_name,
                                                 current->filter_expression,
                                                 current->expression_params,
+                                                current->serialized_type_info,
                                                 true)) {
         if (OpenDDS::DCPS::DCPS_debug_level > 9) {
           OpenDDS::DCPS::RepoIdConverter part_converter(current->participant);

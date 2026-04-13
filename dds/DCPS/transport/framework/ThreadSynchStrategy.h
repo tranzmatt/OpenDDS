@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_THREADSYNCHSTRATEGY_H
-#define OPENDDS_DCPS_THREADSYNCHSTRATEGY_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_THREADSYNCHSTRATEGY_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_THREADSYNCHSTRATEGY_H
 
 #include "dds/DCPS/dcps_export.h"
 #include "dds/DCPS/RcObject.h"
@@ -21,9 +21,7 @@ class ThreadSynch;
 class ThreadSynchResource;
 
 //MJM: Some class documentation here would be extremely helpful.
-class OpenDDS_Dcps_Export ThreadSynchStrategy
-  : public RcObject
-{
+class OpenDDS_Dcps_Export ThreadSynchStrategy : public RcObject {
 public:
 
   virtual ~ThreadSynchStrategy();
@@ -31,7 +29,7 @@ public:
   virtual ThreadSynch* create_synch_object(
     ThreadSynchResource* synch_resource,
     long                 priority,
-    int                  scheduler) = 0;
+    long                 scheduler) = 0;
 
 protected:
 

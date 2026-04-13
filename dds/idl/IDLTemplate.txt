@@ -1,24 +1,36 @@
 #pragma DCPS_SUPPORT_ZERO_COPY_READ
 #pragma DCPS_GEN_ZERO_COPY_READ
-
-#if !defined (__TAO_IDL) || (__TAO_IDL >= 0x060101)
-#pragma DCPS_DATA_SEQUENCE_TYPE "<%SCOPED%><%SEQ%>"
+#pragma DCPS_DATA_SEQUENCE_TYPE "<%SCOPED_NOT_GLOBAL%><%SEQ%>"
 typedef sequence<<%SCOPED%>> <%TYPE%><%SEQ%>;
-#else
-native <%TYPE%><%SEQ%>;
-#endif
 
 /** Support topic registration for <%TYPE%> data type.
  *
- * See the DDS specification, OMG formal/04-12-02, for a description of
+ * See the DDS specification, OMG formal/2015-04-10, for a description of
  * this interface.
  */
 local interface <%TYPE%>TypeSupport : OpenDDS::DCPS::TypeSupport {
+#ifndef OPENDDS_SAFETY_PROFILE
+    // TODO: valuetype isn't supported in Java.
+    @OpenDDS::internal::hidden_op_in_java(0)
+    ::DDS::ReturnCode_t create_sample_rc(inout <%SCOPED%> dst, in ::DDS::DynamicData src);
+    @OpenDDS::internal::hidden_op_in_java(0)
+    <%SCOPED%> create_sample(in ::DDS::DynamicData src);
+    @OpenDDS::internal::hidden_op_in_java(0)
+    ::DDS::ReturnCode_t create_dynamic_sample_rc(inout ::DDS::DynamicData dst, in <%SCOPED%> src);
+    @OpenDDS::internal::hidden_op_in_java(0)
+    ::DDS::DynamicData create_dynamic_sample(in <%SCOPED%> src);
+#endif
+
+    ::DDS::ReturnCode_t encode_to_string(in <%SCOPED%> sample, out string encoded, in OpenDDS::DCPS::RepresentationFormat format);
+    ::DDS::ReturnCode_t encode_to_bytes(in <%SCOPED%> sample, out ::DDS::OctetSeq encoded, in OpenDDS::DCPS::RepresentationFormat format);
+
+    ::DDS::ReturnCode_t decode_from_string(in string encoded, out <%SCOPED%> sample, in OpenDDS::DCPS::RepresentationFormat format);
+    ::DDS::ReturnCode_t decode_from_bytes(in ::DDS::OctetSeq encoded, out <%SCOPED%> sample, in OpenDDS::DCPS::RepresentationFormat format);
 };
 
 /** DataWriter interface for <%TYPE%> data type.
  *
- * See the DDS specifications, OMG formal/04-12-02 and formal/07-01-01,
+ * See the DDS specifications, OMG formal/2015-04-10 and formal/07-01-01,
  * for a description of this interface.
  */
 local interface <%TYPE%>DataWriter : ::DDS::DataWriter {
@@ -72,7 +84,7 @@ local interface <%TYPE%>DataWriter : ::DDS::DataWriter {
 
 /** DataReader interface for <%TYPE%> data type.
  *
- * See the DDS specification, OMG formal/04-12-02, for a description of
+ * See the DDS specification, OMG formal/2015-04-10, for a description of
  * this interface.
  */
 local interface <%TYPE%>DataReader : OpenDDS::DCPS::DataReaderEx {

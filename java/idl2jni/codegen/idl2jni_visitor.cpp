@@ -59,7 +59,7 @@ void scope2vector(vector<T *> &v, UTL_Scope *s, AST_Decl::NodeType nt)
     AST_Decl *item = it.item();
 
     if (item->node_type() == nt) {
-      v.push_back(T::narrow_from_decl(item));
+      v.push_back(dynamic_cast<T*>(item));
     }
   }
 }
@@ -177,8 +177,9 @@ idl2jni_visitor::visit_interface(AST_Interface *node)
   // dynamic cast for each element.
   //vector<AST_Interface *> inherits(node->inherits(),
   //                                 node->inherits() + node->n_inherits());
-  vector<AST_Interface *> inherits(node->n_inherits());
-  for (int i = 0; i < node->n_inherits(); i++) {
+  const size_t n_inherits = static_cast<size_t>(node->n_inherits());
+  vector<AST_Interface *> inherits(n_inherits);
+  for (size_t i = 0; i < n_inherits; i++) {
     inherits[i] = dynamic_cast<AST_Interface *>(*(node->inherits()+i));
   }
 
@@ -379,7 +380,7 @@ idl2jni_visitor::visit_union(AST_Union *node)
   for (ACE_CDR::ULong i = 0; i < nfields; ++i) {
     AST_Field **f;
     node->field(f, i);
-    AST_UnionBranch *ub = AST_UnionBranch::narrow_from_decl(*f);
+    AST_UnionBranch *ub = dynamic_cast<AST_UnionBranch*>(*f);
 
     if (!ub) {
       std::cerr << "ERROR - expected union to contain UnionBranches\n";

@@ -7,7 +7,7 @@
 # Prerequisite: docker
 ##############################################################################
 
-buildbits=32
+buildbits=64
 docker_image=phusion/holy-build-box-${buildbits}
 MOUNT_DIR=/OpenDDS
 
@@ -25,7 +25,7 @@ fi
 
 if [ ! -d ACE_wrappers/MPC ]; then
   if [ ! -f $MPC_ROOT/mwc.pl ]; then
-    echo "Cannnot find MPC installation, please set the MPC_ROOT environment variable."
+    echo "Cannot find MPC installation, please set the MPC_ROOT environment variable."
     exit 1
   else
     EXTRA_DOCKER_FLAGS="-v $MPC_ROOT:/MPC -e MPC_ROOT=/MPC"
@@ -96,6 +96,7 @@ workspace {
   $(TAO_ROOT)/TAO_IDL/tao_idl_fe.mpc
   $(TAO_ROOT)/TAO_IDL/tao_idl_be.mpc
   $(DDS_ROOT)/dds/idl/opendds_idl.mpc
+  $(DDS_ROOT)/dds/DCPS/OpenDDS_Util.mpc
 }
 EEOF
 

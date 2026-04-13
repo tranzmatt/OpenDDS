@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_RTPSUDPRECEIVESTRATEGY_H
-#define DCPS_RTPSUDPRECEIVESTRATEGY_H
+#ifndef OPENDDS_DCPS_TRANSPORT_RTPS_UDP_RTPSUDPRECEIVESTRATEGY_H
+#define OPENDDS_DCPS_TRANSPORT_RTPS_UDP_RTPSUDPRECEIVESTRATEGY_H
 
 #include "Rtps_Udp_Export.h"
 #include "RtpsTransportHeader.h"
@@ -15,9 +15,13 @@
 #include "dds/DCPS/transport/framework/TransportReceiveStrategy_T.h"
 
 #include "dds/DCPS/RTPS/RtpsCoreC.h"
+#include "dds/DCPS/RTPS/ICE/Ice.h"
+
+#include "dds/DCPS/NetworkAddress.h"
 #include "dds/DCPS/RcEventHandler.h"
 
-#include "ace/INET_Addr.h"
+#include <dds/OpenDDSConfigWrapper.h>
+
 #include "ace/SOCK_Dgram.h"
 
 #include <cstring>
@@ -32,15 +36,20 @@ namespace ICE {
 
 namespace DCPS {
 
+class RtpsUdpTransport;
 class RtpsUdpDataLink;
 class ReceivedDataSample;
 
 class OpenDDS_Rtps_Udp_Export RtpsUdpReceiveStrategy
   : public TransportReceiveStrategy<RtpsTransportHeader, RtpsSampleHeader>,
-    public RcEventHandler
+    public virtual RcEventHandler
 {
 public:
-  explicit RtpsUdpReceiveStrategy(RtpsUdpDataLink* link, const GuidPrefix_t& local_prefix);
+  static const size_t BUFFER_COUNT = 1u;
+
+  RtpsUdpReceiveStrategy(RtpsUdpDataLink* link,
+                         const GuidPrefix_t& local_prefix,
+                         ThreadStatusManager& thread_status_manager);
 
   virtual int handle_input(ACE_HANDLE fd);
 
@@ -50,32 +59,46 @@ public:
   /// Returns true if the bitmap was changed.
   bool remove_frags_from_bitmap(CORBA::Long bitmap[], CORBA::ULong num_bits,
                                 const SequenceNumber& base,
-                                const RepoId& pub_id);
+                                const GUID_t& pub_id, ACE_CDR::ULong& samples_requested);
 
   /// Remove any saved fragments.  We do not expect to receive any more
   /// fragments with sequence numbers in "range" from publication "pub_id".
-  void remove_fragments(const SequenceRange& range, const RepoId& pub_id);
+  void remove_fragments(const SequenceRange& range, const GUID_t& pub_id);
 
   typedef std::pair<SequenceNumber, RTPS::FragmentNumberSet> SeqFragPair;
   typedef OPENDDS_VECTOR(SeqFragPair) FragmentInfo;
 
-  bool has_fragments(const SequenceRange& range, const RepoId& pub_id,
-                     FragmentInfo* frag_info = 0);
+  void clear_completed_fragments(const GUID_t& pub_id);
+  bool has_fragments(const SequenceRange& range, const GUID_t& pub_id, FragmentInfo* frag_info = 0);
 
   /// Prevent delivery of the currently in-progress data sample to the
   /// subscription sub_id.  Returns pointer to the in-progress data so
   /// it can be stored for later delivery.
-  const ReceivedDataSample* withhold_data_from(const RepoId& sub_id);
-  void do_not_withhold_data_from(const RepoId& sub_id);
+  const ReceivedDataSample* withhold_data_from(const GUID_t& sub_id);
+  void do_not_withhold_data_from(const GUID_t& sub_id);
 
   static ssize_t receive_bytes_helper(iovec iov[],
                                       int n,
                                       const ACE_SOCK_Dgram& socket,
                                       ACE_INET_Addr& remote_address,
-                                      ICE::Endpoint* endpoint,
+#if OPENDDS_CONFIG_SECURITY
+                                      DCPS::RcHandle<ICE::Agent> agent,
+                                      DCPS::WeakRcHandle<ICE::Endpoint> endpoint,
+#endif
+                                      RtpsUdpTransport& tport,
                                       bool& stop);
 
+  virtual void begin_transport_header_processing();
+  virtual void end_transport_header_processing();
+
+  static StatisticSeq stats_template();
+  void fill_stats(StatisticSeq& stats, DDS::UInt32& idx) const;
+
 private:
+  bool getDirectedWriteReaders(RepoIdSet& directedWriteReaders, const RTPS::DataSubmessage& ds) const;
+
+  const ACE_SOCK_Dgram& choose_recv_socket(ACE_HANDLE fd) const;
+
   virtual ssize_t receive_bytes(iovec iov[],
                                 int n,
                                 ACE_INET_Addr& remote_address,
@@ -86,7 +109,8 @@ private:
                               const ACE_INET_Addr& remote_address);
 
   void deliver_sample_i(ReceivedDataSample& sample,
-                        const RTPS::Submessage& submessage);
+                        const RTPS::Submessage& submessage,
+                        const NetworkAddress& remote_addr);
 
   virtual int start_i();
   virtual void stop_i();
@@ -96,24 +120,33 @@ private:
   virtual bool check_header(const RtpsSampleHeader& header);
 
   virtual bool reassemble(ReceivedDataSample& data);
+  virtual bool reassemble_i(ReceivedDataSample& data, RtpsSampleHeader& rsh);
 
-#if defined(OPENDDS_SECURITY)
-  void sec_submsg_to_octets(DDS::OctetSeq& encoded,
+#if OPENDDS_CONFIG_SECURITY
+  bool sec_submsg_to_octets(DDS::OctetSeq& encoded,
                             const RTPS::Submessage& postfix);
 
-  void deliver_from_secure(const RTPS::Submessage& submessage);
+  void deliver_from_secure(const RTPS::Submessage& submessage,
+                           const NetworkAddress& remote_addr);
 
   bool decode_payload(ReceivedDataSample& sample,
                       const RTPS::DataSubmessage& submessage);
 #endif
 
+  bool check_encoded(const EntityId_t& sender);
+
+  typedef TransportReceiveStrategy<RtpsTransportHeader, RtpsSampleHeader> BaseReceiveStrategy;
+
   RtpsUdpDataLink* link_;
   SequenceNumber last_received_;
 
   const ReceivedDataSample* recvd_sample_;
+  mutable ACE_Recursive_Thread_Mutex readers_mutex_;
   RepoIdSet readers_withheld_, readers_selected_;
 
-  SequenceRange frags_;
+  ACE_UINT16 fragment_size_;
+  FragmentRange frags_;
+  ACE_UINT32 total_frags_;
   TransportReassembly reassembly_;
 
   struct MessageReceiver {
@@ -136,6 +169,7 @@ private:
     RTPS::VendorId_t source_vendor_;
     GuidPrefix_t source_guid_prefix_;
     GuidPrefix_t dest_guid_prefix_;
+    bool directed_;
     DCPS::LocatorSeq unicast_reply_locator_list_;
     DCPS::LocatorSeq multicast_reply_locator_list_;
     bool have_timestamp_;
@@ -143,12 +177,15 @@ private:
   };
 
   MessageReceiver receiver_;
+  ThreadStatusManager& thread_status_manager_;
   ACE_INET_Addr remote_address_;
+  RTPS::Message message_;
 
-#if defined(OPENDDS_SECURITY)
+#if OPENDDS_CONFIG_SECURITY
   RTPS::SecuritySubmessage secure_prefix_;
   OPENDDS_VECTOR(RTPS::Submessage) secure_submessages_;
   ReceivedDataSample secure_sample_;
+  bool encoded_rtps_, encoded_submsg_;
 #endif
 };
 

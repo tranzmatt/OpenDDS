@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_TCPRECEIVESTRATEGY_H
-#define OPENDDS_TCPRECEIVESTRATEGY_H
+#ifndef OPENDDS_DCPS_TRANSPORT_TCP_TCPRECEIVESTRATEGY_H
+#define OPENDDS_DCPS_TRANSPORT_TCP_TCPRECEIVESTRATEGY_H
 
 #include "TcpConnection_rch.h"
 #include "TcpDataLink_rch.h"
@@ -23,7 +23,7 @@ class TcpConnection;
 
 class TcpReceiveStrategy
   : public TransportReceiveStrategy<>,
-    public RcEventHandler
+    public virtual RcEventHandler
 {
 public:
 

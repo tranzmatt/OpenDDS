@@ -29,7 +29,7 @@ void
 Reader::start ()
 {
   ACE_DEBUG((LM_DEBUG,
-    ACE_TEXT("(%P|%t) Reader::start \n")));
+    ACE_TEXT("(%P|%t) Reader::start\n")));
 
   try
   {
@@ -127,7 +127,7 @@ void
 Reader::start1 ()
 {
   ACE_DEBUG((LM_DEBUG,
-    ACE_TEXT("(%P|%t) Reader::start1 \n")));
+    ACE_TEXT("(%P|%t) Reader::start1\n")));
 
   try
   {
@@ -214,6 +214,7 @@ Reader::start1 ()
 
               PrintSampleInfo(si[0]);
 
+              // Regression Test for https://github.com/OpenDDS/OpenDDS/issues/592
               status = foo_dr->get_key_value(key_holder, ::DDS::HANDLE_NIL) ;
               TEST_CHECK(status == ::DDS::RETCODE_BAD_PARAMETER);
 
@@ -261,6 +262,7 @@ Reader::start1 ()
 
       PrintSampleInfo(si[0]);
 
+      // Regression Test for https://github.com/OpenDDS/OpenDDS/issues/592
       status = foo_dr->get_key_value(key_holder, ::DDS::HANDLE_NIL) ;
       TEST_CHECK(status == ::DDS::RETCODE_BAD_PARAMETER);
 
@@ -301,6 +303,7 @@ Reader::start1 ()
 
               PrintSampleInfo(si[0]);
 
+              // Regression Test for https://github.com/OpenDDS/OpenDDS/issues/592
               status = foo_dr->get_key_value(key_holder, ::DDS::HANDLE_NIL) ;
               TEST_CHECK(status == ::DDS::RETCODE_BAD_PARAMETER);
 
@@ -377,7 +380,7 @@ void
 Reader::start2 ()
 {
   ACE_DEBUG((LM_DEBUG,
-    ACE_TEXT("(%P|%t) Reader::start2 \n")));
+    ACE_TEXT("(%P|%t) Reader::start2\n")));
 
   try
   {
@@ -443,4 +446,3 @@ Reader::reader_id () const
 {
   return reader_id_;
 }
-

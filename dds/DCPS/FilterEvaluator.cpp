@@ -1,27 +1,28 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-#include "DCPS/DdsDcps_pch.h" //Only the _pch include should start with DCPS/
+#include <DCPS/DdsDcps_pch.h> // Only the _pch include should start with DCPS/
 
-#include "dds/DCPS/Definitions.h"
+#include "Definitions.h"
 
 #ifndef OPENDDS_NO_CONTENT_SUBSCRIPTION_PROFILE
 
 #include "FilterEvaluator.h"
 #include "FilterExpressionGrammar.h"
 #include "AstNodeWrapper.h"
-#include "Definitions.h"
-#include "dds/DCPS/SafetyProfileStreams.h"
+#include "SafetyProfileStreams.h"
+#include "TypeSupportImpl.h"
+#include "GuidConverter.h"
+#include "EncapsulationHeader.h"
 
 #include <ace/ACE.h>
 
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
+#include <sstream>
 
 namespace {
   const char MOD[] = "MOD";
@@ -68,6 +69,7 @@ FilterEvaluator::FilterEvaluator(const char* filter, bool allowOrderBy)
 FilterEvaluator::FilterEvaluator(const AstNodeWrapper& yardNode)
   : extended_grammar_(false)
   , filter_root_(walkAst(yardNode))
+  , number_parameters_(0)
 {
 }
 
@@ -83,14 +85,11 @@ public:
     std::for_each(children_.begin(), children_.end(), deleteChild);
   }
 
-  virtual bool has_non_key_fields(const MetaStruct& meta) const
+  virtual bool has_non_key_fields(const TypeSupportImpl& ts) const
   {
-    for (
-      OPENDDS_VECTOR(EvalNode*)::const_iterator i = children_.begin();
-      i != children_.end(); ++i
-    ) {
+    for (OPENDDS_VECTOR(EvalNode*)::const_iterator i = children_.begin(); i != children_.end(); ++i) {
       EvalNode* child = *i;
-      if (child->has_non_key_fields(meta)) {
+      if (child->has_non_key_fields(ts)) {
         return true;
       }
     }
@@ -120,6 +119,17 @@ FilterEvaluator::DeserializedForEval::lookup(const char* field) const
   return meta_.getValue(deserialized_, field);
 }
 
+FilterEvaluator::SerializedForEval::SerializedForEval(ACE_Message_Block* data,
+                                                      TypeSupportImpl& type_support,
+                                                      const DDS::StringSeq& params,
+                                                      Encoding encoding)
+  : DataForEval(type_support.getMetaStructForType(), params)
+  , serialized_(data)
+  , encoding_(encoding)
+  , type_support_(type_support)
+  , exten_(type_support.base_extensibility())
+{}
+
 Value
 FilterEvaluator::SerializedForEval::lookup(const char* field) const
 {
@@ -127,13 +137,28 @@ FilterEvaluator::SerializedForEval::lookup(const char* field) const
   if (iter != cache_.end()) {
     return iter->second;
   }
-  Message_Block_Ptr mb (serialized_->duplicate());
-  Serializer ser(mb.get(), swap_,
-                 cdr_ ? Serializer::ALIGN_CDR : Serializer::ALIGN_NONE);
-  if (cdr_) {
-    ser.skip(4); // CDR encapsulation header
+  Message_Block_Ptr mb(serialized_->duplicate());
+  Serializer ser(mb.get(), encoding_);
+  if (encoding_.is_encapsulated()) {
+    EncapsulationHeader encap;
+    if (!(ser >> encap)) {
+      ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR ")
+        ACE_TEXT("FilterEvaluator::SerializedForEval::lookup: ")
+        ACE_TEXT("deserialization of encapsulation header failed.\n")));
+      throw std::runtime_error("FilterEvaluator::SerializedForEval::lookup:"
+        "deserialization of encapsulation header failed.\n");
+    }
+    Encoding encoding;
+    if (!to_encoding(encoding, encap, exten_)) {
+      ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR ")
+        ACE_TEXT("FilterEvaluator::SerializedForEval::lookup: ")
+        ACE_TEXT("failed to convert encapsulation header to encoding.\n")));
+      throw std::runtime_error("FilterEvaluator::SerializedForEval::lookup:"
+        "failed to convert encapsulation header to encoding.\n");
+    }
+    ser.encoding(encoding);
   }
-  const Value v = meta_.getValue(ser, field);
+  const Value v = meta_.getValue(ser, field, &type_support_);
   cache_.insert(std::make_pair(OPENDDS_STRING(field), v));
   return v;
 }
@@ -143,22 +168,15 @@ FilterEvaluator::~FilterEvaluator()
   delete filter_root_;
 }
 
-bool FilterEvaluator::has_non_key_fields(const MetaStruct& meta) const
+bool FilterEvaluator::has_non_key_fields(const TypeSupportImpl& ts) const
 {
-  for (
-    OPENDDS_VECTOR(OPENDDS_STRING)::const_iterator i = order_bys_.begin();
-    i != order_bys_.end(); ++i
-  ) {
-    if (!meta.isDcpsKey(i->c_str())) {
+  for (OPENDDS_VECTOR(OPENDDS_STRING)::const_iterator i = order_bys_.begin(); i != order_bys_.end(); ++i) {
+    if (!ts.is_dcps_key(i->c_str())) {
       return true;
     }
   }
 
-  if (filter_root_->has_non_key_fields(meta)) {
-    return true;
-  }
-
-  return false;
+  return filter_root_->has_non_key_fields(ts);
 }
 
 namespace {
@@ -175,9 +193,9 @@ namespace {
       return data.lookup(fieldName_.c_str());
     }
 
-    bool has_non_key_fields(const MetaStruct& meta) const
+    bool has_non_key_fields(const TypeSupportImpl& ts) const
     {
-      return !meta.isDcpsKey(fieldName_.c_str());
+      return !ts.is_dcps_key(fieldName_.c_str());
     }
 
     OPENDDS_STRING fieldName_;
@@ -263,7 +281,7 @@ namespace {
   class Parameter : public FilterEvaluator::Operand {
   public:
     explicit Parameter(AstNode* fnNode)
-      : param_(std::atoi(toString(fnNode).c_str() + 1 /* skip % */))
+      : param_(static_cast<size_t>(std::atoi(toString(fnNode).c_str() + 1 /* skip % */)))
     {}
 
     bool isParameter() const { return true; }
@@ -612,6 +630,10 @@ Value::Value(const std::string& s, bool conversion_preferred)
 {}
 
 #ifdef DDS_HAS_WCHAR
+Value::Value(ACE_OutputCDR::from_wchar wc, bool conversion_preferred)
+  : type_(VAL_INT), i_(static_cast<int>(wc.val_)), conversion_preferred_(conversion_preferred)
+{}
+
 Value::Value(const std::wstring& s, bool conversion_preferred)
   : type_(VAL_STRING), s_(ACE_OS::strdup(ACE_Wide_To_Ascii(s.c_str()).char_rep()))
   , conversion_preferred_(conversion_preferred)
@@ -645,7 +667,7 @@ template<> ACE_UINT64& Value::get() { return m_; }
 template<> char& Value::get() { return c_; }
 template<> double& Value::get() { return f_; }
 template<> ACE_CDR::LongDouble& Value::get() { return ld_; }
-template<> const char*& Value::get() { return s_; }
+template<> char*& Value::get() { return s_; }
 
 template<> const bool& Value::get() const { return b_; }
 template<> const int& Value::get() const { return i_; }
@@ -655,11 +677,11 @@ template<> const ACE_UINT64& Value::get() const { return m_; }
 template<> const char& Value::get() const { return c_; }
 template<> const double& Value::get() const { return f_; }
 template<> const ACE_CDR::LongDouble& Value::get() const { return ld_; }
-template<> const char* const& Value::get() const { return s_; }
+template<> char* const& Value::get() const { return s_; }
 
 Value::~Value()
 {
-  if (type_ == VAL_STRING) ACE_OS::free((void*)s_);
+  if (type_ == VAL_STRING) ACE_OS::free(s_);
 }
 
 namespace {
@@ -699,7 +721,7 @@ namespace {
     explicit Assign(Value& target, bool steal = false)
       : tgt_(target), steal_(steal) {}
 
-    void operator()(const char* s)
+    void operator()(char* s)
     {
       tgt_.s_ = steal_ ? s : ACE_OS::strdup(s);
     }
@@ -735,7 +757,7 @@ Value::swap(Value& v)
   Value t(v);
 
   if (v.type_ == VAL_STRING) {
-    ACE_OS::free((void*)v.s_);
+    ACE_OS::free(v.s_);
   }
 
   Assign visitor1(v, true);
@@ -758,7 +780,7 @@ namespace {
   struct Equals : VisitorBase<bool> {
     explicit Equals(const Value& lhs) : lhs_(lhs) {}
 
-    bool operator()(const char* s) const
+    bool operator()(char* s) const
     {
       return std::strcmp(lhs_.s_, s) == 0;
     }
@@ -774,7 +796,7 @@ namespace {
   struct Less : VisitorBase<bool> {
     explicit Less(const Value& lhs) : lhs_(lhs) {}
 
-    bool operator()(const char* s) const
+    bool operator()(char* s) const
     {
       return std::strcmp(lhs_.s_, s) < 0;
     }
@@ -790,7 +812,7 @@ namespace {
   struct Modulus : VisitorBase<Value> {
     explicit Modulus(const Value& lhs) : lhs_(lhs) {}
 
-    bool operator()(const char*&) const
+    bool operator()(char*&) const
     {
       throw std::runtime_error(std::string(MOD) + " cannot be applied to strings");
     }
@@ -885,8 +907,8 @@ namespace {
   struct StreamExtract : VisitorBase<> {
     explicit StreamExtract(std::istream& is) : is_(is) {}
 
-    void operator()(const char*) {}
-    // not called.  prevents instantiation of the following with T = const char*
+    void operator()(char*) {}
+    // not called.  prevents instantiation of the following with T = char*
 
     void operator()(ACE_CDR::LongDouble& ld)
     {

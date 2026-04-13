@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_RTPSSAMPLEHEADER_H
-#define DCPS_RTPSSAMPLEHEADER_H
+#ifndef OPENDDS_DCPS_TRANSPORT_RTPS_UDP_RTPSSAMPLEHEADER_H
+#define OPENDDS_DCPS_TRANSPORT_RTPS_UDP_RTPSSAMPLEHEADER_H
 
 #include "Rtps_Udp_Export.h"
 
@@ -32,11 +32,11 @@ class DisjointSequence;
 class OpenDDS_Rtps_Udp_Export RtpsSampleHeader {
 public:
 
-  // This is not really the max_marshaled_size, but it's used for determining
+  // This is not really the max_serialized_size, but it's used for determining
   // how much of the submessage to show in debugging hexdumps.  Since we don't
   // know which kind of submessage we have, we can only count on the 4-byte
   // SubmessageHeader being present.
-  static size_t max_marshaled_size() { return 4; }
+  static size_t get_max_serialized_size() { return 4; }
 
   // We never have partial "sample" headers since this is UDP.
   // (The header could fail to parse in init(), but unlike the TCP case we
@@ -55,7 +55,7 @@ public:
   RtpsSampleHeader& operator=(ACE_Message_Block& mn);
 
   void pdu_remaining(size_t size);
-  size_t marshaled_size();
+  size_t get_serialized_size();
   ACE_UINT32 message_length();
 
   bool valid() const;
@@ -71,8 +71,8 @@ public:
 private:
   void init(ACE_Message_Block& mb);
 
-  bool valid_, frag_;
-  size_t marshaled_size_, message_length_;
+  bool valid_, frag_, data_;
+  size_t serialized_size_, message_length_;
 
 public:
   // Unlike the rest of this class, which is used with the
@@ -97,9 +97,12 @@ public:
   // of <= (see issue 16966).
   static const ACE_CDR::UShort FRAG_SIZE = 1024;
 
+  static FragmentNumber last_fragment(const RTPS::DataFragSubmessage& df);
+  static ACE_UINT32 total_fragments(const RTPS::DataFragSubmessage& df);
+
 private:
   static void process_iqos(DataSampleHeader& opendds,
-                           const OpenDDS::RTPS::ParameterList& iqos);
+                           const RTPS::ParameterList& iqos);
 };
 
 }

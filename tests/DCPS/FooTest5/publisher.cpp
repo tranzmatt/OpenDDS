@@ -28,7 +28,7 @@
 #include "tests/DCPS/FooType5/FooDefTypeSupportImpl.h"
 #include "dds/DCPS/transport/framework/TransportRegistry.h"
 #include <dds/DCPS/transport/framework/TransportExceptions.h>
-#include "model/Sync.h"
+#include "tests/Utils/StatusMatching.h"
 
 #include "ace/Arg_Shifter.h"
 #include "ace/OS_NS_unistd.h"
@@ -215,12 +215,12 @@ create_publisher (::DDS::DomainParticipant_ptr participant,
       // Attach the publisher to the transport.
       if (attach_to_udp)
         {
-          ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) attach to udp \n")));
+          ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) attach to udp\n")));
           TheTransportRegistry->bind_config("udp", pub.in());
         }
       else if (attach_to_multicast)
         {
-          ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) attach to multicast \n")));
+          ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) attach to multicast\n")));
           TheTransportRegistry->bind_config("multicast", pub.in());
         }
       else if (attach_to_rtps)
@@ -235,7 +235,7 @@ create_publisher (::DDS::DomainParticipant_ptr participant,
         }
       else
         {
-          ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) attach to tcp \n")));
+          ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) attach to tcp\n")));
           TheTransportRegistry->bind_config("tcp", pub.in());
         }
 
@@ -465,7 +465,7 @@ int ACE_TMAIN (int argc, ACE_TCHAR *argv[])
 
       for (int i = 0; i < num_datawriters; i ++)
         {
-          OpenDDS::Model::WriterSync::wait_match(dw[i], associations_per_writer);
+          Utils::wait_match(dw[i], associations_per_writer, Utils::GTE);
           writers[i]->start ();
         }
 

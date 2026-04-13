@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_TRANSPORTRECEIVELISTENER_H
-#define OPENDDS_DCPS_TRANSPORTRECEIVELISTENER_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTRECEIVELISTENER_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTRECEIVELISTENER_H
 
 #include "dds/DCPS/dcps_export.h"
 #include "dds/DdsDcpsInfoUtilsC.h"
@@ -33,6 +33,8 @@ public:
   virtual void notify_subscription_lost(const WriterIdSeq& pubids) = 0;
 
   virtual void remove_associations(const WriterIdSeq& pubids, bool notify) = 0;
+
+  virtual void transport_discovery_change() {}
 
 protected:
 

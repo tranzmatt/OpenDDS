@@ -8,10 +8,10 @@
 #include "dds/DCPS/transport/tcp/TcpInst.h"
 
 #include "dds/DCPS/transport/framework/TransportRegistry.h"
-#include "dds/DCPS/transport/framework/NetworkAddress.h"
 #include "dds/DCPS/transport/framework/EntryExit.h"
 
 #include "dds/DCPS/AssociationData.h"
+#include "dds/DCPS/NetworkResource.h"
 #include "dds/DCPS/RepoIdBuilder.h"
 #include "dds/DCPS/Service_Participant.h"
 #include "dds/DdsDcpsInfoUtilsC.h"
@@ -26,7 +26,6 @@
 SubDriver::SubDriver()
   : pub_id_(OpenDDS::DCPS::GuidBuilder::create())
   , sub_id_(OpenDDS::DCPS::GuidBuilder::create())
-  , reader_(sub_id_)
   , num_msgs_(1)
   , shmem_(false)
 {
@@ -216,7 +215,7 @@ SubDriver::run()
   VDBG((LM_DEBUG, "(%P|%t) DBG:   "
              "Initialize our SimpleSubscriber object.\n"));
 
-  this->reader_.enable_transport(false /*reliable*/, false /*durable*/);
+  this->reader_.enable_transport(false /*reliable*/, false /*durable*/, sub_id_);
 
   // Write a file so that test script knows we're ready
   FILE * file = ACE_OS::fopen ("subready.txt", ACE_TEXT("w"));
@@ -259,11 +258,11 @@ SubDriver::run()
   } else { // tcp
     publication.remote_data_[0].transport_type = "tcp";
 
-    OpenDDS::DCPS::NetworkAddress network_order_address(
+    OpenDDS::DCPS::NetworkResource network_resource(
       ACE_TEXT_ALWAYS_CHAR(this->pub_addr_str_.c_str()));
 
     ACE_OutputCDR cdr;
-    cdr << network_order_address;
+    cdr << network_resource;
     CORBA::ULong len = static_cast<CORBA::ULong>(cdr.total_length());
 
     publication.remote_data_[0].data =
@@ -421,7 +420,9 @@ SubDriver::parse_sub_arg(const ACE_TString& arg)
 
   builder.participantId(1);
   builder.entityKey(ACE_OS::atoi(sub_id_str.c_str()));
-  builder.entityKind(OpenDDS::DCPS::ENTITYKIND_USER_WRITER_WITH_KEY);
+  builder.entityKind(OpenDDS::DCPS::ENTITYKIND_USER_READER_WITH_KEY);
+
+  reader_.set_guid(sub_id_);
 
   // Use the remainder as the "stringified" ACE_INET_Addr.
   this->sub_addr_ = ACE_INET_Addr(this->sub_addr_str_.c_str());

@@ -1,37 +1,35 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DATA_DURABILITY_CACHE_H
-#define OPENDDS_DATA_DURABILITY_CACHE_H
+#ifndef OPENDDS_DCPS_DATADURABILITYCACHE_H
+#define OPENDDS_DCPS_DATADURABILITYCACHE_H
 
 #ifndef OPENDDS_NO_PERSISTENCE_PROFILE
 
-#include "dds/DdsDcpsInfrastructureC.h"
+#include <dds/DdsDcpsInfrastructureC.h>
 
-#if !defined (ACE_LACKS_PRAGMA_ONCE)
-# pragma once
-#endif /* ACE_LACKS_PRAGMA_ONCE */
+#ifndef ACE_LACKS_PRAGMA_ONCE
+#  pragma once
+#endif
 
-#include "dds/DCPS/DurabilityArray.h"
-#include "dds/DCPS/DurabilityQueue.h"
-#include "dds/DCPS/FileSystemStorage.h"
-#include "dds/DCPS/PoolAllocator.h"
-#include "dds/DCPS/unique_ptr.h"
-
-
-#include "ace/Hash_Map_With_Allocator_T.h"
-#include "ace/Array_Base.h"
-#include "ace/String_Base.h"
-#include "ace/SStringfwd.h"
-#include "ace/Thread_Mutex.h"
-#include "ace/Null_Mutex.h"
-#include "ace/Synch_Traits.h"
-#include "ace/Functor_T.h"
+#include "DurabilityArray.h"
+#include "DurabilityQueue.h"
+#include "FileSystemStorage.h"
 #include "PoolAllocator.h"
+#include "unique_ptr.h"
+
+#include <dds/Versioned_Namespace.h>
+
+#include <ace/Hash_Map_With_Allocator_T.h>
+#include <ace/Array_Base.h>
+#include <ace/String_Base.h>
+#include <ace/SStringfwd.h>
+#include <ace/Thread_Mutex.h>
+#include <ace/Null_Mutex.h>
+#include <ace/Synch_Traits.h>
+#include <ace/Functor_T.h>
 
 #include <memory>
 #include <utility>
@@ -190,7 +188,7 @@ public:
   DataDurabilityCache(DDS::DurabilityQosPolicyKind kind);
 
   DataDurabilityCache(DDS::DurabilityQosPolicyKind kind,
-                      ACE_CString & data_dir);
+                      const String& data_dir);
 
   ~DataDurabilityCache();
 
@@ -222,13 +220,12 @@ private:
   void init();
 
 private:
-
   /// Allocator used to allocate memory for sample map and lists.
   unique_ptr<ACE_Allocator> const allocator_;
 
   DDS::DurabilityQosPolicyKind kind_;
 
-  ACE_CString data_dir_;
+  String data_dir_;
 
   /// Map of all data samples.
   sample_map_type * samples_;

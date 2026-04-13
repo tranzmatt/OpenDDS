@@ -1,26 +1,23 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef GROUPRAKEDATA_H
-#define GROUPRAKEDATA_H
+#ifndef OPENDDS_DCPS_GROUPRAKEDATA_H
+#define OPENDDS_DCPS_GROUPRAKEDATA_H
 
-#include /**/ "ace/pre.h"
-#include "dcps_export.h"
+#include <ace/config-macros.h>
+#ifndef ACE_LACKS_PRAGMA_ONCE
+#  pragma once
+#endif
 
-#if !defined (ACE_LACKS_PRAGMA_ONCE)
-# pragma once
-#endif /* ACE_LACKS_PRAGMA_ONCE */
-
-#include "dds/DdsDcpsSubscriptionC.h"
-#include "dds/DdsDcpsInfrastructureC.h"
 #include "RakeData.h"
 #include "Comparator_T.h"
-
 #include "PoolAllocator.h"
+#include "dcps_export.h"
+
+#include <dds/DdsDcpsSubscriptionC.h>
+#include <dds/DdsDcpsInfrastructureC.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -37,7 +34,9 @@ public:
   /// Returns false if the sample will definitely not be part of the
   /// resulting dataset, however if this returns true it still may be
   /// excluded (due to sorting and max_samples).
-  bool insert_sample(ReceivedDataElement* sample, SubscriptionInstance_rch i,
+  bool insert_sample(ReceivedDataElement* sample,
+                     ReceivedDataElementList* rdel,
+                     SubscriptionInstance_rch i,
                      size_t index_in_instance);
 
   void get_datareaders (DDS::DataReaderSeq & readers);

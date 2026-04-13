@@ -1,16 +1,15 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-#include "tools/dissector/packet-opendds.h"
-#include "tools/dissector/packet-repo.h"
-#include "tools/dissector/sample_manager.h"
+#include "packet-opendds.h"
 
-#include "dds/DCPS/GuidConverter.h"
-#include "dds/DCPS/Serializer.h"
+#include "packet-repo.h"
+#include "sample_manager.h"
+
+#include <dds/DCPS/GuidConverter.h>
+#include <dds/DCPS/Serializer.h>
 
 #include <ace/Basic_Types.h>
 #include <ace/CDR_Base.h>
@@ -20,7 +19,6 @@
 #include <ace/Signal.h>
 
 #include <cstring>
-
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
@@ -59,8 +57,14 @@ int hf_flags_byte_order    = -1;
 int hf_flags_first_fragment= -1;
 int hf_flags_last_fragment = -1;
 
+#if WIRESHARK_VERSION >= WIRESHARK_VERSION_NUMBER(3, 4, 0)
+#  define OPENDDS_WIRESHARK_FLAGS_ARRAY_TYPE int* const
+#else
+#  define OPENDDS_WIRESHARK_FLAGS_ARRAY_TYPE const int*
+#endif
+
 const int flags_bits = 8;
-const int* flags_fields[] = {
+static OPENDDS_WIRESHARK_FLAGS_ARRAY_TYPE flags_fields[] = {
   &hf_flags_byte_order,
   &hf_flags_first_fragment,
   &hf_flags_last_fragment,
@@ -105,7 +109,7 @@ expert_field ei_sample_payload_warning = EI_INIT;
 #endif
 
 const int sample_flags_bits = 8;
-const int* sample_flags_fields[] = {
+static OPENDDS_WIRESHARK_FLAGS_ARRAY_TYPE sample_flags_fields[] = {
   &hf_sample_flags_byte_order,
   &hf_sample_flags_coherent,
   &hf_sample_flags_historic,
@@ -118,7 +122,7 @@ const int* sample_flags_fields[] = {
 };
 
 const int sample_flags2_bits = 8;
-const int* sample_flags2_fields[] = {
+static OPENDDS_WIRESHARK_FLAGS_ARRAY_TYPE sample_flags2_fields[] = {
   &hf_sample_flags2_cdr_encap,
   &hf_sample_flags2_key_only,
   NULL
@@ -186,6 +190,7 @@ namespace OpenDDS
       return instance_;
     }
 
+    const Encoding encoding(Encoding::KIND_UNALIGNED_CDR);
 
     template<typename T>
     T
@@ -194,7 +199,7 @@ namespace OpenDDS
       T t;
 
       guint len = std::min(ws_tvb_length(tvb) - offset,
-                           static_cast<guint>(t.max_marshaled_size()));
+                           static_cast<guint>(t.get_max_serialized_size()));
       const guint8* data = tvb_get_ptr(tvb, offset, len);
 
       ACE_Message_Block mb(reinterpret_cast<const char*>(data));
@@ -290,8 +295,7 @@ namespace OpenDDS
       offset += len;
 
       // hf_sequence
-      size_t size = 0, padding = 0;
-      gen_find_size(header.sequence_, size, padding);
+      size_t size = serialized_size(encoding, header.sequence_);
       len = static_cast<gint>(size);
       proto_tree_add_uint64(ltree, hf_sequence, tvb_, offset, len,
                             gint64(header.sequence_.getValue()));
@@ -347,8 +351,7 @@ namespace OpenDDS
       offset += len;
 
       // hf_sample_sequence
-      size_t size = 0, padding = 0;
-      gen_find_size(sample.sequence_, size, padding);
+      size_t size = serialized_size(encoding, sample.sequence_);
       len = static_cast<gint>(size);
       if (sample.message_id_ == SAMPLE_DATA) {
         proto_tree_add_uint64(ltree, hf_sample_sequence, tvb_, offset, len,
@@ -389,34 +392,30 @@ namespace OpenDDS
         }
 
       // hf_sample_publication
-      size = 0;
-      gen_find_size(sample.publication_id_, size, padding);
+      size = serialized_size(encoding, sample.publication_id_);
       len = static_cast<gint>(size);
       const guint8 *data_ptr =
         reinterpret_cast<const guint8*>(&sample.publication_id_);
       if (sample.message_id_ != TRANSPORT_CONTROL)
         {
-          GuidConverter converter (sample.publication_id_);
           proto_tree_add_bytes_format_value (ltree, hf_sample_publication,
                                              tvb_, offset, len, data_ptr, "%s",
-                                             std::string(converter).c_str());
+                                             LogGuid(sample.publication_id_).c_str());
         }
       offset += len;
 
       // hf_sample_publisher
       if (sample.group_coherent_)
         {
-          size = 0;
-          gen_find_size(sample.publisher_id_, size, padding);
+          size = serialized_size(encoding, sample.publication_id_);
           len = static_cast<gint>(size);
           data_ptr = reinterpret_cast<const guint8*>(&sample.publisher_id_);
           if (sample.message_id_ != DCPS::TRANSPORT_CONTROL)
             {
-              DCPS::GuidConverter converter(sample.publisher_id_);
               proto_tree_add_bytes_format_value (ltree, hf_sample_publisher,
                                                  tvb_, offset, len,
                                                  data_ptr, "%s",
-                                                 std::string(converter).c_str()
+                                                 LogGuid(sample.publisher_id_).c_str()
                                                  );
             }
           offset += len;
@@ -425,8 +424,7 @@ namespace OpenDDS
       // hf_sample_content_filt
       if (sample.content_filter_)
         {
-          size = 0;
-          gen_find_size(sample.content_filter_entries_, size, padding);
+          size = serialized_size(encoding, sample.content_filter_entries_);
           gint total_len = static_cast<gint>(size);
           len = sizeof(CORBA::ULong);
           if (sample.message_id_ != DCPS::TRANSPORT_CONTROL)
@@ -444,14 +442,12 @@ namespace OpenDDS
                 {
                   // Get Entry Value
                   const GUID_t &filter = sample.content_filter_entries_[i];
-                  DCPS::GuidConverter converter(filter);
                   std::stringstream strm;
-                  strm << converter;
+                  strm << LogGuid(filter).c_str();
                   std::string guid = strm.str();
 
                   // Get Entry Size
-                  size = 0;
-                  gen_find_size(filter, size, padding);
+                  size = serialized_size(encoding, filter);
                   len = static_cast<gint>(size);
 
                   // Add to Wireshark
@@ -505,8 +501,6 @@ namespace OpenDDS
           return;
         }
 
-      GuidConverter converter(header.publication_id_);
-
       if (header.cdr_encapsulation_) {
         ACE_DEBUG ((LM_DEBUG,
                     "DDS_Dissector::dissect_sample_payload: "
@@ -533,11 +527,12 @@ namespace OpenDDS
       const char * data_name =
         InfoRepo_Dissector::instance().topic_for_pub(&header.publication_id_);
 
+      LogGuid publication_log(header.publication_id_);
       if (data_name == 0) {
         ACE_DEBUG ((LM_DEBUG,
                     "DDS_Dissector::dissect_sample_payload: "
                     "couldn't dissect payload: no topic for %C\n",
-                    std::string(converter).c_str()));
+                    publication_log.c_str()));
 
         // Mark Packet
 #ifndef NO_EXPERT
@@ -548,8 +543,8 @@ namespace OpenDDS
           tvb_,
           offset,
           (gint) header.message_length_,
-          "Couldn't Dissect Payload: No Topic Found for %s \n",
-          std::string(converter).c_str()
+          "Couldn't Dissect Payload: No Topic Found for %s\n",
+          publication_log.c_str()
         );
 #endif
 
@@ -573,7 +568,7 @@ namespace OpenDDS
         ACE_DEBUG ((LM_DEBUG,
                     "DDS_Dissector::dissect_sample_payload: "
                     "couldn't dissect payload: "
-                    "no dissector found for %C \n",
+                    "no dissector found for %C\n",
                     data_name));
 
         // Mark Packet
@@ -586,7 +581,7 @@ namespace OpenDDS
           offset,
           (gint) header.message_length_,
           "Couldn't Dissect Payload: "
-          "No Dissector Found for %s \n",
+          "No Dissector Found for %s\n",
           data_name
         );
 #endif
@@ -625,7 +620,7 @@ namespace OpenDDS
         Wireshark_Bundle params(
           (char *) data, size,
           header.byte_order_ != ACE_CDR_BYTE_ORDER,
-          Serializer::ALIGN_NONE // For now alignment is not supported
+          Encoding::ALIGN_NONE // For now alignment is not supported
         );
         params.tvb = tvb_;
         params.info = pinfo_;
@@ -703,22 +698,20 @@ namespace OpenDDS
 
             std::string sample_str(format(sample));
 
-            proto_item* item =
+            proto_item* i =
               proto_tree_add_none_format
               (trans_tree, hf_sample, tvb_, offset,
-               static_cast<gint>(sample.marshaled_size()) +
+               static_cast<gint>(sample.get_serialized_size()) +
                sample.message_length_,
                "%s",
                sample_str.c_str()
                );
 
-            proto_tree* sample_tree =
-              proto_item_add_subtree(item, ett_sample_header);
+            proto_tree* sample_tree = proto_item_add_subtree(i, ett_sample_header);
+            this->dissect_sample_header(sample_tree, sample, offset);
 
-            this->dissect_sample_header (sample_tree, sample, offset);
-
-            sample_tree = proto_item_add_subtree (item, ett_sample_header);
-            this->dissect_sample_payload (sample_tree, sample, offset);
+            sample_tree = proto_item_add_subtree(i, ett_sample_header);
+            this->dissect_sample_payload(sample_tree, sample, offset);
           }
       }
       return offset;
@@ -754,7 +747,7 @@ namespace OpenDDS
       TransportHeader header =
         demarshal_data<TransportHeader>(tvb, offset);
 
-      return header.length_ + static_cast<guint>(header.max_marshaled_size());
+      return header.length_ + static_cast<guint>(header.get_max_serialized_size());
     }
 
     // function passed to tcp pdu parser to do actual work.

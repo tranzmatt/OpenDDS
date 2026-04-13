@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_BESTEFFORTSESSIONFACTORY_H
-#define DCPS_BESTEFFORTSESSIONFACTORY_H
+#ifndef OPENDDS_DCPS_TRANSPORT_MULTICAST_BESTEFFORTSESSIONFACTORY_H
+#define OPENDDS_DCPS_TRANSPORT_MULTICAST_BESTEFFORTSESSIONFACTORY_H
 
 #include "Multicast_Export.h"
 
@@ -26,8 +26,8 @@ class OpenDDS_Multicast_Export BestEffortSessionFactory
 public:
   virtual int requires_send_buffer() const;
 
-  virtual MulticastSession_rch create(ACE_Reactor* reactor,
-                                      ACE_thread_t owner,
+  virtual MulticastSession_rch create(RcHandle<EventDispatcher> event_dispatcher,
+                                      ACE_Reactor*,
                                       MulticastDataLink* link,
                                       MulticastPeer remote_peer);
 };

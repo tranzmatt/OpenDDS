@@ -63,34 +63,27 @@ Writer::Writer(::DDS::DomainParticipant_ptr dp,
   }
 }
 
-void Writer::write (char message_id, const ::Xyz::Foo &foo)
+void Writer::write(char message_id, const ::Xyz::Foo &foo)
 {
-  ::DDS::InstanceHandle_t handle (::DDS::HANDLE_NIL) ;
-
-  switch(message_id)
-  {
+  switch (message_id) {
     case ::OpenDDS::DCPS::SAMPLE_DATA:
-      ACE_OS::printf ("writing %c foo.x = %f foo.y = %f, foo.key = %d\n",
-                      foo.c, foo.x, foo.y, foo.key);
-
-      foo_dw_->write(foo,
-                      handle);
+      ACE_OS::printf("writing %c foo.x = %f foo.y = %f, foo.key = %d\n",
+                     foo.c, foo.x, foo.y, foo.key);
+      foo_dw_->write(foo, DDS::HANDLE_NIL);
       break;
 
     case ::OpenDDS::DCPS::INSTANCE_REGISTRATION:
-      ACE_OS::printf ("registering foo.key = %d\n", foo.key) ;
-      handle = foo_dw_->register_instance(foo);
+      ACE_OS::printf("registering foo.key = %d\n", foo.key);
+      foo_dw_->register_instance(foo);
       break;
 
     case ::OpenDDS::DCPS::DISPOSE_INSTANCE:
-      ACE_OS::printf ("disposing foo.key = %d\n", foo.key) ;
-
-      foo_dw_->dispose(foo,
-                        handle);
+      ACE_OS::printf("disposing foo.key = %d\n", foo.key);
+      foo_dw_->dispose(foo, DDS::HANDLE_NIL);
       break;
 
     default:
-      ACE_OS::printf ("Oops! message_id = %c\n", message_id) ;
+      ACE_OS::printf("Oops! message_id = %c\n", message_id);
       break;
   }
 }
@@ -100,7 +93,7 @@ void
 Writer::test1 ()
 {
   ACE_DEBUG((LM_DEBUG,
-              ACE_TEXT("(%P|%t) Writer::test1 \n")));
+              ACE_TEXT("(%P|%t) Writer::test1\n")));
 
   try
   {
@@ -136,7 +129,7 @@ void
 Writer::test2 ()
 {
   ACE_DEBUG((LM_DEBUG,
-              ACE_TEXT("(%P|%t) Writer::test2 \n")));
+              ACE_TEXT("(%P|%t) Writer::test2\n")));
 
   try
   {
@@ -181,7 +174,7 @@ void
 Writer::test3 ()
 {
   ACE_DEBUG((LM_DEBUG,
-              ACE_TEXT("(%P|%t) Writer::test3 \n")));
+              ACE_TEXT("(%P|%t) Writer::test3\n")));
 
   try
   {
@@ -232,7 +225,7 @@ void
 Writer::test4 ()
 {
   ACE_DEBUG((LM_DEBUG,
-              ACE_TEXT("(%P|%t) Writer::test4 \n")));
+              ACE_TEXT("(%P|%t) Writer::test4\n")));
 
   try
   {
@@ -256,7 +249,7 @@ void
 Writer::test5 ()
 {
   ACE_DEBUG((LM_DEBUG,
-              ACE_TEXT("(%P|%t) Writer::test5 \n")));
+              ACE_TEXT("(%P|%t) Writer::test5\n")));
 
   try
   {
@@ -281,7 +274,7 @@ void
 Writer::test6 ()
 {
   ACE_DEBUG((LM_DEBUG,
-              ACE_TEXT("(%P|%t) Writer::test6 \n")));
+              ACE_TEXT("(%P|%t) Writer::test6\n")));
 
   try
   {

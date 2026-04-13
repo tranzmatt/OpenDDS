@@ -11,10 +11,10 @@
 #ifndef OPENDDS_NO_MULTI_TOPIC
 
 #include "dds/DdsDcpsSubscriptionExtC.h"
-#include "dds/DCPS/ZeroCopySeq_T.h"
-#include "dds/DCPS/MultiTopicImpl.h"
-#include "dds/DCPS/PoolAllocator.h"
-#include "dds/DCPS/unique_ptr.h"
+#include "ZeroCopySeq_T.h"
+#include "MultiTopicImpl.h"
+#include "PoolAllocator.h"
+#include "unique_ptr.h"
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 #pragma once
@@ -146,6 +146,7 @@ protected:
     std::set<std::pair<DDS::InstanceHandle_t /*of this data_reader_*/,
       DDS::InstanceHandle_t /*of the resulting DR*/> > instances_;
   };
+  mutable ACE_RW_Thread_Mutex qp_lock_;
 
   // key: topicName for this reader
   OPENDDS_MAP(OPENDDS_STRING, QueryPlan) query_plans_;

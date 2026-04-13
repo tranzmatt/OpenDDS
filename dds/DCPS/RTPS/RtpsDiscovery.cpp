@@ -1,444 +1,167 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
 #include "RtpsDiscovery.h"
 
-#include "dds/DCPS/Service_Participant.h"
-#include "dds/DCPS/ConfigUtils.h"
-#include "dds/DCPS/DomainParticipantImpl.h"
-#include "dds/DCPS/SubscriberImpl.h"
-#include "dds/DCPS/Marked_Default_Qos.h"
-#include "dds/DCPS/BuiltInTopicUtils.h"
-#include "dds/DCPS/Registered_Data_Types.h"
-#include "dds/DdsDcpsInfoUtilsC.h"
+#include "RtpsDiscoveryConfig.h"
 
-#include "ace/Reactor.h"
-#include "ace/Select_Reactor.h"
+#include <dds/DCPS/BuiltInTopicUtils.h>
+#include <dds/DCPS/DomainParticipantImpl.h>
+#include <dds/DCPS/LogAddr.h>
+#include <dds/DCPS/Marked_Default_Qos.h>
+#include <dds/DCPS/Qos_Helper.h>
+#include <dds/DCPS/Registered_Data_Types.h>
+#include <dds/DCPS/Service_Participant.h>
+#include <dds/DCPS/Statistics.h>
+#include <dds/DCPS/SubscriberImpl.h>
+
+#include <dds/DCPS/transport/framework/TransportConfig.h>
+#include <dds/DCPS/transport/framework/TransportSendStrategy.h>
+
+#include <dds/DdsDcpsInfoUtilsC.h>
+#include <dds/OpenDDSConfigWrapper.h>
 
 #include <cstdlib>
-
-namespace {
-  u_short get_default_d0(u_short fallback)
-  {
-#if !defined ACE_LACKS_GETENV && !defined ACE_LACKS_ENV
-    const char* from_env = std::getenv("OPENDDS_RTPS_DEFAULT_D0");
-    if (from_env) {
-      return static_cast<u_short>(std::atoi(from_env));
-    }
-#endif
-    return fallback;
-  }
-}
+#include <limits>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace OpenDDS {
 namespace RTPS {
 
+using DCPS::TimeDuration;
+
 RtpsDiscovery::RtpsDiscovery(const RepoKey& key)
-  : DCPS::PeerDiscovery<Spdp>(key)
-  , resend_period_(30 /*seconds*/) // see RTPS v2.1 9.6.1.4.2
-  , pb_(7400) // see RTPS v2.1 9.6.1.3 for PB, DG, PG, D0, D1 defaults
-  , dg_(250)
-  , pg_(2)
-  , d0_(get_default_d0(0))
-  , d1_(10)
-  , dx_(2)
-  , ttl_(1)
-  , sedp_multicast_(true)
-  , default_multicast_group_("239.255.0.1") /*RTPS v2.1 9.6.1.4.1*/
-  , use_ice_(false)
-  , max_spdp_timer_period_(0, 10000)
-  , max_auth_time_(300, 0)
-  , auth_resend_period_(1, 0)
+  : InternalDataReaderListener(TheServiceParticipant->job_queue())
+  , key_(key)
+  , config_(DCPS::make_rch<RtpsDiscoveryConfig>(key))
+  , stats_writer_(DCPS::make_rch<DCPS::StatisticsDataWriter>(DCPS::DataWriterQosBuilder().durability_transient_local(), TheServiceParticipant->time_source()))
+  , stats_event_(DCPS::make_rch<DCPS::PeriodicEvent>(TheServiceParticipant->event_dispatcher(), DCPS::make_rch<RtpsDiscoveryEvent>(rchandle_from(this), &RtpsDiscovery::write_stats)))
 {
+  TheServiceParticipant->statistics_topic()->connect(stats_writer_);
 }
 
 RtpsDiscovery::~RtpsDiscovery()
 {
-}
-
-namespace {
-  const ACE_TCHAR RTPS_SECTION_NAME[] = ACE_TEXT("rtps_discovery");
+  TheServiceParticipant->statistics_topic()->disconnect(stats_writer_);
+  TheServiceParticipant->config_topic()->disconnect(config_reader_);
 }
 
 int
-RtpsDiscovery::Config::discovery_config(ACE_Configuration_Heap& cf)
+RtpsDiscovery::Config::discovery_config()
 {
-  const ACE_Configuration_Section_Key &root = cf.root_section();
-  ACE_Configuration_Section_Key rtps_sect;
+  RcHandle<DCPS::ConfigStoreImpl> config_store = TheServiceParticipant->config_store();
 
-  if (cf.open_section(root, RTPS_SECTION_NAME, 0, rtps_sect) == 0) {
+  const DCPS::ConfigStoreImpl::StringList sections = config_store->get_section_names("RTPS_DISCOVERY");
 
-    // Ensure there are no properties in this section
-    DCPS::ValueMap vm;
-    if (DCPS::pullValues(cf, rtps_sect, vm) > 0) {
-      // There are values inside [rtps_discovery]
-      ACE_ERROR_RETURN((LM_ERROR,
-                        ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-                        ACE_TEXT("rtps_discovery sections must have a subsection name\n")),
-                       -1);
-    }
-    // Process the subsections of this section (the individual rtps_discovery/*)
-    DCPS::KeyList keys;
-    if (DCPS::processSections(cf, rtps_sect, keys) != 0) {
-      ACE_ERROR_RETURN((LM_ERROR,
-                        ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-                        ACE_TEXT("too many nesting layers in the [rtps] section.\n")),
-                       -1);
-    }
+  // Loop through the [rtps_discovery/*] sections
+  for (DCPS::ConfigStoreImpl::StringList::const_iterator pos = sections.begin(), limit = sections.end();
+       pos != limit; ++pos) {
+    const String& rtps_name = *pos;
 
-    // Loop through the [rtps_discovery/*] sections
-    for (DCPS::KeyList::const_iterator it = keys.begin();
-         it != keys.end(); ++it) {
-      const OPENDDS_STRING& rtps_name = it->first;
+    RtpsDiscovery_rch discovery = OpenDDS::DCPS::make_rch<RtpsDiscovery>(rtps_name);
+    RtpsDiscoveryConfig_rch config = discovery->config();
 
-      RtpsDiscovery_rch discovery = OpenDDS::DCPS::make_rch<RtpsDiscovery>(rtps_name);
-
-      // spdpaddr defaults to DCPSDefaultAddress if set
-      if (!TheServiceParticipant->default_address().empty()) {
-        discovery->spdp_local_address(TheServiceParticipant->default_address().c_str());
+#if OPENDDS_CONFIG_SECURITY
+    if (config_store->has(config->config_key("IceTa").c_str())) {
+      if (log_level >= DCPS::LogLevel::Warning) {
+        ACE_ERROR((LM_WARNING,
+                   "(%P|%t) RtpsDiscovery::Config::discovery_config: "
+                   "IceTa is deprecated.  Use Ta in [ice]\n"));
       }
-
-      DCPS::ValueMap values;
-      DCPS::pullValues(cf, it->second, values);
-      for (DCPS::ValueMap::const_iterator it = values.begin();
-           it != values.end(); ++it) {
-        const OPENDDS_STRING& name = it->first;
-        if (name == "ResendPeriod") {
-          const OPENDDS_STRING& value = it->second;
-          int resend;
-          if (!DCPS::convertToInteger(value, resend)) {
-            ACE_ERROR_RETURN((LM_ERROR,
-              ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-              ACE_TEXT("Invalid entry (%C) for ResendPeriod in ")
-              ACE_TEXT("[rtps_discovery/%C] section.\n"),
-              value.c_str(), rtps_name.c_str()), -1);
-          }
-          discovery->resend_period(ACE_Time_Value(resend));
-        } else if (name == "PB") {
-          const OPENDDS_STRING& value = it->second;
-          u_short pb;
-          if (!DCPS::convertToInteger(value, pb)) {
-            ACE_ERROR_RETURN((LM_ERROR,
-              ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-              ACE_TEXT("Invalid entry (%C) for PB in ")
-              ACE_TEXT("[rtps_discovery/%C] section.\n"),
-              value.c_str(), rtps_name.c_str()), -1);
-          }
-          discovery->pb(pb);
-        } else if (name == "DG") {
-          const OPENDDS_STRING& value = it->second;
-          u_short dg;
-          if (!DCPS::convertToInteger(value, dg)) {
-            ACE_ERROR_RETURN((LM_ERROR,
-              ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-              ACE_TEXT("Invalid entry (%C) for DG in ")
-              ACE_TEXT("[rtps_discovery/%C] section.\n"),
-              value.c_str(), rtps_name.c_str()), -1);
-          }
-          discovery->dg(dg);
-        } else if (name == "PG") {
-          const OPENDDS_STRING& value = it->second;
-          u_short pg;
-          if (!DCPS::convertToInteger(value, pg)) {
-            ACE_ERROR_RETURN((LM_ERROR,
-              ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-              ACE_TEXT("Invalid entry (%C) for PG in ")
-              ACE_TEXT("[rtps_discovery/%C] section.\n"),
-              value.c_str(), rtps_name.c_str()), -1);
-          }
-          discovery->pg(pg);
-        } else if (name == "D0") {
-          const OPENDDS_STRING& value = it->second;
-          u_short d0;
-          if (!DCPS::convertToInteger(value, d0)) {
-            ACE_ERROR_RETURN((LM_ERROR,
-              ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-              ACE_TEXT("Invalid entry (%C) for D0 in ")
-              ACE_TEXT("[rtps_discovery/%C] section.\n"),
-              value.c_str(), rtps_name.c_str()), -1);
-          }
-          discovery->d0(d0);
-        } else if (name == "D1") {
-          const OPENDDS_STRING& value = it->second;
-          u_short d1;
-          if (!DCPS::convertToInteger(value, d1)) {
-            ACE_ERROR_RETURN((LM_ERROR,
-              ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-              ACE_TEXT("Invalid entry (%C) for D1 in ")
-              ACE_TEXT("[rtps_discovery/%C] section.\n"),
-              value.c_str(), rtps_name.c_str()), -1);
-          }
-          discovery->d1(d1);
-        } else if (name == "DX") {
-          const OPENDDS_STRING& value = it->second;
-          u_short dx;
-          if (!DCPS::convertToInteger(value, dx)) {
-            ACE_ERROR_RETURN((LM_ERROR,
-               ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-               ACE_TEXT("Invalid entry (%C) for DX in ")
-               ACE_TEXT("[rtps_discovery/%C] section.\n"),
-               value.c_str(), rtps_name.c_str()), -1);
-          }
-          discovery->dx(dx);
-        } else if (name == "TTL") {
-          const OPENDDS_STRING& value = it->second;
-          unsigned short ttl_us;
-          if (!DCPS::convertToInteger(value, ttl_us) || ttl_us > UCHAR_MAX) {
-            ACE_ERROR_RETURN((LM_ERROR,
-               ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-               ACE_TEXT("Invalid entry (%C) for TTL in ")
-               ACE_TEXT("[rtps_discovery/%C] section.\n"),
-               value.c_str(), rtps_name.c_str()), -1);
-          }
-          discovery->ttl(static_cast<unsigned char>(ttl_us));
-        } else if (name == "SedpMulticast") {
-          const OPENDDS_STRING& value = it->second;
-          int smInt;
-          if (!DCPS::convertToInteger(value, smInt)) {
-            ACE_ERROR_RETURN((LM_ERROR,
-               ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config ")
-               ACE_TEXT("Invalid entry (%C) for SedpMulticast in ")
-               ACE_TEXT("[rtps_discovery/%C] section.\n"),
-               value.c_str(), rtps_name.c_str()), -1);
-          }
-          discovery->sedp_multicast(bool(smInt));
-        } else if (name == "MulticastInterface") {
-          discovery->multicast_interface(it->second);
-        } else if (name == "SedpLocalAddress") {
-          discovery->sedp_local_address(it->second);
-        } else if (name == "SpdpLocalAddress") {
-          discovery->spdp_local_address(it->second);
-        } else if (name == "GuidInterface") {
-          discovery->guid_interface(it->second);
-        } else if (name == "InteropMulticastOverride") {
-          /// FUTURE: handle > 1 group.
-          discovery->default_multicast_group(it->second);
-        } else if (name == "SpdpSendAddrs") {
-          AddrVec spdp_send_addrs;
-          const OPENDDS_STRING& value = it->second;
-          size_t i = 0;
-          do {
-            i = value.find_first_not_of(' ', i); // skip spaces
-            const size_t n = value.find_first_of(", ", i);
-            spdp_send_addrs.push_back(value.substr(i, (n == OPENDDS_STRING::npos) ? n : n - i));
-            i = value.find(',', i);
-          } while (i++ != OPENDDS_STRING::npos); // skip past comma if there is one
-          discovery->spdp_send_addrs().swap(spdp_send_addrs);
-        } else if (name == "SpdpRtpsRelayAddress") {
-          discovery->spdp_rtps_relay_address(ACE_INET_Addr(it->second.c_str()));
-        } else if (name == "SedpRtpsRelayAddress") {
-          discovery->sedp_rtps_relay_address(ACE_INET_Addr(it->second.c_str()));
-#ifdef OPENDDS_SECURITY
-        } else if (name == "SedpStunServerAddress") {
-          discovery->sedp_stun_server_address(ACE_INET_Addr(it->second.c_str()));
-        } else if (name == "UseIce") {
-          const OPENDDS_STRING& value = it->second;
-          int smInt;
-          if (!DCPS::convertToInteger(value, smInt)) {
-            ACE_ERROR_RETURN((LM_ERROR,
-                              ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config ")
-                              ACE_TEXT("Invalid entry (%C) for UseIce in ")
-                              ACE_TEXT("[rtps_discovery/%C] section.\n"),
-                              value.c_str(), rtps_name.c_str()), -1);
-          }
-          discovery->use_ice(bool(smInt));
-        } else if (name == "IceTa") {
-          // In milliseconds.
-          const OPENDDS_STRING& string_value = it->second;
-          int int_value;
-          if (DCPS::convertToInteger(string_value, int_value)) {
-            ICE::Agent::instance()->get_configuration().T_a(ACE_Time_Value(0, int_value * 1000));
-          } else {
-            ACE_ERROR_RETURN((LM_ERROR,
-               ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-               ACE_TEXT("Invalid entry (%C) for IceTa in ")
-               ACE_TEXT("[rtps_discovery/%C] section.\n"),
-               string_value.c_str(), rtps_name.c_str()), -1);
-          }
-        } else if (name == "IceConnectivityCheckTTL") {
-          // In seconds.
-          const OPENDDS_STRING& string_value = it->second;
-          int int_value;
-          if (DCPS::convertToInteger(string_value, int_value)) {
-            ICE::Agent::instance()->get_configuration().connectivity_check_ttl(ACE_Time_Value(int_value));
-          } else {
-            ACE_ERROR_RETURN((LM_ERROR,
-               ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-               ACE_TEXT("Invalid entry (%C) for IceConnectivityCheckTTL in ")
-               ACE_TEXT("[rtps_discovery/%C] section.\n"),
-               string_value.c_str(), rtps_name.c_str()), -1);
-          }
-        } else if (name == "IceChecklistPeriod") {
-          // In seconds.
-          const OPENDDS_STRING& string_value = it->second;
-          int int_value;
-          if (DCPS::convertToInteger(string_value, int_value)) {
-            ICE::Agent::instance()->get_configuration().checklist_period(ACE_Time_Value(int_value));
-          } else {
-            ACE_ERROR_RETURN((LM_ERROR,
-               ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-               ACE_TEXT("Invalid entry (%C) for IceChecklistPeriod in ")
-               ACE_TEXT("[rtps_discovery/%C] section.\n"),
-               string_value.c_str(), rtps_name.c_str()), -1);
-          }
-        } else if (name == "IceIndicationPeriod") {
-          // In seconds.
-          const OPENDDS_STRING& string_value = it->second;
-          int int_value;
-          if (DCPS::convertToInteger(string_value, int_value)) {
-            ICE::Agent::instance()->get_configuration().indication_period(ACE_Time_Value(int_value));
-          } else {
-            ACE_ERROR_RETURN((LM_ERROR,
-               ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-               ACE_TEXT("Invalid entry (%C) for IceIndicationPeriod in ")
-               ACE_TEXT("[rtps_discovery/%C] section.\n"),
-               string_value.c_str(), rtps_name.c_str()), -1);
-          }
-        } else if (name == "IceNominatedTTL") {
-          // In seconds.
-          const OPENDDS_STRING& string_value = it->second;
-          int int_value;
-          if (DCPS::convertToInteger(string_value, int_value)) {
-            ICE::Agent::instance()->get_configuration().nominated_ttl(ACE_Time_Value(int_value));
-          } else {
-            ACE_ERROR_RETURN((LM_ERROR,
-               ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-               ACE_TEXT("Invalid entry (%C) for IceNominatedTTL in ")
-               ACE_TEXT("[rtps_discovery/%C] section.\n"),
-               string_value.c_str(), rtps_name.c_str()), -1);
-          }
-        } else if (name == "IceServerReflexiveAddressPeriod") {
-          // In seconds.
-          const OPENDDS_STRING& string_value = it->second;
-          int int_value;
-          if (DCPS::convertToInteger(string_value, int_value)) {
-            ICE::Agent::instance()->get_configuration().server_reflexive_address_period(ACE_Time_Value(int_value));
-          } else {
-            ACE_ERROR_RETURN((LM_ERROR,
-               ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-               ACE_TEXT("Invalid entry (%C) for IceServerReflexiveAddressPeriod in ")
-               ACE_TEXT("[rtps_discovery/%C] section.\n"),
-               string_value.c_str(), rtps_name.c_str()), -1);
-          }
-        } else if (name == "IceServerReflexiveIndicationCount") {
-          const OPENDDS_STRING& string_value = it->second;
-          int int_value;
-          if (DCPS::convertToInteger(string_value, int_value)) {
-            ICE::Agent::instance()->get_configuration().server_reflexive_indication_count(int_value);
-          } else {
-            ACE_ERROR_RETURN((LM_ERROR,
-               ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-               ACE_TEXT("Invalid entry (%C) for IceServerReflexiveIndicationCount in ")
-               ACE_TEXT("[rtps_discovery/%C] section.\n"),
-               string_value.c_str(), rtps_name.c_str()), -1);
-          }
-        } else if (name == "IceDeferredTriggeredCheckTTL") {
-          // In seconds.
-          const OPENDDS_STRING& string_value = it->second;
-          int int_value;
-          if (DCPS::convertToInteger(string_value, int_value)) {
-            ICE::Agent::instance()->get_configuration().deferred_triggered_check_ttl(ACE_Time_Value(int_value));
-          } else {
-            ACE_ERROR_RETURN((LM_ERROR,
-               ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-               ACE_TEXT("Invalid entry (%C) for IceDeferredTriggeredCheckTTL in ")
-               ACE_TEXT("[rtps_discovery/%C] section.\n"),
-               string_value.c_str(), rtps_name.c_str()), -1);
-          }
-        } else if (name == "IceChangePasswordPeriod") {
-          // In seconds.
-          const OPENDDS_STRING& string_value = it->second;
-          int int_value;
-          if (DCPS::convertToInteger(string_value, int_value)) {
-            ICE::Agent::instance()->get_configuration().change_password_period(ACE_Time_Value(int_value));
-          } else {
-            ACE_ERROR_RETURN((LM_ERROR,
-               ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-               ACE_TEXT("Invalid entry (%C) for IceChangePasswordPeriod in ")
-               ACE_TEXT("[rtps_discovery/%C] section.\n"),
-               string_value.c_str(), rtps_name.c_str()), -1);
-          }
-        } else if (name == "MaxAuthTime") {
-          // In seconds.
-          const OPENDDS_STRING& string_value = it->second;
-          int int_value;
-          if (DCPS::convertToInteger(string_value, int_value)) {
-            discovery->max_auth_time(ACE_Time_Value(int_value));
-          } else {
-            ACE_ERROR_RETURN((LM_ERROR,
-                              ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-                              ACE_TEXT("Invalid entry (%C) for MaxAuthTime in ")
-                              ACE_TEXT("[rtps_discovery/%C] section.\n"),
-                              string_value.c_str(), rtps_name.c_str()), -1);
-          }
-        } else if (name == "AuthResendPeriod") {
-          // In seconds.
-          const OPENDDS_STRING& string_value = it->second;
-          int int_value;
-          if (DCPS::convertToInteger(string_value, int_value)) {
-            discovery->auth_resend_period(ACE_Time_Value(int_value));
-          } else {
-            ACE_ERROR_RETURN((LM_ERROR,
-                              ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-                              ACE_TEXT("Invalid entry (%C) for AuthResendPeriod in ")
-                              ACE_TEXT("[rtps_discovery/%C] section.\n"),
-                              string_value.c_str(), rtps_name.c_str()), -1);
-          }
-#endif /* OPENDDS_SECURITY */
-        } else if (name == "MaxSpdpTimerPeriod") {
-          // In milliseconds.
-          const OPENDDS_STRING& string_value = it->second;
-          int int_value;
-          if (DCPS::convertToInteger(string_value, int_value)) {
-            discovery->max_spdp_timer_period(ACE_Time_Value(0, int_value * 1000));
-          } else {
-            ACE_ERROR_RETURN((LM_ERROR,
-                              ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-                              ACE_TEXT("Invalid entry (%C) for MaxSpdpTimerPeriod in ")
-                              ACE_TEXT("[rtps_discovery/%C] section.\n"),
-                              string_value.c_str(), rtps_name.c_str()), -1);
-          }
-        }  else {
-          ACE_ERROR_RETURN((LM_ERROR,
-                            ACE_TEXT("(%P|%t) RtpsDiscovery::Config::discovery_config(): ")
-                            ACE_TEXT("Unexpected entry (%C) in [rtps_discovery/%C] section.\n"),
-                            name.c_str(), rtps_name.c_str()),
-                           -1);
-        }
-      }
-
-      TheServiceParticipant->add_discovery(discovery);
+      config_store->set("IceTa", config_store->get(config->config_key("IceTa").c_str(), ""));
     }
+    if (config_store->has(config->config_key("IceConnectivityCheckTTL").c_str())) {
+      if (log_level >= DCPS::LogLevel::Warning) {
+        ACE_ERROR((LM_WARNING,
+                   "(%P|%t) RtpsDiscovery::Config::discovery_config: "
+                   "IceConnectivityCheckTTL is deprecated.  Use ConnectivityCheckTTL in [ice]\n"));
+      }
+      config_store->set("IceConnectivityCheckTTL", config_store->get(config->config_key("IceConnectivityCheckTTL").c_str(), ""));
+    }
+    if (config_store->has(config->config_key("IceChecklistPeriod").c_str())) {
+      if (log_level >= DCPS::LogLevel::Warning) {
+        ACE_ERROR((LM_WARNING,
+                   "(%P|%t) RtpsDiscovery::Config::discovery_config: "
+                   "IceChecklistPeriod is deprecated.  Use ChecklistPeriod in [ice]\n"));
+      }
+      config_store->set("IceChecklistPeriod", config_store->get(config->config_key("IceChecklistPeriod").c_str(), ""));
+    }
+    if (config_store->has(config->config_key("IceIndicationPeriod").c_str())) {
+      if (log_level >= DCPS::LogLevel::Warning) {
+        ACE_ERROR((LM_WARNING,
+                   "(%P|%t) RtpsDiscovery::Config::discovery_config: "
+                   "IceIndicationPeriod is deprecated.  Use IndicationPeriod in [ice]\n"));
+      }
+      config_store->set("IceIndicationPeriod", config_store->get(config->config_key("IceIndicationPeriod").c_str(), ""));
+    }
+    if (config_store->has(config->config_key("IceNominatedTTL").c_str())) {
+      if (log_level >= DCPS::LogLevel::Warning) {
+        ACE_ERROR((LM_WARNING,
+                   "(%P|%t) RtpsDiscovery::Config::discovery_config: "
+                   "IceNominatedTTL is deprecated.  Use NominatedTTL in [ice]\n"));
+      }
+      config_store->set("IceNominatedTTL", config_store->get(config->config_key("IceNominatedTTL").c_str(), ""));
+    }
+    if (config_store->has(config->config_key("IceServerReflexiveAddressPeriod").c_str())) {
+      if (log_level >= DCPS::LogLevel::Warning) {
+        ACE_ERROR((LM_WARNING,
+                   "(%P|%t) RtpsDiscovery::Config::discovery_config: "
+                   "IceServerReflexiveAddressPeriod is deprecated.  Use ServerReflexiveAddressPeriod in [ice]\n"));
+      }
+      config_store->set("IceServerReflexiveAddressPeriod", config_store->get(config->config_key("IceServerReflexiveAddressPeriod").c_str(), ""));
+    }
+    if (config_store->has(config->config_key("IceServerReflexiveIndicationCount").c_str())) {
+      if (log_level >= DCPS::LogLevel::Warning) {
+        ACE_ERROR((LM_WARNING,
+                   "(%P|%t) RtpsDiscovery::Config::discovery_config: "
+                   "IceServerReflexiveIndicationCount is deprecated.  Use ServerReflexiveIndicationCount in [ice]\n"));
+      }
+      config_store->set("IceServerReflexiveIndicationCount", config_store->get(config->config_key("IceServerReflexiveIndicationCount").c_str(), ""));
+    }
+    if (config_store->has(config->config_key("IceDeferredTriggeredCheckTTL").c_str())) {
+      if (log_level >= DCPS::LogLevel::Warning) {
+        ACE_ERROR((LM_WARNING,
+                   "(%P|%t) RtpsDiscovery::Config::discovery_config: "
+                   "IceDeferredTriggeredCheckTTL is deprecated.  Use DeferredTriggeredCheckTTL in [ice]\n"));
+      }
+      config_store->set("IceDeferredTriggeredCheckTTL", config_store->get(config->config_key("IceDeferredTriggeredCheckTTL").c_str(), ""));
+    }
+    if (config_store->has(config->config_key("IceChangePasswordPeriod").c_str())) {
+      if (log_level >= DCPS::LogLevel::Warning) {
+        ACE_ERROR((LM_WARNING,
+                   "(%P|%t) RtpsDiscovery::Config::discovery_config: "
+                   "IceChangePasswordPeriod is deprecated.  Use ChangePasswordPeriod in [ice]\n"));
+      }
+      config_store->set("IceChangePasswordPeriod", config_store->get(config->config_key("IceChangePasswordPeriod").c_str(), ""));
+    }
+#endif
+
+    TheServiceParticipant->add_discovery(discovery);
   }
 
   // If the default RTPS discovery object has not been configured,
   // instantiate it now.
-  const DCPS::Service_Participant::RepoKeyDiscoveryMap& discoveryMap = TheServiceParticipant->discoveryMap();
-  if (discoveryMap.find(Discovery::DEFAULT_RTPS) == discoveryMap.end()) {
-    TheServiceParticipant->add_discovery(OpenDDS::DCPS::make_rch<RtpsDiscovery>(Discovery::DEFAULT_RTPS));
-  }
+  TheServiceParticipant->add_discovery(OpenDDS::DCPS::make_rch<RtpsDiscovery>(Discovery::DEFAULT_RTPS));
 
   return 0;
 }
 
 // Participant operations:
-
-OpenDDS::DCPS::RepoId
-RtpsDiscovery::generate_participant_guid() {
-  OpenDDS::DCPS::RepoId id = GUID_UNKNOWN;
+OpenDDS::DCPS::GUID_t
+RtpsDiscovery::generate_participant_guid()
+{
+  OpenDDS::DCPS::GUID_t id = GUID_UNKNOWN;
   ACE_GUARD_RETURN(ACE_Thread_Mutex, g, lock_, id);
-  if (!guid_interface_.empty()) {
-    if (guid_gen_.interfaceName(guid_interface_.c_str()) != 0) {
+  const OPENDDS_STRING guid_interface = config_->guid_interface();
+  if (!guid_interface.empty()) {
+    if (guid_gen_.interfaceName(guid_interface.c_str()) != 0) {
       if (DCPS::DCPS_debug_level) {
-        ACE_DEBUG((LM_WARNING, "(%P|%t) RtpsDiscovery::add_domain_participant()"
-                   " - attempt to use specific network interface's MAC addr for"
-                   " GUID generation failed.\n"));
+        ACE_DEBUG((LM_WARNING, "(%P|%t) RtpsDiscovery::generate_participant_guid()"
+                   " - attempt to use network interface %C MAC addr for"
+                   " GUID generation failed.\n", guid_interface.c_str()));
       }
     }
   }
@@ -449,25 +172,32 @@ RtpsDiscovery::generate_participant_guid() {
 
 DCPS::AddDomainStatus
 RtpsDiscovery::add_domain_participant(DDS::DomainId_t domain,
-                                      const DDS::DomainParticipantQos& qos)
+                                      const DDS::DomainParticipantQos& qos,
+                                      XTypes::TypeLookupService_rch tls)
 {
-  DCPS::AddDomainStatus ads = {OpenDDS::DCPS::RepoId(), false /*federated*/};
-  ACE_GUARD_RETURN(ACE_Thread_Mutex, g, lock_, ads);
-  if (!guid_interface_.empty()) {
-    if (guid_gen_.interfaceName(guid_interface_.c_str()) != 0) {
-      if (DCPS::DCPS_debug_level) {
-        ACE_DEBUG((LM_WARNING, "(%P|%t) RtpsDiscovery::add_domain_participant()"
-                   " - attempt to use specific network interface's MAC addr for"
-                   " GUID generation failed.\n"));
+  DCPS::AddDomainStatus ads = {OpenDDS::DCPS::GUID_t(), false /*federated*/};
+  {
+    ACE_GUARD_RETURN(ACE_Thread_Mutex, g, lock_, ads);
+    const OPENDDS_STRING guid_interface = config_->guid_interface();
+    if (!guid_interface.empty()) {
+      if (guid_gen_.interfaceName(guid_interface.c_str()) != 0) {
+        if (DCPS::DCPS_debug_level) {
+          ACE_DEBUG((LM_WARNING, "(%P|%t) RtpsDiscovery::add_domain_participant()"
+                     " - attempt to use specific network interface %C MAC addr for"
+                     " GUID generation failed.\n", guid_interface.c_str()));
+        }
       }
     }
+    guid_gen_.populate(ads.id);
   }
-  guid_gen_.populate(ads.id);
   ads.id.entityId = ENTITYID_PARTICIPANT;
   try {
-    const DCPS::RcHandle<Spdp> spdp (DCPS::make_rch<Spdp>(domain, ref(ads.id), qos, this));
+    const DCPS::RcHandle<Spdp> spdp(DCPS::make_rch<Spdp>(domain, ref(ads.id), qos, this, tls));
     // ads.id may change during Spdp constructor
+    ACE_GUARD_RETURN(ACE_Thread_Mutex, g, participants_lock_, ads);
     participants_[domain][ads.id] = spdp;
+    setup_stats_event(TheServiceParticipant->statistics_period());
+
   } catch (const std::exception& e) {
     ads.id = GUID_UNKNOWN;
     ACE_ERROR((LM_ERROR, "(%P|%t) RtpsDiscovery::add_domain_participant() - "
@@ -477,20 +207,26 @@ RtpsDiscovery::add_domain_participant(DDS::DomainId_t domain,
   return ads;
 }
 
-#if defined(OPENDDS_SECURITY)
+#if OPENDDS_CONFIG_SECURITY
 DCPS::AddDomainStatus
-RtpsDiscovery::add_domain_participant_secure(DDS::DomainId_t domain,
-                                      const DDS::DomainParticipantQos& qos,
-                                      const OpenDDS::DCPS::RepoId& guid,
-                                      DDS::Security::IdentityHandle id,
-                                      DDS::Security::PermissionsHandle perm,
-                                      DDS::Security::ParticipantCryptoHandle part_crypto)
+RtpsDiscovery::add_domain_participant_secure(
+  DDS::DomainId_t domain,
+  const DDS::DomainParticipantQos& qos,
+  XTypes::TypeLookupService_rch tls,
+  const OpenDDS::DCPS::GUID_t& guid,
+  DDS::Security::IdentityHandle id,
+  DDS::Security::PermissionsHandle perm,
+  DDS::Security::ParticipantCryptoHandle part_crypto)
 {
   DCPS::AddDomainStatus ads = {guid, false /*federated*/};
   ads.id.entityId = ENTITYID_PARTICIPANT;
   try {
-    const DCPS::RcHandle<Spdp> spdp (DCPS::make_rch<Spdp>(domain, ads.id, qos, this, id, perm, part_crypto));
+    const DCPS::RcHandle<Spdp> spdp(DCPS::make_rch<Spdp>(
+      domain, ads.id, qos, this, tls, id, perm, part_crypto));
+    ACE_GUARD_RETURN(ACE_Thread_Mutex, g, participants_lock_, ads);
     participants_[domain][ads.id] = spdp;
+    setup_stats_event(TheServiceParticipant->statistics_period());
+
   } catch (const std::exception& e) {
     ads.id = GUID_UNKNOWN;
     ACE_ERROR((LM_WARNING, "(%P|%t) RtpsDiscovery::add_domain_participant_secure() - "
@@ -501,17 +237,622 @@ RtpsDiscovery::add_domain_participant_secure(DDS::DomainId_t domain,
 }
 #endif
 
+void RtpsDiscovery::setup_stats_event(const DCPS::TimeDuration& period)
+{
+  {
+    ACE_Guard<ACE_Thread_Mutex> guard(stats_lock_);
+    if (period == stats_event_period_) {
+      return;
+    }
+    stats_event_period_ = period;
+
+    if (period.is_zero()) {
+      stats_event_->disable();
+    } else {
+      stats_event_->enable(period);
+    }
+  }
+
+  {
+    ACE_Guard<ACE_Thread_Mutex> guard(lock_);
+    if (!config_reader_) {
+      config_reader_ = DCPS::make_rch<DCPS::ConfigReader>(DCPS::ConfigStoreImpl::datareader_qos(), rchandle_from(this));
+      TheServiceParticipant->config_topic()->connect(config_reader_);
+    }
+  }
+}
+
 void
 RtpsDiscovery::signal_liveliness(const DDS::DomainId_t domain_id,
-                                 const OpenDDS::DCPS::RepoId& part_id,
+                                 const OpenDDS::DCPS::GUID_t& part_id,
                                  DDS::LivelinessQosPolicyKind kind)
 {
   get_part(domain_id, part_id)->signal_liveliness(kind);
 }
 
+void
+RtpsDiscovery::rtps_relay_only_now(bool after)
+{
+  RtpsDiscoveryConfig_rch config = get_config();
+  config->rtps_relay_only(after);
+}
+
+void
+RtpsDiscovery::use_rtps_relay_now(bool after)
+{
+  RtpsDiscoveryConfig_rch config = get_config();
+  config->use_rtps_relay(after);
+}
+
+#if OPENDDS_CONFIG_SECURITY
+void
+RtpsDiscovery::use_ice_now(bool after)
+{
+  RtpsDiscoveryConfig_rch config = get_config();
+  config->use_ice(after);
+}
+
+DDS::Security::ParticipantCryptoHandle
+RtpsDiscovery::get_crypto_handle(DDS::DomainId_t domain,
+                                 const DCPS::GUID_t& local_participant,
+                                 const DCPS::GUID_t& remote_participant) const
+{
+  ParticipantHandle p = get_part(domain, local_participant);
+  if (p) {
+    if (remote_participant == GUID_UNKNOWN || remote_participant == local_participant) {
+      return p->crypto_handle();
+    } else {
+      return p->remote_crypto_handle(remote_participant);
+    }
+  }
+
+  return DDS::HANDLE_NIL;
+}
+
+#endif
+
 RtpsDiscovery::StaticInitializer::StaticInitializer()
 {
   TheServiceParticipant->register_discovery_type("rtps_discovery", new Config);
+}
+
+u_short
+RtpsDiscovery::get_spdp_port(DDS::DomainId_t domain,
+                             const DCPS::GUID_t& local_participant) const
+{
+  ParticipantHandle p = get_part(domain, local_participant);
+  if (p) {
+    return p->get_spdp_port();
+  }
+
+  return 0;
+}
+
+u_short
+RtpsDiscovery::get_sedp_port(DDS::DomainId_t domain,
+                             const DCPS::GUID_t& local_participant) const
+{
+  ParticipantHandle p = get_part(domain, local_participant);
+  if (p) {
+    return p->get_sedp_port();
+  }
+
+  return 0;
+}
+
+#ifdef ACE_HAS_IPV6
+
+u_short
+RtpsDiscovery::get_ipv6_spdp_port(DDS::DomainId_t domain,
+                                  const DCPS::GUID_t& local_participant) const
+{
+  ParticipantHandle p = get_part(domain, local_participant);
+  if (p) {
+    return p->get_ipv6_spdp_port();
+  }
+
+  return 0;
+}
+
+u_short
+RtpsDiscovery::get_ipv6_sedp_port(DDS::DomainId_t domain,
+                                  const DCPS::GUID_t& local_participant) const
+{
+  ParticipantHandle p = get_part(domain, local_participant);
+  if (p) {
+    return p->get_ipv6_sedp_port();
+  }
+
+  return 0;
+}
+#endif
+
+void
+RtpsDiscovery::spdp_rtps_relay_address(const DCPS::NetworkAddress& address)
+{
+  RtpsDiscoveryConfig_rch config = get_config();
+  config->spdp_rtps_relay_address(address);
+}
+
+void
+RtpsDiscovery::sedp_rtps_relay_address(const DCPS::NetworkAddress& address)
+{
+  RtpsDiscoveryConfig_rch config = get_config();
+  config->sedp_rtps_relay_address(address);
+}
+
+void
+RtpsDiscovery::spdp_stun_server_address(const DCPS::NetworkAddress& address)
+{
+  RtpsDiscoveryConfig_rch config = get_config();
+  config->spdp_stun_server_address(address);
+}
+
+void
+RtpsDiscovery::sedp_stun_server_address(const DCPS::NetworkAddress& address)
+{
+  RtpsDiscoveryConfig_rch config = get_config();
+  config->sedp_stun_server_address(address);
+}
+
+void
+RtpsDiscovery::append_transport_statistics(DDS::DomainId_t domain,
+                                           const DCPS::GUID_t& local_participant,
+                                           DCPS::TransportStatisticsSequence& seq)
+{
+  ParticipantHandle p = get_part(domain, local_participant);
+  if (p) {
+    p->append_transport_statistics(seq);
+  }
+}
+
+RcHandle<DCPS::BitSubscriber> RtpsDiscovery::init_bit(DCPS::DomainParticipantImpl* participant)
+{
+  DDS::Subscriber_var bit_subscriber;
+#ifndef DDS_HAS_MINIMUM_BIT
+  if (!TheServiceParticipant->get_BIT()) {
+    DCPS::RcHandle<DCPS::BitSubscriber> bit_subscriber_rch = DCPS::make_rch<DCPS::BitSubscriber>();
+    get_part(participant->get_domain_id(), participant->get_id())->init_bit(bit_subscriber_rch);
+    return DCPS::RcHandle<DCPS::BitSubscriber>();
+  }
+
+  if (create_bit_topics(participant) != DDS::RETCODE_OK) {
+    return RcHandle<DCPS::BitSubscriber>();
+  }
+
+  bit_subscriber =
+    participant->create_subscriber(SUBSCRIBER_QOS_DEFAULT,
+                                   DDS::SubscriberListener::_nil(),
+                                   DCPS::DEFAULT_STATUS_MASK);
+  DCPS::SubscriberImpl* sub = dynamic_cast<DCPS::SubscriberImpl*>(bit_subscriber.in());
+  if (sub == 0) {
+    ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) PeerDiscovery::init_bit")
+               ACE_TEXT(" - Could not cast Subscriber to SubscriberImpl\n")));
+    return RcHandle<DCPS::BitSubscriber>();
+  }
+
+  DDS::DataReaderQos dr_qos;
+  sub->get_default_datareader_qos(dr_qos);
+  dr_qos.durability.kind = DDS::TRANSIENT_LOCAL_DURABILITY_QOS;
+
+  dr_qos.reader_data_lifecycle.autopurge_nowriter_samples_delay =
+    TheServiceParticipant->bit_autopurge_nowriter_samples_delay();
+  dr_qos.reader_data_lifecycle.autopurge_disposed_samples_delay =
+    TheServiceParticipant->bit_autopurge_disposed_samples_delay();
+
+  DDS::TopicDescription_var bit_part_topic =
+    participant->lookup_topicdescription(DCPS::BUILT_IN_PARTICIPANT_TOPIC);
+  create_bit_dr(bit_part_topic, DCPS::BUILT_IN_PARTICIPANT_TOPIC_TYPE,
+                sub, dr_qos);
+
+  DDS::TopicDescription_var bit_topic_topic =
+    participant->lookup_topicdescription(DCPS::BUILT_IN_TOPIC_TOPIC);
+  create_bit_dr(bit_topic_topic, DCPS::BUILT_IN_TOPIC_TOPIC_TYPE,
+                sub, dr_qos);
+
+  DDS::TopicDescription_var bit_pub_topic =
+    participant->lookup_topicdescription(DCPS::BUILT_IN_PUBLICATION_TOPIC);
+  create_bit_dr(bit_pub_topic, DCPS::BUILT_IN_PUBLICATION_TOPIC_TYPE,
+                sub, dr_qos);
+
+  DDS::TopicDescription_var bit_sub_topic =
+    participant->lookup_topicdescription(DCPS::BUILT_IN_SUBSCRIPTION_TOPIC);
+  create_bit_dr(bit_sub_topic, DCPS::BUILT_IN_SUBSCRIPTION_TOPIC_TYPE,
+                sub, dr_qos);
+
+  DDS::TopicDescription_var bit_part_loc_topic =
+    participant->lookup_topicdescription(DCPS::BUILT_IN_PARTICIPANT_LOCATION_TOPIC);
+  create_bit_dr(bit_part_loc_topic, DCPS::BUILT_IN_PARTICIPANT_LOCATION_TOPIC_TYPE,
+                sub, dr_qos);
+
+  DDS::TopicDescription_var bit_connection_record_topic =
+    participant->lookup_topicdescription(DCPS::BUILT_IN_CONNECTION_RECORD_TOPIC);
+  create_bit_dr(bit_connection_record_topic, DCPS::BUILT_IN_CONNECTION_RECORD_TOPIC_TYPE,
+                sub, dr_qos);
+
+  DDS::TopicDescription_var bit_internal_thread_topic =
+    participant->lookup_topicdescription(DCPS::BUILT_IN_INTERNAL_THREAD_TOPIC);
+  create_bit_dr(bit_internal_thread_topic, DCPS::BUILT_IN_INTERNAL_THREAD_TOPIC_TYPE,
+                sub, dr_qos);
+
+  const DDS::ReturnCode_t ret = bit_subscriber->enable();
+  if (ret != DDS::RETCODE_OK) {
+    if (DCPS_debug_level) {
+      ACE_DEBUG((LM_INFO, ACE_TEXT("(%P|%t) PeerDiscovery::init_bit")
+                 ACE_TEXT(" - Error %d enabling subscriber\n"), ret));
+    }
+    return RcHandle<DCPS::BitSubscriber>();
+  }
+#endif /* DDS_HAS_MINIMUM_BIT */
+
+  DCPS::RcHandle<DCPS::BitSubscriber> bit_subscriber_rch = DCPS::make_rch<DCPS::BitSubscriber>(bit_subscriber);
+  get_part(participant->get_domain_id(), participant->get_id())->init_bit(bit_subscriber_rch);
+
+  return bit_subscriber_rch;
+}
+
+void RtpsDiscovery::fini_bit(DCPS::DomainParticipantImpl* participant)
+{
+  get_part(participant->get_domain_id(), participant->get_id())->fini_bit();
+}
+
+bool RtpsDiscovery::attach_participant(
+  DDS::DomainId_t /*domainId*/, const GUID_t& /*participantId*/)
+{
+  return false; // This is just for DCPSInfoRepo?
+}
+
+bool RtpsDiscovery::remove_domain_participant(
+  DDS::DomainId_t domain_id, const GUID_t& participantId)
+{
+  // Use reference counting to ensure participant
+  // does not get deleted until lock as been released.
+  ParticipantHandle participant;
+  ACE_GUARD_RETURN(ACE_Thread_Mutex, g, participants_lock_, false);
+  DomainParticipantMap::iterator domain = participants_.find(domain_id);
+  if (domain == participants_.end()) {
+    return false;
+  }
+  ParticipantMap::iterator part = domain->second.find(participantId);
+  if (part == domain->second.end()) {
+    return false;
+  }
+  participant = part->second;
+  domain->second.erase(part);
+  if (domain->second.empty()) {
+    participants_.erase(domain);
+  }
+  if (participants_.empty() && stats_event_) {
+    stats_event_->disable();
+  }
+  g.release();
+
+  participant->shutdown();
+  return true;
+}
+
+bool RtpsDiscovery::ignore_domain_participant(
+  DDS::DomainId_t domain, const GUID_t& myParticipantId, const GUID_t& ignoreId)
+{
+  get_part(domain, myParticipantId)->ignore_domain_participant(ignoreId);
+  return true;
+}
+
+bool RtpsDiscovery::remove_domain_participant(
+  DDS::DomainId_t domain, const GUID_t& myParticipantId, const GUID_t& removeId)
+{
+  get_part(domain, myParticipantId)->remove_domain_participant(removeId);
+  return true;
+}
+
+bool RtpsDiscovery::update_domain_participant_qos(
+  DDS::DomainId_t domain, const GUID_t& participant, const DDS::DomainParticipantQos& qos)
+{
+  return get_part(domain, participant)->update_domain_participant_qos(qos);
+}
+
+bool RtpsDiscovery::enable_flexible_types(DDS::DomainId_t domain, const GUID_t& myParticipantId,
+                                          const GUID_t& remoteParticipantId, const char* typeKey)
+{
+  return get_part(domain, myParticipantId)->enable_flexible_types(remoteParticipantId, typeKey);
+}
+
+bool RtpsDiscovery::has_domain_participant(DDS::DomainId_t domain, const GUID_t& local, const GUID_t& remote) const
+{
+  return get_part(domain, local)->has_domain_participant(remote);
+}
+
+DCPS::TopicStatus RtpsDiscovery::assert_topic(
+  GUID_t& topicId,
+  DDS::DomainId_t domainId,
+  const GUID_t& participantId,
+  const char* topicName,
+  const char* dataTypeName,
+  const DDS::TopicQos& qos,
+  bool hasDcpsKey,
+  DCPS::TopicCallbacks* topic_callbacks)
+{
+  ParticipantHandle part = get_part(domainId, participantId);
+  if (part) {
+    return part->assert_topic(topicId, topicName,
+                              dataTypeName, qos,
+                              hasDcpsKey, topic_callbacks);
+  }
+  return DCPS::INTERNAL_ERROR;
+}
+
+DCPS::TopicStatus RtpsDiscovery::find_topic(
+  DDS::DomainId_t domainId,
+  const GUID_t& participantId,
+  const char* topicName,
+  CORBA::String_out dataTypeName,
+  DDS::TopicQos_out qos,
+  GUID_t& topicId)
+{
+  ParticipantHandle part = get_part(domainId, participantId);
+  if (part) {
+    return part->find_topic(topicName, dataTypeName, qos, topicId);
+  }
+  return DCPS::INTERNAL_ERROR;
+}
+
+DCPS::TopicStatus RtpsDiscovery::remove_topic(
+  DDS::DomainId_t domainId,
+  const GUID_t& participantId,
+  const GUID_t& topicId)
+{
+  ParticipantHandle part = get_part(domainId, participantId);
+  if (part) {
+    return part->remove_topic(topicId);
+  }
+  return DCPS::INTERNAL_ERROR;
+}
+
+bool RtpsDiscovery::ignore_topic(DDS::DomainId_t domainId, const GUID_t& myParticipantId,
+                                 const GUID_t& ignoreId)
+{
+  get_part(domainId, myParticipantId)->ignore_topic(ignoreId);
+  return true;
+}
+
+bool RtpsDiscovery::update_topic_qos(const GUID_t& topicId, DDS::DomainId_t domainId,
+                                    const GUID_t& participantId, const DDS::TopicQos& qos)
+{
+  ParticipantHandle part = get_part(domainId, participantId);
+  if (part) {
+    return part->update_topic_qos(topicId, qos);
+  }
+  return false;
+}
+
+bool RtpsDiscovery::add_publication(
+  DDS::DomainId_t domainId,
+  const GUID_t& participantId,
+  const GUID_t& topicId,
+  DCPS::DataWriterCallbacks_rch publication,
+  const DDS::DataWriterQos& qos,
+  const DCPS::TransportLocatorSeq& transInfo,
+  const DDS::PublisherQos& publisherQos,
+  const DCPS::TypeInformation& type_info)
+{
+  return get_part(domainId, participantId)->add_publication(topicId,
+                                                            publication,
+                                                            qos,
+                                                            transInfo,
+                                                            publisherQos,
+                                                            type_info);
+}
+
+bool RtpsDiscovery::remove_publication(
+  DDS::DomainId_t domainId, const GUID_t& participantId, const GUID_t& publicationId)
+{
+  get_part(domainId, participantId)->remove_publication(publicationId);
+  return true;
+}
+
+bool RtpsDiscovery::ignore_publication(
+  DDS::DomainId_t domainId, const GUID_t& participantId, const GUID_t& ignoreId)
+{
+  get_part(domainId, participantId)->ignore_publication(ignoreId);
+  return true;
+}
+
+bool RtpsDiscovery::update_publication_qos(
+  DDS::DomainId_t domainId,
+  const GUID_t& partId,
+  const GUID_t& dwId,
+  const DDS::DataWriterQos& qos,
+  const DDS::PublisherQos& publisherQos)
+{
+  return get_part(domainId, partId)->update_publication_qos(dwId, qos,
+                                                            publisherQos);
+}
+
+void RtpsDiscovery::update_publication_locators(
+  DDS::DomainId_t domainId, const GUID_t& partId, const GUID_t& dwId,
+  const DCPS::TransportLocatorSeq& transInfo)
+{
+  const ParticipantHandle ph = get_part(domainId, partId);
+  if (ph) {
+    ph->update_publication_locators(dwId, transInfo);
+  } else if (log_level >= DCPS::LogLevel::Warning) {
+    ACE_ERROR((LM_WARNING,
+               "(%P|%t) WARNING: RtpsDiscovery::update_publication_locators: "
+               "no participant for domain %d participant %C writer %C\n",
+               domainId, LogGuid(partId).c_str(), LogGuid(dwId).c_str()));
+  }
+}
+
+bool RtpsDiscovery::add_subscription(
+  DDS::DomainId_t domainId,
+  const GUID_t& participantId,
+  const GUID_t& topicId,
+  DCPS::DataReaderCallbacks_rch subscription,
+  const DDS::DataReaderQos& qos,
+  const DCPS::TransportLocatorSeq& transInfo,
+  const DDS::SubscriberQos& subscriberQos,
+  const char* filterClassName,
+  const char* filterExpr,
+  const DDS::StringSeq& params,
+  const DCPS::TypeInformation& type_info)
+{
+  return get_part(domainId, participantId)->add_subscription(topicId,
+                                                             subscription,
+                                                             qos,
+                                                             transInfo,
+                                                             subscriberQos,
+                                                             filterClassName,
+                                                             filterExpr,
+                                                             params,
+                                                             type_info);
+}
+
+bool RtpsDiscovery::remove_subscription(
+  DDS::DomainId_t domainId, const GUID_t& participantId, const GUID_t& subscriptionId)
+{
+  get_part(domainId, participantId)->remove_subscription(subscriptionId);
+  return true;
+}
+
+bool RtpsDiscovery::ignore_subscription(
+  DDS::DomainId_t domainId, const GUID_t& participantId, const GUID_t& ignoreId)
+{
+  get_part(domainId, participantId)->ignore_subscription(ignoreId);
+  return true;
+}
+
+bool RtpsDiscovery::update_subscription_qos(
+  DDS::DomainId_t domainId,
+  const GUID_t& partId,
+  const GUID_t& drId,
+  const DDS::DataReaderQos& qos,
+  const DDS::SubscriberQos& subQos)
+{
+  return get_part(domainId, partId)->update_subscription_qos(drId, qos, subQos);
+}
+
+bool RtpsDiscovery::update_subscription_params(
+  DDS::DomainId_t domainId, const GUID_t& partId, const GUID_t& subId, const DDS::StringSeq& params)
+{
+  return get_part(domainId, partId)->update_subscription_params(subId, params);
+}
+
+void RtpsDiscovery::update_subscription_locators(
+  DDS::DomainId_t domainId, const GUID_t& partId, const GUID_t& subId,
+  const DCPS::TransportLocatorSeq& transInfo)
+{
+  const ParticipantHandle ph = get_part(domainId, partId);
+  if (ph) {
+    ph->update_subscription_locators(subId, transInfo);
+  } else if (log_level >= DCPS::LogLevel::Warning) {
+    ACE_ERROR((LM_WARNING,
+               "(%P|%t) WARNING: RtpsDiscovery::update_subscription_locators: "
+               "no participant for domain %d participant %C reader %C\n",
+               domainId, LogGuid(partId).c_str(), LogGuid(subId).c_str()));
+  }
+}
+
+RcHandle<DCPS::TransportInst> RtpsDiscovery::sedp_transport_inst(DDS::DomainId_t domainId,
+                                                                 const GUID_t& partId) const
+{
+  return get_part(domainId, partId)->sedp_transport_inst();
+}
+
+ParticipantHandle RtpsDiscovery::get_part(const DDS::DomainId_t domain_id, const GUID_t& part_id) const
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(participants_lock_);
+  const DomainParticipantMap::const_iterator domain = participants_.find(domain_id);
+  if (domain == participants_.end()) {
+    return ParticipantHandle();
+  }
+  const ParticipantMap::const_iterator part = domain->second.find(part_id);
+  if (part == domain->second.end()) {
+    return ParticipantHandle();
+  }
+  return part->second;
+}
+
+RtpsDiscoveryConfig_rch RtpsDiscovery::get_config() const
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(lock_);
+  return config_;
+}
+
+void RtpsDiscovery::create_bit_dr(DDS::TopicDescription_ptr topic,
+  const char* type, DCPS::SubscriberImpl* sub, const DDS::DataReaderQos& qos)
+{
+  DCPS::TopicDescriptionImpl* bit_topic_i =
+    dynamic_cast<DCPS::TopicDescriptionImpl*>(topic);
+  if (bit_topic_i == 0) {
+    ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: PeerDiscovery::create_bit_dr: ")
+               ACE_TEXT("Could not cast TopicDescription to TopicDescriptionImpl\n")));
+    return;
+  }
+
+  DDS::DomainParticipant_var participant = sub->get_participant();
+  DCPS::DomainParticipantImpl* participant_i =
+    dynamic_cast<DCPS::DomainParticipantImpl*>(participant.in());
+  if (participant_i == 0) {
+    ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: PeerDiscovery::create_bit_dr: ")
+               ACE_TEXT("Could not cast DomainParticipant to DomainParticipantImpl\n")));
+    return;
+  }
+
+  DCPS::TypeSupport_var type_support =
+    Registered_Data_Types->lookup(participant, type);
+
+  DDS::DataReader_var dr = type_support->create_datareader();
+  DCPS::DataReaderImpl* dri = dynamic_cast<DCPS::DataReaderImpl*>(dr.in());
+  if (dri == 0) {
+    ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: PeerDiscovery::create_bit_dr: ")
+               ACE_TEXT("Could not cast DataReader to DataReaderImpl\n")));
+    return;
+  }
+
+  dri->init(bit_topic_i, qos, 0 /*listener*/, 0 /*mask*/, participant_i, sub);
+  dri->disable_transport();
+  dri->enable();
+}
+
+void RtpsDiscovery::request_remote_complete_type_objects(
+  DDS::DomainId_t domain, const GUID_t& local_participant,
+  const GUID_t& remote_entity, const XTypes::TypeInformation& remote_type_info,
+  DCPS::TypeObjReqCond& cond)
+{
+  ParticipantHandle spdp = get_part(domain, local_participant);
+  spdp->request_remote_complete_type_objects(remote_entity, remote_type_info, cond);
+}
+
+void RtpsDiscovery::write_stats()
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(participants_lock_);
+  DCPS::Statistics statistics;
+  for (DomainParticipantMap::const_iterator domain = participants_.begin(); domain != participants_.end(); ++domain) {
+    for (ParticipantMap::const_iterator part = domain->second.begin(); part != domain->second.end(); ++part) {
+      statistics.id = ("RtpsDiscovery_" + DCPS::GuidConverter(part->first).uniqueParticipantId() + '_'
+                       + DCPS::to_dds_string(domain->first)).c_str();
+      part->second->fill_stats(statistics.stats);
+      stats_writer_->write(statistics);
+    }
+  }
+}
+
+void RtpsDiscovery::on_data_available(DCPS::ConfigReader_rch reader)
+{
+  DCPS::ConfigReader::SampleSequence samples;
+  DCPS::InternalSampleInfoSequence infos;
+  reader->read(samples, infos, DDS::LENGTH_UNLIMITED,
+               DDS::NOT_READ_SAMPLE_STATE, DDS::ANY_VIEW_STATE, DDS::ANY_INSTANCE_STATE);
+  for (size_t idx = 0; idx != samples.size(); ++idx) {
+    const DCPS::ConfigPair& sample = samples[idx];
+
+    if (sample.key() == DCPS::COMMON_STATISTICS_PERIOD) {
+      DCPS::TimeDuration period;
+      if (DCPS::ConfigStoreImpl::convert_value(sample, DCPS::ConfigStoreImpl::Format_FractionalSeconds, period)) {
+        setup_stats_event(period);
+      }
+    }
+  }
 }
 
 } // namespace DCPS

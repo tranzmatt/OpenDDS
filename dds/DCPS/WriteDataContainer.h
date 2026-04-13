@@ -8,8 +8,6 @@
 #ifndef OPENDDS_DCPS_WRITE_DATA_CONTAINER_H
 #define OPENDDS_DCPS_WRITE_DATA_CONTAINER_H
 
-#include "dds/DdsDcpsInfrastructureC.h"
-#include "dds/DdsDcpsCoreC.h"
 #include "DataSampleElement.h"
 #include "SendStateDataSampleList.h"
 #include "WriterDataSampleList.h"
@@ -17,11 +15,17 @@
 #include "PoolAllocator.h"
 #include "PoolAllocationBase.h"
 #include "Message_Block_Ptr.h"
+#include "SporadicEvent.h"
+#include "ConditionVariable.h"
+#include "TimeTypes.h"
 
-#include "ace/Synch_Traits.h"
-#include "ace/Condition_T.h"
-#include "ace/Condition_Thread_Mutex.h"
-#include "ace/Condition_Recursive_Thread_Mutex.h"
+#include <dds/DdsDcpsInfrastructureC.h>
+#include <dds/DdsDcpsCoreC.h>
+
+#include <ace/Synch_Traits.h>
+#include <ace/Thread_Mutex.h>
+#include <ace/Recursive_Thread_Mutex.h>
+#include <ace/Reverse_Lock_T.h>
 
 #include <memory>
 
@@ -115,7 +119,7 @@ typedef OPENDDS_MAP(DDS::InstanceHandle_t, PublicationInstance_rch)
  *           we do not deadlock; and, 2) we incur the cost of
  *           obtaining the lock only once.
  */
-class OpenDDS_Dcps_Export WriteDataContainer : public PoolAllocationBase {
+class OpenDDS_Dcps_Export WriteDataContainer : public RcObject {
 public:
 
   friend class DataWriterImpl;
@@ -151,7 +155,10 @@ public:
     /// maximum number of instances, 0 for unlimited
     CORBA::Long      max_instances,
     /// maximum total number of samples, 0 for unlimited
-    CORBA::Long      max_total_samples);
+    CORBA::Long      max_total_samples,
+    ACE_Recursive_Thread_Mutex& deadline_status_lock,
+    DDS::OfferedDeadlineMissedStatus& deadline_status,
+    CORBA::Long& deadline_last_total_count);
 
   ~WriteDataContainer();
 
@@ -173,7 +180,7 @@ public:
    * and "sent" samples. The samples will be sent to the
    *  subscriber specified.
    */
-  DDS::ReturnCode_t reenqueue_all(const RepoId& reader_id,
+  DDS::ReturnCode_t reenqueue_all(const GUID_t& reader_id,
                                   const DDS::LifespanQosPolicy& lifespan
 #ifndef OPENDDS_NO_CONTENT_FILTERED_TOPIC
                                   ,
@@ -248,13 +255,7 @@ public:
    * TRANSIENT_LOCAL_DURABILITY_QOS is used. The data on the list
    * returned is not put on any SendStateDataSampleList.
    */
-  SendStateDataSampleList get_resend_data() ;
-
-  /**
-   * Returns if pending data exists.  This includes
-   * sending, and unsent data.
-   */
-  bool pending_data();
+  SendStateDataSampleList get_resend_data();
 
   /**
    * Acknowledge the delivery of data.  The sample that resides in
@@ -293,7 +294,7 @@ public:
    * to remove oldest samples (forcing the transport to drop samples if necessary)
    * to make space.  If there are several threads waiting then
    * the first one in the waiting list can enqueue, others continue
-   * waiting.
+   * waiting. Note: the lock should be held before calling this method
    */
   DDS::ReturnCode_t obtain_buffer(
     DataSampleElement*& element,
@@ -325,14 +326,11 @@ public:
   bool persist_data();
 #endif
 
-  /// Reset time interval for each instance.
-  void reschedule_deadline();
-
   /**
-   * Block until pending samples have either been delivered
-   * or dropped.
+   * Block until pending samples have either been delivered, dropped, or the
+   * deadline has passed. Blocks indefinitely if deadline is zero.
    */
-  void wait_pending();
+  void wait_pending(const MonotonicTimePoint& deadline);
 
   /**
    * Returns a vector of handles for the instances registered for this
@@ -341,11 +339,17 @@ public:
   typedef OPENDDS_VECTOR(DDS::InstanceHandle_t) InstanceHandleVec;
   void get_instance_handles(InstanceHandleVec& instance_handles);
 
-  DDS::ReturnCode_t wait_ack_of_seq(const ACE_Time_Value& abs_deadline, const SequenceNumber& sequence);
+  DDS::ReturnCode_t wait_ack_of_seq(const MonotonicTimePoint& abs_deadline,
+                                    bool deadline_is_infinite,
+                                    const SequenceNumber& sequence);
 
-  bool sequence_acknowledged(const SequenceNumber sequence);
+  bool sequence_acknowledged(const SequenceNumber& sequence);
 
 private:
+
+  DDS::ReturnCode_t remove_instance(PublicationInstance_rch instance,
+                                    Message_Block_Ptr& registered_sample,
+                                    bool dup_registered_sample);
 
   // A class, normally provided by an unit test, that needs access to
   // private methods/members.
@@ -358,9 +362,15 @@ private:
   WriteDataContainer & operator= (WriteDataContainer const &);
   // --------------------------
 
+  /**
+   * Returns if pending data exists.  This includes
+   * sending, and unsent data.
+   */
+  bool pending_data();
+
   void copy_and_prepend(SendStateDataSampleList& list,
                         const SendStateDataSampleList& appended,
-                        const RepoId& reader_id,
+                        const GUID_t& reader_id,
                         const DDS::LifespanQosPolicy& lifespan,
 #ifndef OPENDDS_NO_CONTENT_FILTERED_TOPIC
                         const OPENDDS_STRING& filterClassName,
@@ -401,11 +411,26 @@ private:
    */
   void wakeup_blocking_writers (DataSampleElement* stale);
 
+  void add_reader_acks(const GUID_t& reader, const SequenceNumber& base);
+  void remove_reader_acks(const GUID_t& reader);
+
 private:
 
   void log_send_state_lists (OPENDDS_STRING description);
 
-  DisjointSequence acked_sequences_;
+#ifdef ACE_HAS_CPP11
+  typedef OPENDDS_UNORDERED_MAP(GUID_t, DisjointSequence) AckedSequenceMap;
+#else
+  typedef OPENDDS_MAP_CMP(GUID_t, DisjointSequence, GUID_tKeyLessThan) AckedSequenceMap;
+#endif
+  AckedSequenceMap acked_sequences_;
+  SequenceNumber cached_cumulative_ack_;
+  bool cached_cumulative_ack_valid_;
+
+  SequenceNumber get_cumulative_ack();
+  SequenceNumber get_last_ack();
+  void update_acked(const SequenceNumber& seq, const GUID_t& id = GUID_UNKNOWN);
+  bool sequence_acknowledged_i(const SequenceNumber& sequence);
 
   /// List of data that has not been sent yet.
   SendStateDataSampleList   unsent_data_;
@@ -438,7 +463,7 @@ private:
   PublicationInstanceMapType instances_;
 
   /// The publication Id from repo.
-  PublicationId    publication_id_;
+  GUID_t    publication_id_;
 
   /// The writer that owns this container.
   DataWriterImpl*  writer_;
@@ -483,19 +508,21 @@ private:
   /// same lock will be used by the transport thread to notify
   /// the datawriter the data is delivered. Other internal
   /// operations will not lock.
-  ACE_Recursive_Thread_Mutex                lock_;
-  ACE_Condition<ACE_Recursive_Thread_Mutex> condition_;
-  ACE_Condition<ACE_Recursive_Thread_Mutex> empty_condition_;
+  mutable ACE_Recursive_Thread_Mutex lock_;
+  typedef ConditionVariable<ACE_Recursive_Thread_Mutex> ConditionVariableType;
+  ConditionVariableType condition_;
+  ConditionVariableType empty_condition_;
 
   /// Lock used for wait_for_acks() processing.
   ACE_Thread_Mutex wfa_lock_;
 
+  typedef ConditionVariable<ACE_Thread_Mutex> WfaConditionVariableType;
   /// Used to block in wait_for_acks().
-  ACE_Condition<ACE_Thread_Mutex> wfa_condition_;
+  WfaConditionVariableType wfa_condition_;
 
   /// The number of chunks that sample_list_element_allocator_
   /// needs initialize.
-  size_t                                    n_chunks_;
+  size_t n_chunks_;
 
   /// The cached allocator to allocate DataSampleElement
   /// objects.
@@ -527,10 +554,31 @@ private:
   DDS::DurabilityServiceQosPolicy const & durability_service_;
 
 #endif
+
+  /// Timer responsible for reporting missed offered deadlines.
+  typedef DCPS::PmfNowEvent<WriteDataContainer> WriteDataContainerEvent;
+  SporadicEvent_rch deadline_task_;
+  TimeDuration deadline_period_; // TimeDuration::zero_value means no deadline.
+  typedef OPENDDS_MULTIMAP(MonotonicTimePoint, PublicationInstance_rch) DeadlineMapType;
+  DeadlineMapType deadline_map_;
+
+  /// Lock for synchronization of @c status_ member.
+  ACE_Recursive_Thread_Mutex& deadline_status_lock_;
+
+  /// Reference to the missed requested deadline status structure.
+  DDS::OfferedDeadlineMissedStatus& deadline_status_;
+
+  /// Last total_count when status was last checked.
+  CORBA::Long& deadline_last_total_count_;
+
+  void set_deadline_period(const TimeDuration& deadline_period);
+  void process_deadlines(const MonotonicTimePoint& now);
+  void extend_deadline(const PublicationInstance_rch& instance);
+  void cancel_deadline(const PublicationInstance_rch& instance);
 };
 
-} /// namespace OpenDDS
 } /// namespace DCPS
+} /// namespace OpenDDS
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
 

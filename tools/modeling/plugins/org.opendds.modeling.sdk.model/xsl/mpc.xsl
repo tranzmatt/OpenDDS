@@ -34,8 +34,8 @@
     </xsl:call-template>
   </xsl:variable>
   <xsl:text>project(</xsl:text>
-  <xsl:value-of select="concat($modelname, ') : dcps, all_dcps_transports, ', $modelname, '_paths')"/>
-  
+  <xsl:value-of select="concat($modelname, ') : dcps, all_dcps_transports, msvc_bigobj, ', $modelname, '_paths')"/>
+
   <xsl:if test="string-length($model-refs) &gt; 0">
     <xsl:value-of select="concat(', ', $model-refs)"/>
   </xsl:if>
@@ -45,6 +45,12 @@
   <xsl:value-of select="$modelname"/>
   <xsl:text>
   includes += $(DDS_ROOT)/tools/modeling/codegen
+
+  <!--
+    Suppress DCPS_DATA_TYPE warnings for now. The proper thing to do would be
+    to modify idl.xsl to use topic type annotations.
+  -->
+  dcps_ts_flags += --no-dcps-data-type-warnings
 
   idlflags      += -Wb,export_macro=</xsl:text>
   <xsl:value-of select="$normalized-modelname"/>
@@ -57,7 +63,7 @@
   dcps_ts_flags += -Wb,export_macro=</xsl:text>
   <xsl:value-of select="$normalized-modelname"/>
   <xsl:text>_Export
-  prebuild      += perl $(DDS_ROOT)/bin/expfile.pl </xsl:text>
+  prebuild      += perl $(DDS_ROOT)/tools/scripts/expfile.pl </xsl:text>
   <xsl:value-of select="concat($modelname, $newline, $newline)"/>
   <xsl:text>
   TypeSupport_Files {
@@ -98,4 +104,3 @@
 <!-- End of main processing template. -->
 
 </xsl:stylesheet>
-

@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_MULTICASTRECEIVESTRATEGY_H
-#define DCPS_MULTICASTRECEIVESTRATEGY_H
+#ifndef OPENDDS_DCPS_TRANSPORT_MULTICAST_MULTICASTRECEIVESTRATEGY_H
+#define OPENDDS_DCPS_TRANSPORT_MULTICAST_MULTICASTRECEIVESTRATEGY_H
 
 #include "Multicast_Export.h"
 
@@ -22,7 +22,7 @@ class MulticastDataLink;
 
 class OpenDDS_Multicast_Export MulticastReceiveStrategy
   : public TransportReceiveStrategy<>,
-    public RcEventHandler
+    public virtual RcEventHandler
 {
 public:
   explicit MulticastReceiveStrategy(MulticastDataLink* link);

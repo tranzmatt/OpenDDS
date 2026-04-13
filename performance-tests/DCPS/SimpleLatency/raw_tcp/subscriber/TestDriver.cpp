@@ -88,7 +88,7 @@ TestDriver::parse_args(int& argc, ACE_TCHAR* argv[])
         throw TestException();
       }
 
-      num_packets_ = tmp;
+      num_packets_ = static_cast<unsigned>(tmp);
     }
     // The '-d' option
     else if ((current_arg = arg_shifter.get_the_parameter(ACE_TEXT("-d")))) {
@@ -102,7 +102,7 @@ TestDriver::parse_args(int& argc, ACE_TCHAR* argv[])
         throw TestException();
       }
 
-      data_size_ = tmp;
+      data_size_ = static_cast<char>(tmp);
     }
     // The '-s' option
     else if ((current_arg = arg_shifter.get_the_parameter(ACE_TEXT("-s")))) {
@@ -213,7 +213,7 @@ TestDriver::run_i()
       && errno != ENOTSUP)
   {
     ACE_ERROR((LM_ERROR,
-               "(%P|%t) TcpSubscriber failed to set the receive buffer size to %d errno %m \n",
+               "(%P|%t) TcpSubscriber failed to set the receive buffer size to %d errno %m\n",
                rcv_size));
   }
 #  endif /* !ACE_LACKS_SOCKET_BUFSIZ */
@@ -291,4 +291,3 @@ TestDriver::parse_address(const std::string& spec)
 
   return ACE_INET_Addr(spec.c_str());
 }
-

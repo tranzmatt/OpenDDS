@@ -1,7 +1,7 @@
 // -*- C++ -*-
 //
-#ifndef ENTITIES_H
-#define ENTITIES_H
+#ifndef OPENDDS_MODEL_ENTITIES_H
+#define OPENDDS_MODEL_ENTITIES_H
 
 // Needed here to avoid the pragma below when necessary.
 #include /**/ "ace/pre.h"
@@ -170,6 +170,8 @@ class OpenDDS_Model_Export Entities  {
 } } // End of namespace OpenDDS::Model
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
+
+#include /**/ "ace/post.h"
 
 #if defined (__ACE_INLINE__)
 # include "Entities.inl"

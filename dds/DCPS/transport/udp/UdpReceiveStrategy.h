@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_UDPRECEIVESTRATEGY_H
-#define DCPS_UDPRECEIVESTRATEGY_H
+#ifndef OPENDDS_DCPS_TRANSPORT_UDP_UDPRECEIVESTRATEGY_H
+#define OPENDDS_DCPS_TRANSPORT_UDP_UDPRECEIVESTRATEGY_H
 
 #include "Udp_Export.h"
 
@@ -24,7 +24,7 @@ class UdpDataLink;
 
 class OpenDDS_Udp_Export UdpReceiveStrategy
   : public TransportReceiveStrategy<>,
-    public RcEventHandler
+    public virtual RcEventHandler
 {
 public:
   explicit UdpReceiveStrategy(UdpDataLink* link);
@@ -60,7 +60,7 @@ private:
   SequenceNumber expected_;
   ACE_INET_Addr remote_address_; // of the current datagram
 
-  typedef std::pair<TransportReassembly, SequenceNumber> ReassemblyInfo;
+  typedef std::pair<TransportReassembly_rch, SequenceNumber> ReassemblyInfo;
   typedef OPENDDS_MAP(ACE_INET_Addr, ReassemblyInfo) ReassemblyMap;
   ReassemblyMap reassembly_;
 };

@@ -5,9 +5,12 @@
  */
 
 #include "DCPS/DdsDcps_pch.h" //Only the _pch include should start with DCPS/
+
 #include "EntityImpl.h"
+
+#include "DomainParticipantImpl.h"
 #include "StatusConditionImpl.h"
-#include "dds/DCPS/transport/framework/TransportConfig.h"
+#include "transport/framework/TransportConfig.h"
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -15,15 +18,22 @@ namespace OpenDDS {
 namespace DCPS {
 
 EntityImpl::EntityImpl()
-  : enabled_(false),
-    entity_deleted_(false),
-    status_changes_(0),
-    status_condition_(new StatusConditionImpl(this))
+  : enabled_(false)
+  , entity_deleted_(false)
+  , status_changes_(0)
+  , status_condition_(new StatusConditionImpl(this))
+  , observer_()
+  , events_(Observer::e_NONE)
+  , instance_handle_(DDS::HANDLE_NIL)
 {
 }
 
 EntityImpl::~EntityImpl()
 {
+  const RcHandle<DomainParticipantImpl> participant = participant_for_instance_handle_.lock();
+  if (participant) {
+    participant->return_handle(instance_handle_);
+  }
 }
 
 DDS::ReturnCode_t
@@ -37,12 +47,13 @@ EntityImpl::set_enabled()
 bool
 EntityImpl::is_enabled() const
 {
-  return this->enabled_.value();
+  return enabled_;
 }
 
 DDS::StatusCondition_ptr
 EntityImpl::get_statuscondition()
 {
+  ACE_GUARD_RETURN(ACE_Thread_Mutex, g, lock_, 0);
   return DDS::StatusCondition::_duplicate(status_condition_);
 }
 
@@ -75,16 +86,29 @@ EntityImpl::set_deleted(bool state)
 }
 
 bool
-EntityImpl::get_deleted()
+EntityImpl::get_deleted() const
 {
-  return this->entity_deleted_.value();
+  return entity_deleted_;
+}
+
+Observer_rch EntityImpl::get_observer(Observer::Event e)
+{
+  ACE_GUARD_RETURN(ACE_Thread_Mutex, g, lock_, Observer_rch());
+  return (observer_ && (events_ & e)) ? observer_ :
+         parent() ? parent()->get_observer(e) : Observer_rch();
 }
 
 void
 EntityImpl::notify_status_condition()
 {
-  StatusConditionImpl* sci =
-    dynamic_cast<StatusConditionImpl*>(status_condition_.in());
+  DDS::StatusCondition_var sc_var;
+  {
+    ACE_GUARD(ACE_Thread_Mutex, g, lock_);
+
+    sc_var = DDS::StatusCondition::_duplicate(status_condition_);
+  }
+
+  StatusConditionImpl* sci = dynamic_cast<StatusConditionImpl*>(sc_var.in());
   if (sci) {
     sci->signal_all();
   } else {
@@ -106,6 +130,30 @@ EntityImpl::transport_config() const
 {
   ACE_GUARD_RETURN(ACE_Thread_Mutex, g, lock_, TransportConfig_rch());
   return transport_config_;
+}
+
+void EntityImpl::set_observer(Observer_rch observer, Observer::Event e)
+{
+  ACE_GUARD(ACE_Thread_Mutex, g, lock_);
+  observer_ = observer;
+  events_ = e;
+}
+
+DDS::InstanceHandle_t EntityImpl::get_entity_instance_handle(const GUID_t& id,
+                                                             const RcHandle<DomainParticipantImpl>& participant)
+{
+  ACE_GUARD_RETURN(ACE_Thread_Mutex, g, lock_, DDS::HANDLE_NIL);
+
+  if (instance_handle_ != DDS::HANDLE_NIL) {
+    return instance_handle_;
+  }
+
+  if (!participant) {
+    return DDS::HANDLE_NIL;
+  }
+
+  participant_for_instance_handle_ = participant;
+  return instance_handle_ = participant->assign_handle(id);
 }
 
 } // namespace DCPS

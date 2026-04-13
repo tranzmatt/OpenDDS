@@ -169,7 +169,7 @@ EVP_PKEY* PrivateKey::EVP_PKEY_from_pem(const std::string& path,
   BIO* filebuf = BIO_new_file(path.c_str(), "r");
   if (filebuf) {
     result = PEM_read_bio_PrivateKey(filebuf, 0, 0,
-                                     password.empty() ? 0 : (void*)password.c_str());
+                                     password.empty() ? 0 : const_cast<char*>(password.c_str()));
     if (!result) {
       OPENDDS_SSL_LOG_ERR("PEM_read_bio_PrivateKey failed");
     }
@@ -206,12 +206,12 @@ EVP_PKEY* PrivateKey::EVP_PKEY_from_pem_data(const std::string& data,
 
   if (filebuf) {
     if (0 >= BIO_write(filebuf, original_bytes.get_buffer(),
-                       original_bytes.length())) {
+                       static_cast<int>(original_bytes.length()))) {
       OPENDDS_SSL_LOG_ERR("BIO_write failed");
     }
 
     result = PEM_read_bio_PrivateKey(filebuf, 0, 0,
-                                     password.empty() ? 0 : (void*)password.c_str());
+                                     password.empty() ? 0 : const_cast<char*>(password.c_str()));
 
     if (!result) {
       OPENDDS_SSL_LOG_ERR("PEM_read_bio_PrivateKey failed");
@@ -231,7 +231,11 @@ EVP_PKEY* PrivateKey::EVP_PKEY_from_pem_data(const std::string& data,
 bool operator==(const PrivateKey& lhs, const PrivateKey& rhs)
 {
   if (lhs.k_ && rhs.k_) {
-    return (1 == EVP_PKEY_cmp(lhs.k_, rhs.k_));
+#ifdef OPENSSL_V_3_0
+    return 1 == EVP_PKEY_eq(lhs.k_, rhs.k_);
+#else
+    return 1 == EVP_PKEY_cmp(lhs.k_, rhs.k_);
+#endif
   }
   return lhs.k_ == rhs.k_;
 }

@@ -3,13 +3,13 @@
  * See: http://www.OpenDDS.org/license.html
  */
 
-#ifndef DDS_DCPS_ITERATOR_ADAPTOR_H
-#define DDS_DCPS_ITERATOR_ADAPTOR_H
+#ifndef OPENDDS_DCPS_SEQUENCEITERATOR_H
+#define OPENDDS_DCPS_SEQUENCEITERATOR_H
 
+#include "Util.h"
 #include "dds/Versioned_Namespace.h"
 
 #include "tao/Unbounded_Value_Sequence_T.h"
-
 #include <iterator>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
@@ -24,6 +24,7 @@ public:
   typedef std::output_iterator_tag iterator_category;
   typedef void value_type;
   typedef void difference_type;
+  typedef void size_type;
   typedef void pointer;
   typedef void reference;
 
@@ -31,9 +32,7 @@ public:
 
   SequenceBackInsertIterator& operator=(const typename Sequence::value_type& value)
   {
-    const unsigned int len = seq_->length();
-    seq_->length(len + 1);
-    (*seq_)[len] = value;
+    push_back(*seq_, value);
     return *this;
   }
 
@@ -76,6 +75,7 @@ struct SequenceIteratorBase
 {
   typedef std::random_access_iterator_tag iterator_category;
   typedef int difference_type;
+  typedef unsigned int size_type;
   typedef typename IterTraits::value_type value_type;
   typedef typename IterTraits::pointer pointer;
   typedef typename IterTraits::reference reference;
@@ -87,8 +87,6 @@ struct SequenceIteratorBase
   SequenceIteratorBase() : seq_(), current_(0) {}
 
   explicit SequenceIteratorBase(typename IterTraits::Sequence& sequence) : seq_(&sequence), current_(0) {}
-
-  operator difference_type() const { return current_; }
 
   // Forward iterator requirements
 
@@ -133,7 +131,7 @@ struct SequenceIteratorBase
 
   // Random-access iterator requirements
 
-  reference operator[](difference_type n) const { return (*seq_)[n]; }
+  reference operator[](difference_type n) const { return (*seq_)[static_cast<size_type>(n)]; }
 
   Derived& operator+=(difference_type n)
   {
@@ -180,11 +178,9 @@ struct SequenceIteratorBase
     return as_derived();
   }
 
-  Derived operator-(const Derived& rhs) const
+  difference_type operator-(const Derived& rhs) const
   {
-    Derived iter(as_derived());
-    iter.current_ -= rhs.current_;
-    return iter;
+    return static_cast<difference_type>(current_ - rhs.current_);
   }
 
   bool operator<(const Derived& rhs) const
@@ -223,7 +219,7 @@ struct SequenceIteratorBase
 
 protected:
   typename IterTraits::Sequence* seq_;
-  difference_type current_;
+  size_type current_;
 };
 
 template <typename Sequence>

@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_TRANSPORTSENDCONTROLELEMENT_H
-#define OPENDDS_DCPS_TRANSPORTSENDCONTROLELEMENT_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTSENDCONTROLELEMENT_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTSENDCONTROLELEMENT_H
 
 #include "dds/DCPS/dcps_export.h"
 #include "dds/DCPS/GuidUtils.h"
@@ -25,8 +25,8 @@ namespace OpenDDS {
 namespace DCPS {
 
 class TransportSendListener;
-
 class TransportSendControlElement;
+class DataSampleElement;
 
 typedef Cached_Allocator_With_Overflow<TransportSendControlElement, ACE_SYNCH_NULL_MUTEX>
 TransportSendControlElementAllocator;
@@ -35,7 +35,7 @@ class OpenDDS_Dcps_Export TransportSendControlElement : public TransportQueueEle
 public:
 
   TransportSendControlElement(int initial_count,
-                              const RepoId& publisher_id,
+                              const GUID_t& publisher_id,
                               TransportSendListener* listener,
                               const DataSampleHeader& header,
                               Message_Block_Ptr msg_block);
@@ -45,19 +45,21 @@ public:
 
   virtual ~TransportSendControlElement();
 
-  /// Overriden to always return true for Send Control elements.
+  /// Overridden to always return true for Send Control elements.
   virtual bool requires_exclusive_packet() const;
 
   /// Accessor for the publisher id.
-  virtual RepoId publication_id() const;
+  virtual GUID_t publication_id() const;
+
+  virtual ACE_Message_Block* duplicate_msg() const;
 
   /// Accessor for the ACE_Message_Block
   virtual const ACE_Message_Block* msg() const;
 
-  const DataSampleHeader& header() const { return this->header_; }
+  const DataSampleHeader& header() const { return header_; }
   // Only allow const access to the header.  Modifying the header
   // would require remarshaling.
-  //DataSampleHeader& header() { return this->header_; }
+  //DataSampleHeader& header() { return header_; }
 
   const TransportSendListener* listener() const { return listener_; }
 
@@ -66,10 +68,12 @@ public:
   virtual SequenceNumber sequence() const;
 
   /// Is the element a "control" sample from the specified pub_id?
-  virtual bool is_control(RepoId pub_id) const;
+  virtual bool is_control(GUID_t pub_id) const;
   virtual bool owned_by_transport ();
 
   virtual bool is_request_ack() const { return header_.message_id_ == REQUEST_ACK; }
+
+  virtual bool is_last_fragment() const { return !header_.more_fragments(); }
 
 protected:
 
@@ -78,7 +82,7 @@ protected:
 private:
 
   /// The publisher of the control message
-  RepoId publisher_id_;
+  GUID_t publisher_id_;
 
   /// The TransportSendListener object to call back upon.
   TransportSendListener* listener_;

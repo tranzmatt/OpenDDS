@@ -200,6 +200,15 @@ print "Spawning subscriber.\n";
 print $Subscriber1->CommandLine() . "\n";
 $Subscriber1->Spawn ();
 
+print "Waiting for ${synch_file}\n";
+if (PerlACE::waitforfile_timed ("${synch_file}", 30) == -1) {
+  print STDERR "ERROR: waiting for ${synch_file} file\n";
+  $Subscriber1->Kill();
+  $Publisher1->Kill();
+  $Monitor1->Kill();
+  early_fail();
+}
+
 sleep (15);
 
 print "Killing first DCPSInfoRepo.\n";
@@ -234,13 +243,13 @@ $Monitor2->Spawn ();
 
 my $MonitorResult = $Monitor1->WaitKill (20);
 if ($MonitorResult > 0) {
-  print STDERR "ERROR: Monitor1 returned $MonitorResult \n";
+  print STDERR "ERROR: Monitor1 returned $MonitorResult\n";
 }
 $status = 1 if $MonitorResult;
 
 $MonitorResult = $Monitor2->WaitKill (300);
 if ($MonitorResult > 0) {
-  print STDERR "ERROR: Monitor2 returned $MonitorResult \n";
+  print STDERR "ERROR: Monitor2 returned $MonitorResult\n";
 }
 $status = 1 if $MonitorResult;
 
@@ -256,20 +265,20 @@ if (!$status) {
 
 my $SubscriberResult = $Subscriber1->WaitKill (60);
 if ($SubscriberResult > 0) {
-  print STDERR "ERROR: subscriber returned $SubscriberResult \n";
+  print STDERR "ERROR: subscriber returned $SubscriberResult\n";
 }
 $status = 1 if $SubscriberResult;
 
 my $PublisherResult = $Publisher1->TerminateWaitKill (10);
 if ($PublisherResult > 0) {
-  print STDERR "ERROR: publisher returned $PublisherResult \n";
+  print STDERR "ERROR: publisher returned $PublisherResult\n";
 }
 $status = 1 if $PublisherResult;
 
 if ($pub2_started) {
   my $Publisher2Result = $Publisher2->TerminateWaitKill (10);
   if ($Publisher2Result > 0) {
-    print STDERR "ERROR: publisher 2 returned $Publisher2Result \n";
+    print STDERR "ERROR: publisher 2 returned $Publisher2Result\n";
   }
   $status = 1 if $Publisher2Result;
 }

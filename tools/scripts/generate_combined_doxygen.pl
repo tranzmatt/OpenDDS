@@ -1,10 +1,11 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
 # Script that wraps around generate_doxygen.pl to generate OpenDDS Doxygen
 # documentation with ACE/TAO documentation built-in.
 
 use strict;
 use File::Path 'mkpath';
+use File::Path 'rmtree';
 use File::Find;
 use File::Basename;
 use Cwd 'abs_path';
@@ -78,3 +79,12 @@ chdir($ENV{"DDS_ROOT"});
 push(@doxygen, $dest);
 system(@doxygen) == 0 or die "ERROR: DDS Doxygen failed ($?)\n";
 
+# Delete bogus directories if any
+opendir(my $root_dir, "$dest/html") or die "WARNING: Cannot open $dest/html ($!)\n";
+my @files = readdir($root_dir);
+foreach my $f (@files) {
+  if ($f ne "dds" && $f ne "." && $f ne "..") {
+    rmtree("$dest/html/$f");
+  }
+}
+closedir($root_dir);

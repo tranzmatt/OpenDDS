@@ -1,5 +1,5 @@
-#ifndef SERVICE_H
-#define SERVICE_H
+#ifndef OPENDDS_MODEL_SERVICE_T_H
+#define OPENDDS_MODEL_SERVICE_T_H
 
 // Needed here to avoid the pragma below when necessary.
 #include /**/ "ace/pre.h"
@@ -130,13 +130,7 @@ namespace OpenDDS { namespace Model {
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
 
-#if defined (ACE_TEMPLATES_REQUIRE_SOURCE)
 #include "Service_T.cpp"
-#endif /* ACE_TEMPLATES_REQUIRE_SOURCE */
-
-#if defined (ACE_TEMPLATES_REQUIRE_PRAGMA)
-#pragma implementation ("Service_T.cpp")
-#endif /* ACE_TEMPLATES_REQUIRE_PRAGMA */
 
 #include /**/ "ace/post.h"
 

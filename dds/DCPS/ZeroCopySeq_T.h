@@ -1,21 +1,19 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef ZEROCOPYSEQ_H
-#define ZEROCOPYSEQ_H
+#ifndef OPENDDS_DCPS_ZEROCOPYSEQ_T_H
+#define OPENDDS_DCPS_ZEROCOPYSEQ_T_H
 
-#if !defined (ACE_LACKS_PRAGMA_ONCE)
-# pragma once
-#endif /* ACE_LACKS_PRAGMA_ONCE */
+#include <ace/config-macros.h>
+#ifndef ACE_LACKS_PRAGMA_ONCE
+#  pragma once
+#endif
 
-#include /**/ "ace/pre.h"
+#include "ZeroCopySeqBase.h"
+#include "ZeroCopyAllocator_T.h"
 
-#include "dds/DCPS/ZeroCopySeqBase.h"
-#include "dds/DCPS/ZeroCopyAllocator_T.h"
 #include <ace/Vector_T.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
@@ -110,7 +108,7 @@ public:
   static Sample_T* allocbuf(CORBA::ULong nelems);
   static void freebuf(Sample_T* buffer);
 
-  void increment_references(void);
+  void increment_references();
 
   ///Only used by the FooDataReaderImpl and tests
   class PrivateMemberAccess {
@@ -142,6 +140,8 @@ public:
       seq_.assign_sample(ii, sample);
     }
 
+    void increment_references() { seq_.increment_references(); }
+
   private:
     ZeroCopyDataSeq& seq_;
   };
@@ -151,11 +151,11 @@ private:
 
   /**
    * In some versions of ACE, ACE_Vector doesn't have a working swap()
-    * function, so we have to provide our own.
-    *
-    * This version also provides public access to the allocator_ member,
-    * something the ACE_Vector doesn't do
-    */
+   * function, so we have to provide our own.
+   *
+   * This version also provides public access to the allocator_ member,
+   * something the ACE_Vector doesn't do
+   */
   class ZeroCopyVector
         : public ACE_Vector<OpenDDS::DCPS::ReceivedDataElement*, DEF_MAX> {
   public:
@@ -219,18 +219,9 @@ private:
 TAO_END_VERSIONED_NAMESPACE_DECL
 
 #if defined (__ACE_INLINE__)
-#include "dds/DCPS/ZeroCopySeq_T.inl"
+#include "ZeroCopySeq_T.inl"
 #endif /* __ACE_INLINE__ */
 
-#if defined (ACE_TEMPLATES_REQUIRE_SOURCE)
-#include "dds/DCPS/ZeroCopySeq_T.cpp"
-#endif /* ACE_TEMPLATES_REQUIRE_SOURCE */
-
-#if defined (ACE_TEMPLATES_REQUIRE_PRAGMA)
-#pragma message ("ZeroCopySeq_T.cpp template inst")
-#pragma implementation ("ZeroCopySeq_T.cpp")
-#endif /* ACE_TEMPLATES_REQUIRE_PRAGMA */
-
-#include /**/ "ace/post.h"
+#include "ZeroCopySeq_T.cpp"
 
 #endif /* ZEROCOPYSEQ_H  */

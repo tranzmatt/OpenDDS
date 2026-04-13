@@ -34,6 +34,10 @@
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
+namespace {
+  const ACE_CDR::ULong transportContextDefault = 0xffffffff;
+}
+
 // constructor
 TAO_DDS_DCPSInfo_i::TAO_DDS_DCPSInfo_i(CORBA::ORB_ptr orb
                                        , bool reincarnate
@@ -47,6 +51,9 @@ TAO_DDS_DCPSInfo_i::TAO_DDS_DCPSInfo_i(CORBA::ORB_ptr orb
   , shutdown_(shutdown)
   , reassociate_timer_id_(-1)
   , dispatch_check_timer_id_(-1)
+#ifndef DDS_HAS_MINIMUM_BIT
+  , in_cleanup_all_built_in_topics_(false)
+#endif
 {
   if (!TheServiceParticipant->use_bidir_giop()) {
     int argc = 0;
@@ -66,39 +73,37 @@ TAO_DDS_DCPSInfo_i::handle_timeout(const ACE_Time_Value& /*now*/,
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, this->lock_, 0);
 
   if (arg == this) {
-    if ( !CORBA::is_nil(this->dispatchingOrb_.in())){
-      if (this->dispatchingOrb_->work_pending())
-      {
+    if (dispatchingOrb_) {
+      if (dispatchingOrb_->work_pending()) {
         // Ten microseconds
-        ACE_Time_Value small(0,10);
-        this->dispatchingOrb_->perform_work(small);
+        ACE_Time_Value smallval(0, 10);
+        dispatchingOrb_->perform_work(smallval);
       }
     }
-  }
-  else {
-  // NOTE: This is a purposefully naive approach to addressing defunct
-  // associations.  In the future, it may be worthwhile to introduce a
-  // callback model to fix the heinous runtime cost below:
-  for (DCPS_IR_Domain_Map::const_iterator dom(this->domains_.begin());
-       dom != this->domains_.end(); ++dom) {
+  } else {
+    // NOTE: This is a purposefully naive approach to addressing defunct
+    // associations.  In the future, it may be worthwhile to introduce a
+    // callback model to fix the heinous runtime cost below:
+    for (DCPS_IR_Domain_Map::const_iterator dom(this->domains_.begin());
+         dom != this->domains_.end(); ++dom) {
 
-    const DCPS_IR_Participant_Map& participants(dom->second->participants());
-    for (DCPS_IR_Participant_Map::const_iterator part(participants.begin());
-         part != participants.end(); ++part) {
+      const DCPS_IR_Participant_Map& participants(dom->second->participants());
+      for (DCPS_IR_Participant_Map::const_iterator part(participants.begin());
+           part != participants.end(); ++part) {
 
-      const DCPS_IR_Subscription_Map& subscriptions(part->second->subscriptions());
-      for (DCPS_IR_Subscription_Map::const_iterator sub(subscriptions.begin());
-           sub != subscriptions.end(); ++sub) {
-        sub->second->reevaluate_defunct_associations();
-      }
+        const DCPS_IR_Subscription_Map& subscriptions(part->second->subscriptions());
+        for (DCPS_IR_Subscription_Map::const_iterator sub(subscriptions.begin());
+             sub != subscriptions.end(); ++sub) {
+          sub->second->reevaluate_defunct_associations();
+        }
 
-      const DCPS_IR_Publication_Map& publications(part->second->publications());
-      for (DCPS_IR_Publication_Map::const_iterator pub(publications.begin());
-           pub != publications.end(); ++pub) {
-        pub->second->reevaluate_defunct_associations();
+        const DCPS_IR_Publication_Map& publications(part->second->publications());
+        for (DCPS_IR_Publication_Map::const_iterator pub(publications.begin());
+             pub != publications.end(); ++pub) {
+          pub->second->reevaluate_defunct_associations();
+        }
       }
     }
-  }
   }
 
   return 0;
@@ -118,7 +123,7 @@ TAO_DDS_DCPSInfo_i::orb()
 
 CORBA::Boolean TAO_DDS_DCPSInfo_i::attach_participant(
   DDS::DomainId_t            domainId,
-  const OpenDDS::DCPS::RepoId& participantId)
+  const OpenDDS::DCPS::GUID_t& participantId)
 {
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, this->lock_, 0);
 
@@ -146,7 +151,7 @@ CORBA::Boolean TAO_DDS_DCPSInfo_i::attach_participant(
 bool
 TAO_DDS_DCPSInfo_i::changeOwnership(
   DDS::DomainId_t              domainId,
-  const OpenDDS::DCPS::RepoId& participantId,
+  const OpenDDS::DCPS::GUID_t& participantId,
   long                           sender,
   long                           owner)
 {
@@ -173,9 +178,9 @@ TAO_DDS_DCPSInfo_i::changeOwnership(
 }
 
 OpenDDS::DCPS::TopicStatus TAO_DDS_DCPSInfo_i::assert_topic(
-  OpenDDS::DCPS::RepoId_out topicId,
+  OpenDDS::DCPS::GUID_t_out topicId,
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& participantId,
+  const OpenDDS::DCPS::GUID_t& participantId,
   const char * topicName,
   const char * dataTypeName,
   const DDS::TopicQos & qos,
@@ -224,9 +229,9 @@ OpenDDS::DCPS::TopicStatus TAO_DDS_DCPSInfo_i::assert_topic(
 }
 
 bool
-TAO_DDS_DCPSInfo_i::add_topic(const OpenDDS::DCPS::RepoId& topicId,
+TAO_DDS_DCPSInfo_i::add_topic(const OpenDDS::DCPS::GUID_t& topicId,
                               DDS::DomainId_t domainId,
-                              const OpenDDS::DCPS::RepoId& participantId,
+                              const OpenDDS::DCPS::GUID_t& participantId,
                               const char* topicName,
                               const char* dataTypeName,
                               const DDS::TopicQos& qos)
@@ -276,7 +281,7 @@ TAO_DDS_DCPSInfo_i::add_topic(const OpenDDS::DCPS::RepoId& topicId,
   // See if we are adding a topic that was created within this
   // repository or a different repository.
   if (converter.federationId() == federation_.id()) {
-    // Ensure the topic RepoId values do not conflict.
+    // Ensure the topic GUID_t values do not conflict.
     participantPtr->last_topic_key(converter.entityKey());
   }
 
@@ -288,7 +293,7 @@ OpenDDS::DCPS::TopicStatus TAO_DDS_DCPSInfo_i::find_topic(
   const char * topicName,
   CORBA::String_out dataTypeName,
   DDS::TopicQos_out qos,
-  OpenDDS::DCPS::RepoId_out topicId)
+  OpenDDS::DCPS::GUID_t_out topicId)
 {
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, this->lock_, OpenDDS::DCPS::INTERNAL_ERROR);
 
@@ -319,8 +324,8 @@ OpenDDS::DCPS::TopicStatus TAO_DDS_DCPSInfo_i::find_topic(
 
 OpenDDS::DCPS::TopicStatus TAO_DDS_DCPSInfo_i::remove_topic(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& participantId,
-  const OpenDDS::DCPS::RepoId& topicId)
+  const OpenDDS::DCPS::GUID_t& participantId,
+  const OpenDDS::DCPS::GUID_t& topicId)
 {
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, this->lock_, OpenDDS::DCPS::INTERNAL_ERROR);
 
@@ -366,26 +371,10 @@ OpenDDS::DCPS::TopicStatus TAO_DDS_DCPSInfo_i::remove_topic(
   return removedStatus;
 }
 
-OpenDDS::DCPS::RepoId TAO_DDS_DCPSInfo_i::add_publication(
-  DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& participantId,
-  const OpenDDS::DCPS::RepoId& topicId,
-  OpenDDS::DCPS::DataWriterRemote_ptr publication,
-  const DDS::DataWriterQos & qos,
-  const OpenDDS::DCPS::TransportLocatorSeq & transInfo,
-  const DDS::PublisherQos & publisherQos)
+OpenDDS::DCPS::GUID_t TAO_DDS_DCPSInfo_i::reserve_publication_id(DDS::DomainId_t domainId,
+                                                                 const OpenDDS::DCPS::GUID_t& participantId,
+                                                                 const OpenDDS::DCPS::GUID_t& topicId)
 {
-  if (CORBA::is_nil(publication)) {
-    if (OpenDDS::DCPS::DCPS_debug_level > 4) {
-      ACE_DEBUG((LM_WARNING,
-        ACE_TEXT("(%P|%t) WARNING: TAO_DDS_DCPSInfo_i:add_publication: ")
-        ACE_TEXT("invalid publication reference.\n")));
-    }
-    return OpenDDS::DCPS::GUID_UNKNOWN;
-  }
-
-  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, this->lock_, OpenDDS::DCPS::GUID_UNKNOWN);
-
   // Grab the domain.
   DCPS_IR_Domain_Map::iterator where = this->domains_.find(domainId);
 
@@ -408,8 +397,50 @@ OpenDDS::DCPS::RepoId TAO_DDS_DCPSInfo_i::add_publication(
   }
 
   // Get a Id for the Writer, make it a builtin kind if this is for a BIT
-  OpenDDS::DCPS::RepoId pubId = partPtr->get_next_publication_id(
-    OpenDDS::DCPS::RepoIdConverter(topicId).isBuiltinDomainEntity());
+  return partPtr->get_next_publication_id(OpenDDS::DCPS::RepoIdConverter(topicId).isBuiltinDomainEntity());
+}
+
+bool TAO_DDS_DCPSInfo_i::add_publication(DDS::DomainId_t domainId,
+                                         const OpenDDS::DCPS::GUID_t& participantId,
+                                         const OpenDDS::DCPS::GUID_t& topicId,
+                                         const OpenDDS::DCPS::GUID_t& pubId,
+                                         OpenDDS::DCPS::DataWriterRemote_ptr publication,
+                                         const DDS::DataWriterQos & qos,
+                                         const OpenDDS::DCPS::TransportLocatorSeq& transInfo,
+                                         const DDS::PublisherQos& publisherQos,
+                                         const DDS::OctetSeq& serializedTypeInfo)
+{
+  if (CORBA::is_nil(publication)) {
+    if (OpenDDS::DCPS::DCPS_debug_level > 4) {
+      ACE_DEBUG((LM_WARNING,
+        ACE_TEXT("(%P|%t) WARNING: TAO_DDS_DCPSInfo_i:add_publication: ")
+        ACE_TEXT("invalid publication reference.\n")));
+    }
+    return false;
+  }
+
+  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, this->lock_, false);
+
+  // Grab the domain.
+  DCPS_IR_Domain_Map::iterator where = this->domains_.find(domainId);
+
+  if (where == this->domains_.end()) {
+    throw OpenDDS::DCPS::Invalid_Domain();
+  }
+
+  // Grab the participant.
+  DCPS_IR_Participant* partPtr
+  = where->second->participant(participantId);
+
+  if (0 == partPtr) {
+    throw OpenDDS::DCPS::Invalid_Participant();
+  }
+
+  DCPS_IR_Topic* topic = where->second->find_topic(topicId);
+
+  if (topic == 0) {
+    throw OpenDDS::DCPS::Invalid_Topic();
+  }
 
   OpenDDS::DCPS::DataWriterRemote_var dispatchingPublication =
     OpenDDS::DCPS::DataWriterRemote::_duplicate(publication);
@@ -424,7 +455,7 @@ OpenDDS::DCPS::RepoId TAO_DDS_DCPSInfo_i::add_publication(
                    ACE_TEXT("(%P|%t) WARNING: TAO_DDS_DCPSInfo_i:add_publication: ")
                    ACE_TEXT("failure marshalling publication on dispatching orb.\n")));
       }
-      return OpenDDS::DCPS::GUID_UNKNOWN;
+      return false;
     }
 
     dispatchingPublication = OpenDDS::DCPS::DataWriterRemote::_unchecked_narrow(pubObj);
@@ -438,17 +469,20 @@ OpenDDS::DCPS::RepoId TAO_DDS_DCPSInfo_i::add_publication(
                    dispatchingPublication.in(),
                    qos,
                    transInfo,
-                   publisherQos));
+                   transportContextDefault,
+                   publisherQos,
+                   serializedTypeInfo));
 
+  bool retval = true;
   DCPS_IR_Publication* pub = pubPtr.get();
   if (partPtr->add_publication(OpenDDS::DCPS::move(pubPtr)) != 0) {
     // failed to add.  we are responsible for the memory.
-    pubId = OpenDDS::DCPS::GUID_UNKNOWN;
+    retval = false;
   } else if (topic->add_publication_reference(pub) != 0) {
     // Failed to add to the topic
     // so remove from participant and fail.
     partPtr->remove_publication(pubId);
-    pubId = OpenDDS::DCPS::GUID_UNKNOWN;
+    retval = false;
   }
 
   if (this->um_ && (partPtr->isBitPublisher() == false)) {
@@ -457,16 +491,17 @@ OpenDDS::DCPS::RepoId TAO_DDS_DCPSInfo_i::add_publication(
 
     Update::UWActor actor(domainId, pubId, topicId, participantId, Update::DataWriter
                           , callback.in()
-                          , const_cast<DDS::PublisherQos &>(publisherQos)
-                          , const_cast<DDS::DataWriterQos &>(qos)
-                          , const_cast<OpenDDS::DCPS::TransportLocatorSeq &>
-                          (transInfo), csi);
+                          , const_cast<DDS::PublisherQos&>(publisherQos)
+                          , const_cast<DDS::DataWriterQos&>(qos)
+                          , const_cast<OpenDDS::DCPS::TransportLocatorSeq&>(transInfo)
+                          , transportContextDefault, csi
+                          , const_cast<DDS::OctetSeq&>(serializedTypeInfo));
     this->um_->create(actor);
 
     if (OpenDDS::DCPS::DCPS_debug_level > 4) {
       OpenDDS::DCPS::RepoIdConverter converter(pubId);
       ACE_DEBUG((LM_DEBUG,
-                 ACE_TEXT("(%P|%t) (RepoId)TAO_DDS_DCPSInfo_i::add_publication: ")
+                 ACE_TEXT("(%P|%t) (GUID_t)TAO_DDS_DCPSInfo_i::add_publication: ")
                  ACE_TEXT("pushing creation of publication %C in domain %d.\n"),
                  std::string(converter).c_str(),
                  domainId));
@@ -474,18 +509,20 @@ OpenDDS::DCPS::RepoId TAO_DDS_DCPSInfo_i::add_publication(
   }
 
   where->second->remove_dead_participants();
-  return pubId;
+  return retval;
 }
 
 bool
 TAO_DDS_DCPSInfo_i::add_publication(DDS::DomainId_t domainId,
-                                    const OpenDDS::DCPS::RepoId& participantId,
-                                    const OpenDDS::DCPS::RepoId& topicId,
-                                    const OpenDDS::DCPS::RepoId& pubId,
+                                    const OpenDDS::DCPS::GUID_t& participantId,
+                                    const OpenDDS::DCPS::GUID_t& topicId,
+                                    const OpenDDS::DCPS::GUID_t& pubId,
                                     const char* pub_str,
                                     const DDS::DataWriterQos & qos,
                                     const OpenDDS::DCPS::TransportLocatorSeq & transInfo,
+                                    ACE_CDR::ULong transportContext,
                                     const DDS::PublisherQos & publisherQos,
+                                    const DDS::OctetSeq & serializedTypeInfo,
                                     bool associate)
 {
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, this->lock_, false);
@@ -556,10 +593,12 @@ TAO_DDS_DCPSInfo_i::add_publication(DDS::DomainId_t domainId,
                    publication.in(),
                    qos,
                    transInfo,
-                   publisherQos));
+                   transportContext,
+                   publisherQos,
+                   serializedTypeInfo));
 
   DCPS_IR_Publication* pub = pubPtr.get();
-  switch (partPtr->add_publication(move(pubPtr))) {
+  switch (partPtr->add_publication(OPENDDS_MOVE_NS::move(pubPtr))) {
   case -1: {
     OpenDDS::DCPS::RepoIdConverter converter(pubId);
     ACE_ERROR((LM_ERROR,
@@ -607,7 +646,7 @@ TAO_DDS_DCPSInfo_i::add_publication(DDS::DomainId_t domainId,
   // See if we are adding a publication that was created within this
   // repository or a different repository.
   if (converter.federationId() == federation_.id()) {
-    // Ensure the publication RepoId values do not conflict.
+    // Ensure the publication GUID_t values do not conflict.
     partPtr->last_publication_key(converter.entityKey());
   }
 
@@ -616,11 +655,59 @@ TAO_DDS_DCPSInfo_i::add_publication(DDS::DomainId_t domainId,
 
 void TAO_DDS_DCPSInfo_i::remove_publication(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& participantId,
-  const OpenDDS::DCPS::RepoId& publicationId)
+  const OpenDDS::DCPS::GUID_t& participantId,
+  const OpenDDS::DCPS::GUID_t& publicationId)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
 
+  // Grab the domain.
+  DCPS_IR_Domain_Map::iterator where = this->domains_.find(domainId);
+
+  if (where == this->domains_.end()) {
+    throw OpenDDS::DCPS::Invalid_Domain();
+  }
+
+  // Grab the participant.
+  DCPS_IR_Participant* const partPtr = where->second->participant(participantId);
+  if (!partPtr) {
+    throw OpenDDS::DCPS::Invalid_Participant();
+  }
+
+  const bool in_cleanup =
+#ifdef DDS_HAS_MINIMUM_BIT
+    false;
+#else
+    in_cleanup_all_built_in_topics_;
+#endif
+
+  if (partPtr->remove_publication(publicationId) != 0) {
+    where->second->remove_dead_participants(in_cleanup);
+
+    // throw exception because the publication was not removed!
+    throw OpenDDS::DCPS::Invalid_Publication();
+  }
+
+  where->second->remove_dead_participants(in_cleanup);
+
+  if (um_ && partPtr->isOwner() && !partPtr->isBitPublisher()) {
+    Update::IdPath path(domainId, participantId, publicationId);
+    this->um_->destroy(path, Update::Actor, Update::DataWriter);
+
+    if (OpenDDS::DCPS::DCPS_debug_level > 4) {
+      OpenDDS::DCPS::RepoIdConverter converter(publicationId);
+      ACE_DEBUG((LM_DEBUG,
+                 ACE_TEXT("(%P|%t) TAO_DDS_DCPSInfo_i::remove_publication: ")
+                 ACE_TEXT("pushing deletion of publication %C in domain %d.\n"),
+                 std::string(converter).c_str(),
+                 domainId));
+    }
+  }
+}
+
+OpenDDS::DCPS::GUID_t TAO_DDS_DCPSInfo_i::reserve_subscription_id(DDS::DomainId_t domainId,
+                                                                  const OpenDDS::DCPS::GUID_t& participantId,
+                                                                  const OpenDDS::DCPS::GUID_t& topicId)
+{
   // Grab the domain.
   DCPS_IR_Domain_Map::iterator where = this->domains_.find(domainId);
 
@@ -636,43 +723,28 @@ void TAO_DDS_DCPSInfo_i::remove_publication(
     throw OpenDDS::DCPS::Invalid_Participant();
   }
 
-  if (partPtr->remove_publication(publicationId) != 0) {
-    where->second->remove_dead_participants();
+  DCPS_IR_Topic* topic = where->second->find_topic(topicId);
 
-    // throw exception because the publication was not removed!
-    throw OpenDDS::DCPS::Invalid_Publication();
+  if (topic == 0) {
+    throw OpenDDS::DCPS::Invalid_Topic();
   }
 
-  where->second->remove_dead_participants();
-
-  if (this->um_
-      && (partPtr->isOwner() == true)
-      && (partPtr->isBitPublisher() == false)) {
-    Update::IdPath path(domainId, participantId, publicationId);
-    this->um_->destroy(path, Update::Actor, Update::DataWriter);
-
-    if (OpenDDS::DCPS::DCPS_debug_level > 4) {
-      OpenDDS::DCPS::RepoIdConverter converter(publicationId);
-      ACE_DEBUG((LM_DEBUG,
-                 ACE_TEXT("(%P|%t) TAO_DDS_DCPSInfo_i::remove_publication: ")
-                 ACE_TEXT("pushing deletion of publication %C in domain %d.\n"),
-                 std::string(converter).c_str(),
-                 domainId));
-    }
-  }
+  // Get a Id for the Reader, make it a builtin kind if this is for a BIT
+  return partPtr->get_next_subscription_id(OpenDDS::DCPS::RepoIdConverter(topicId).isBuiltinDomainEntity());
 }
 
-OpenDDS::DCPS::RepoId TAO_DDS_DCPSInfo_i::add_subscription(
-  DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& participantId,
-  const OpenDDS::DCPS::RepoId& topicId,
-  OpenDDS::DCPS::DataReaderRemote_ptr subscription,
-  const DDS::DataReaderQos & qos,
-  const OpenDDS::DCPS::TransportLocatorSeq & transInfo,
-  const DDS::SubscriberQos & subscriberQos,
-  const char* filterClassName,
-  const char* filterExpression,
-  const DDS::StringSeq& exprParams)
+bool TAO_DDS_DCPSInfo_i::add_subscription(DDS::DomainId_t domainId,
+                                          const OpenDDS::DCPS::GUID_t& participantId,
+                                          const OpenDDS::DCPS::GUID_t& topicId,
+                                          const OpenDDS::DCPS::GUID_t& subId,
+                                          OpenDDS::DCPS::DataReaderRemote_ptr subscription,
+                                          const DDS::DataReaderQos & qos,
+                                          const OpenDDS::DCPS::TransportLocatorSeq & transInfo,
+                                          const DDS::SubscriberQos & subscriberQos,
+                                          const char* filterClassName,
+                                          const char* filterExpression,
+                                          const DDS::StringSeq& exprParams,
+                                          const DDS::OctetSeq & serializedTypeInfo)
 {
   if (CORBA::is_nil(subscription)) {
     if (OpenDDS::DCPS::DCPS_debug_level > 4) {
@@ -680,16 +752,15 @@ OpenDDS::DCPS::RepoId TAO_DDS_DCPSInfo_i::add_subscription(
         ACE_TEXT("(%P|%t) WARNING: TAO_DDS_DCPSInfo_i:add_subscription: ")
         ACE_TEXT("invalid subscription reference.\n")));
     }
-    return OpenDDS::DCPS::GUID_UNKNOWN;
+    return false;
   }
 
   DCPS_IR_Domain* domainPtr;
   DCPS_IR_Participant* partPtr;
   DCPS_IR_Topic* topic;
-  OpenDDS::DCPS::RepoId subId;
   OpenDDS::DCPS::unique_ptr<DCPS_IR_Subscription> subPtr;
   {
-    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, this->lock_, OpenDDS::DCPS::GUID_UNKNOWN);
+    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, this->lock_, false);
 
     // Grab the domain.
     DCPS_IR_Domain_Map::iterator where = this->domains_.find(domainId);
@@ -712,10 +783,6 @@ OpenDDS::DCPS::RepoId TAO_DDS_DCPSInfo_i::add_subscription(
       throw OpenDDS::DCPS::Invalid_Topic();
     }
 
-    // Get a Id for the Reader, make it a builtin kind if this is for a BIT
-    subId = partPtr->get_next_subscription_id(
-      OpenDDS::DCPS::RepoIdConverter(topicId).isBuiltinDomainEntity());
-
     OpenDDS::DCPS::DataReaderRemote_var dispatchingSubscription (
       OpenDDS::DCPS::DataReaderRemote::_duplicate(subscription));
 
@@ -729,7 +796,7 @@ OpenDDS::DCPS::RepoId TAO_DDS_DCPSInfo_i::add_subscription(
                      ACE_TEXT("(%P|%t) WARNING: TAO_DDS_DCPSInfo_i:add_subscription: ")
                      ACE_TEXT("failure marshalling subscription on dispatching orb.\n")));
         }
-        return OpenDDS::DCPS::GUID_UNKNOWN;
+        return false;
       }
       dispatchingSubscription = OpenDDS::DCPS::DataReaderRemote::_unchecked_narrow(subObj);
     }
@@ -742,23 +809,26 @@ OpenDDS::DCPS::RepoId TAO_DDS_DCPSInfo_i::add_subscription(
                      dispatchingSubscription.in(),
                      qos,
                      transInfo,
+                     transportContextDefault,
                      subscriberQos,
                      filterClassName,
                      filterExpression,
-                     exprParams));
+                     exprParams,
+                     serializedTypeInfo));
 
     // Release lock
   }
 
+  bool retval = true;
   DCPS_IR_Subscription* sub = subPtr.get();
-  if (partPtr->add_subscription(move(subPtr)) != 0) {
+  if (partPtr->add_subscription(OPENDDS_MOVE_NS::move(subPtr)) != 0) {
     // failed to add.  we are responsible for the memory.
-    subId = OpenDDS::DCPS::GUID_UNKNOWN;
+    retval = false;
   } else if (topic->add_subscription_reference(sub) != 0) {
     ACE_ERROR((LM_ERROR, ACE_TEXT("Failed to add subscription to topic list.\n")));
     // No associations were made so remove and fail.
     partPtr->remove_subscription(subId);
-    subId = OpenDDS::DCPS::GUID_UNKNOWN;
+    retval = false;
   }
 
   if (this->um_ && (partPtr->isBitPublisher() == false)) {
@@ -767,17 +837,18 @@ OpenDDS::DCPS::RepoId TAO_DDS_DCPSInfo_i::add_subscription(
 
     Update::URActor actor(domainId, subId, topicId, participantId, Update::DataReader
                           , callback.in()
-                          , const_cast<DDS::SubscriberQos &>(subscriberQos)
-                          , const_cast<DDS::DataReaderQos &>(qos)
-                          , const_cast<OpenDDS::DCPS::TransportLocatorSeq &>
-                          (transInfo), csi);
+                          , const_cast<DDS::SubscriberQos&>(subscriberQos)
+                          , const_cast<DDS::DataReaderQos&>(qos)
+                          , const_cast<OpenDDS::DCPS::TransportLocatorSeq&>(transInfo)
+                          , transportContextDefault, csi
+                          , const_cast<DDS::OctetSeq&>(serializedTypeInfo));
 
     this->um_->create(actor);
 
     if (OpenDDS::DCPS::DCPS_debug_level > 4) {
       OpenDDS::DCPS::RepoIdConverter converter(subId);
       ACE_DEBUG((LM_DEBUG,
-                 ACE_TEXT("(%P|%t) (RepoId)TAO_DDS_DCPSInfo_i::add_subscription: ")
+                 ACE_TEXT("(%P|%t) (GUID_t)TAO_DDS_DCPSInfo_i::add_subscription: ")
                  ACE_TEXT("pushing creation of subscription %C in domain %d.\n"),
                  std::string(converter).c_str(),
                  domainId));
@@ -786,22 +857,24 @@ OpenDDS::DCPS::RepoId TAO_DDS_DCPSInfo_i::add_subscription(
 
   domainPtr->remove_dead_participants();
 
-  return subId;
+  return retval;
 }
 
 bool
 TAO_DDS_DCPSInfo_i::add_subscription(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& participantId,
-  const OpenDDS::DCPS::RepoId& topicId,
-  const OpenDDS::DCPS::RepoId& subId,
+  const OpenDDS::DCPS::GUID_t& participantId,
+  const OpenDDS::DCPS::GUID_t& topicId,
+  const OpenDDS::DCPS::GUID_t& subId,
   const char* sub_str,
   const DDS::DataReaderQos & qos,
   const OpenDDS::DCPS::TransportLocatorSeq & transInfo,
+  ACE_CDR::ULong transportContext,
   const DDS::SubscriberQos & subscriberQos,
   const char* filterClassName,
   const char* filterExpression,
   const DDS::StringSeq& exprParams,
+  const DDS::OctetSeq & serializedTypeInfo,
   bool associate)
 {
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, this->lock_, false);
@@ -873,10 +946,12 @@ TAO_DDS_DCPSInfo_i::add_subscription(
                    subscription.in(),
                    qos,
                    transInfo,
+                   transportContext,
                    subscriberQos,
                    filterClassName,
                    filterExpression,
-                   exprParams));
+                   exprParams,
+                   serializedTypeInfo));
 
   DCPS_IR_Subscription* sub = subPtr.get();
   switch (partPtr->add_subscription(OpenDDS::DCPS::move(subPtr))) {
@@ -928,7 +1003,7 @@ TAO_DDS_DCPSInfo_i::add_subscription(
   // See if we are adding a subscription that was created within this
   // repository or a different repository.
   if (converter.federationId() == federation_.id()) {
-    // Ensure the subscription RepoId values do not conflict.
+    // Ensure the subscription GUID_t values do not conflict.
     partPtr->last_subscription_key(converter.entityKey());
   }
 
@@ -937,8 +1012,8 @@ TAO_DDS_DCPSInfo_i::add_subscription(
 
 void TAO_DDS_DCPSInfo_i::remove_subscription(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& participantId,
-  const OpenDDS::DCPS::RepoId& subscriptionId)
+  const OpenDDS::DCPS::GUID_t& participantId,
+  const OpenDDS::DCPS::GUID_t& subscriptionId)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
 
@@ -950,10 +1025,8 @@ void TAO_DDS_DCPSInfo_i::remove_subscription(
   }
 
   // Grab the participant.
-  DCPS_IR_Participant* partPtr
-  = where->second->participant(participantId);
-
-  if (0 == partPtr) {
+  DCPS_IR_Participant* const partPtr = where->second->participant(participantId);
+  if (!partPtr) {
     throw OpenDDS::DCPS::Invalid_Participant();
   }
 
@@ -962,11 +1035,15 @@ void TAO_DDS_DCPSInfo_i::remove_subscription(
     throw OpenDDS::DCPS::Invalid_Subscription();
   }
 
-  where->second->remove_dead_participants();
+  where->second->remove_dead_participants(
+#ifdef DDS_HAS_MINIMUM_BIT
+    false
+#else
+    in_cleanup_all_built_in_topics_
+#endif
+    );
 
-  if (this->um_
-      && (partPtr->isOwner() == true)
-      && (partPtr->isBitPublisher() == false)) {
+  if (um_ && partPtr->isOwner() && !partPtr->isBitPublisher()) {
     Update::IdPath path(domainId, participantId, subscriptionId);
     this->um_->destroy(path, Update::Actor, Update::DataReader);
 
@@ -1000,7 +1077,7 @@ OpenDDS::DCPS::AddDomainStatus TAO_DDS_DCPSInfo_i::add_domain_participant(
   }
 
   // Obtain a shiny new GUID value.
-  OpenDDS::DCPS::RepoId participantId = domainPtr->get_next_participant_id();
+  OpenDDS::DCPS::GUID_t participantId = domainPtr->get_next_participant_id();
 
   // Determine if this is the 'special' repository internal participant
   // that publishes the built-in topics for a domain.
@@ -1022,7 +1099,7 @@ OpenDDS::DCPS::AddDomainStatus TAO_DDS_DCPSInfo_i::add_domain_participant(
     if (OpenDDS::DCPS::DCPS_debug_level > 4) {
       OpenDDS::DCPS::RepoIdConverter converter(participantId);
       ACE_DEBUG((LM_DEBUG,
-                 ACE_TEXT("(%P|%t) (RepoId)TAO_DDS_DCPSInfo_i::add_domain_participant: ")
+                 ACE_TEXT("(%P|%t) (GUID_t)TAO_DDS_DCPSInfo_i::add_domain_participant: ")
                  ACE_TEXT("participant %C in domain %d is BIT publisher for this domain.\n"),
                  std::string(converter).c_str(),
                  domain));
@@ -1052,7 +1129,7 @@ OpenDDS::DCPS::AddDomainStatus TAO_DDS_DCPSInfo_i::add_domain_participant(
 
       if (OpenDDS::DCPS::DCPS_debug_level > 4) {
         ACE_DEBUG((LM_DEBUG,
-                   ACE_TEXT("(%P|%t) (RepoId)TAO_DDS_DCPSInfo_i::add_domain_participant: ")
+                   ACE_TEXT("(%P|%t) (GUID_t)TAO_DDS_DCPSInfo_i::add_domain_participant: ")
                    ACE_TEXT("pushing creation of participant %C in domain %d.\n"),
                    std::string(converter).c_str(),
                    domain));
@@ -1066,7 +1143,7 @@ OpenDDS::DCPS::AddDomainStatus TAO_DDS_DCPSInfo_i::add_domain_participant(
   if (OpenDDS::DCPS::DCPS_debug_level > 4) {
     OpenDDS::DCPS::RepoIdConverter converter(participantId);
     ACE_DEBUG((LM_DEBUG,
-               ACE_TEXT("(%P|%t) (RepoId)TAO_DDS_DCPSInfo_i::add_domain_participant: ")
+               ACE_TEXT("(%P|%t) (GUID_t)TAO_DDS_DCPSInfo_i::add_domain_participant: ")
                ACE_TEXT("domain %d loaded participant %C at 0x%x.\n"),
                domain,
                std::string(converter).c_str(),
@@ -1077,7 +1154,7 @@ OpenDDS::DCPS::AddDomainStatus TAO_DDS_DCPSInfo_i::add_domain_participant(
 
 bool
 TAO_DDS_DCPSInfo_i::add_domain_participant(DDS::DomainId_t domainId
-                                           , const OpenDDS::DCPS::RepoId& participantId
+                                           , const OpenDDS::DCPS::GUID_t& participantId
                                            , const DDS::DomainParticipantQos & qos)
 {
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, this->lock_, false);
@@ -1190,7 +1267,7 @@ TAO_DDS_DCPSInfo_i::remove_by_owner(
     return false;
   }
 
-  std::vector<OpenDDS::DCPS::RepoId> candidates;
+  std::vector<OpenDDS::DCPS::GUID_t> candidates;
 
   for (DCPS_IR_Participant_Map::const_iterator
        current = where->second->participants().begin();
@@ -1215,7 +1292,7 @@ TAO_DDS_DCPSInfo_i::remove_by_owner(
     DCPS_IR_Participant* participant
     = where->second->participant(candidates[index]);
     if (participant) {
-      std::vector<OpenDDS::DCPS::RepoId> keylist;
+      std::vector<OpenDDS::DCPS::GUID_t> keylist;
 
       // Remove Subscriptions
       for (DCPS_IR_Subscription_Map::const_iterator
@@ -1303,8 +1380,8 @@ TAO_DDS_DCPSInfo_i::remove_by_owner(
 void
 TAO_DDS_DCPSInfo_i::disassociate_participant(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& local_id,
-  const OpenDDS::DCPS::RepoId& remote_id)
+  const OpenDDS::DCPS::GUID_t& local_id,
+  const OpenDDS::DCPS::GUID_t& remote_id)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
 
@@ -1337,9 +1414,9 @@ TAO_DDS_DCPSInfo_i::disassociate_participant(
 void
 TAO_DDS_DCPSInfo_i::disassociate_subscription(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& participantId,
-  const OpenDDS::DCPS::RepoId& local_id,
-  const OpenDDS::DCPS::RepoId& remote_id)
+  const OpenDDS::DCPS::GUID_t& participantId,
+  const OpenDDS::DCPS::GUID_t& local_id,
+  const OpenDDS::DCPS::GUID_t& remote_id)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
 
@@ -1379,9 +1456,9 @@ TAO_DDS_DCPSInfo_i::disassociate_subscription(
 void
 TAO_DDS_DCPSInfo_i::disassociate_publication(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& participantId,
-  const OpenDDS::DCPS::RepoId& local_id,
-  const OpenDDS::DCPS::RepoId& remote_id)
+  const OpenDDS::DCPS::GUID_t& participantId,
+  const OpenDDS::DCPS::GUID_t& local_id,
+  const OpenDDS::DCPS::GUID_t& remote_id)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
 
@@ -1420,7 +1497,7 @@ TAO_DDS_DCPSInfo_i::disassociate_publication(
 
 void TAO_DDS_DCPSInfo_i::remove_domain_participant(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& participantId)
+  const OpenDDS::DCPS::GUID_t& participantId)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
 
@@ -1431,9 +1508,8 @@ void TAO_DDS_DCPSInfo_i::remove_domain_participant(
     throw OpenDDS::DCPS::Invalid_Domain();
   }
 
-  DCPS_IR_Participant* participant = where->second->participant(participantId);
-
-  if (participant == 0) {
+  DCPS_IR_Participant_rch participant = where->second->participant_rch(participantId);
+  if (!participant) {
     OpenDDS::DCPS::RepoIdConverter converter(participantId);
     ACE_ERROR((LM_ERROR,
                ACE_TEXT("(%P|%t) ERROR: (bool)TAO_DDS_DCPSInfo_i::remove_domain_participant: ")
@@ -1445,8 +1521,7 @@ void TAO_DDS_DCPSInfo_i::remove_domain_participant(
 
   // Determine if we should propagate this event;  we need to cache this
   // result as the participant will be gone by the time we use the result.
-  bool sendUpdate = (participant->isOwner() == true)
-                    && (participant->isBitPublisher() == false);
+  bool sendUpdate = participant->isOwner() && !participant->isBitPublisher();
 
   CORBA::Boolean dont_notify_lost = 0;
   int status = where->second->remove_participant(participantId, dont_notify_lost);
@@ -1474,10 +1549,17 @@ void TAO_DDS_DCPSInfo_i::remove_domain_participant(
     }
   }
 
-  if (where->second->participants().empty()) {
+  if (where->second->participants().empty()
+#ifndef DDS_HAS_MINIMUM_BIT
+    && !(participant->isOwner() && participant->isBitPublisher() && in_cleanup_all_built_in_topics_)
+    // If this is false, we're running as part of cleanup_all_built_in_topics
+    // and we can't remove the domain because we would invalid the iterator
+    // we're using in cleanup_all_built_in_topics. cleanup_all_built_in_topics
+    // will clear the domains once it's done.
+#endif
+    ) {
     domains_.erase(where);
   }
-
 #ifndef DDS_HAS_MINIMUM_BIT
   else if (where->second->useBIT() &&
            where->second->participants().size() == 1) {
@@ -1485,8 +1567,17 @@ void TAO_DDS_DCPSInfo_i::remove_domain_participant(
     // It can be removed now since no user participants exist in this domain,
     // but it has to be removed on the Service Participant's reactor thread
     // in order to make the locking work properly in delete_participant().
-    const ACE_Event_Handler_var eh = new BIT_Cleanup_Handler(this, domainId);
+    BIT_Cleanup_Handler* eh_impl = new BIT_Cleanup_Handler(this, domainId);
+    const ACE_Event_Handler_var eh = eh_impl;
     TheServiceParticipant->reactor()->notify(eh.handler());
+
+    // Wait for that to be finished
+    using OpenDDS::DCPS::CvStatus_NoTimeout;
+    OpenDDS::DCPS::CvStatus cv_status = CvStatus_NoTimeout;
+    OpenDDS::DCPS::ThreadStatusManager& thread_status_manager = TheServiceParticipant->get_thread_status_manager();
+    while (cv_status == CvStatus_NoTimeout && !eh_impl->done_) {
+      cv_status = eh_impl->cv_.wait(thread_status_manager);
+    }
   }
 #endif
 }
@@ -1498,66 +1589,21 @@ int TAO_DDS_DCPSInfo_i::BIT_Cleanup_Handler::handle_exception(ACE_HANDLE)
 
   const DCPS_IR_Domain_Map::iterator where = parent_->domains_.find(domain_);
 
-  if (where == parent_->domains_.end()) {
-    return 0;
-  }
-
-  if (where->second->participants().size() == 1) {
+  if (where != parent_->domains_.end() && where->second->participants().size() == 1) {
     where->second->cleanup_built_in_topics();
   }
+
+  done_ = true;
+  cv_.notify_all();
 
   return 0;
 }
 #endif
 
-void TAO_DDS_DCPSInfo_i::association_complete(DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& participantId,
-  const OpenDDS::DCPS::RepoId& localId,
-  const OpenDDS::DCPS::RepoId& remoteId)
-{
-  ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
-
-  DCPS_IR_Domain_Map::iterator dom_iter = this->domains_.find(domainId);
-  if (dom_iter == this->domains_.end()) {
-    return;
-  }
-
-  DCPS_IR_Participant* partPtr = dom_iter->second->participant(participantId);
-  if (0 == partPtr) {
-    return;
-  }
-
-  // localId could be pub or sub (initial implementation will only use sub
-  // since the DataReader is the passive peer)
-  DCPS_IR_Subscription* sub = 0;
-  DCPS_IR_Publication* pub = 0;
-  if (OpenDDS::DCPS::DCPS_debug_level > 3) {
-    ACE_DEBUG((LM_INFO, "(%P|%t) completing association\n"));
-  }
-  if (0 == partPtr->find_subscription_reference(localId, sub)) {
-    sub->association_complete(remoteId);
-  } else if (0 == partPtr->find_publication_reference(localId, pub)) {
-    pub->association_complete(remoteId);
-  } else {
-    if (OpenDDS::DCPS::DCPS_debug_level > 3) {
-      OpenDDS::DCPS::RepoIdConverter part_converter(participantId);
-      OpenDDS::DCPS::RepoIdConverter local_converter(localId);
-      OpenDDS::DCPS::RepoIdConverter remote_converter(remoteId);
-      ACE_DEBUG((LM_WARNING,
-                 ACE_TEXT("(%P|%t) WARNING: TAO_DDS_DCPSInfo_i::association_complete: ")
-                 ACE_TEXT("participant %C could not find subscription or publication %C ")
-                 ACE_TEXT("to complete association with remote %C.\n"),
-                 std::string(part_converter).c_str(),
-                 std::string(local_converter).c_str(),
-                 std::string(remote_converter).c_str()));
-    }
-  }
-}
-
 void TAO_DDS_DCPSInfo_i::ignore_domain_participant(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& myParticipantId,
-  const OpenDDS::DCPS::RepoId& ignoreId)
+  const OpenDDS::DCPS::GUID_t& myParticipantId,
+  const OpenDDS::DCPS::GUID_t& ignoreId)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
 
@@ -1583,8 +1629,8 @@ void TAO_DDS_DCPSInfo_i::ignore_domain_participant(
 
 void TAO_DDS_DCPSInfo_i::ignore_topic(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& myParticipantId,
-  const OpenDDS::DCPS::RepoId& ignoreId)
+  const OpenDDS::DCPS::GUID_t& myParticipantId,
+  const OpenDDS::DCPS::GUID_t& ignoreId)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
 
@@ -1610,8 +1656,8 @@ void TAO_DDS_DCPSInfo_i::ignore_topic(
 
 void TAO_DDS_DCPSInfo_i::ignore_subscription(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& myParticipantId,
-  const OpenDDS::DCPS::RepoId& ignoreId)
+  const OpenDDS::DCPS::GUID_t& myParticipantId,
+  const OpenDDS::DCPS::GUID_t& ignoreId)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
 
@@ -1637,8 +1683,8 @@ void TAO_DDS_DCPSInfo_i::ignore_subscription(
 
 void TAO_DDS_DCPSInfo_i::ignore_publication(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& myParticipantId,
-  const OpenDDS::DCPS::RepoId& ignoreId)
+  const OpenDDS::DCPS::GUID_t& myParticipantId,
+  const OpenDDS::DCPS::GUID_t& ignoreId)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
 
@@ -1664,8 +1710,8 @@ void TAO_DDS_DCPSInfo_i::ignore_publication(
 
 CORBA::Boolean TAO_DDS_DCPSInfo_i::update_publication_qos(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& partId,
-  const OpenDDS::DCPS::RepoId& dwId,
+  const OpenDDS::DCPS::GUID_t& partId,
+  const OpenDDS::DCPS::GUID_t& dwId,
   const DDS::DataWriterQos & qos,
   const DDS::PublisherQos & publisherQos)
 {
@@ -1741,8 +1787,8 @@ CORBA::Boolean TAO_DDS_DCPSInfo_i::update_publication_qos(
 void
 TAO_DDS_DCPSInfo_i::update_publication_qos(
   DDS::DomainId_t            domainId,
-  const OpenDDS::DCPS::RepoId& partId,
-  const OpenDDS::DCPS::RepoId& dwId,
+  const OpenDDS::DCPS::GUID_t& partId,
+  const OpenDDS::DCPS::GUID_t& dwId,
   const DDS::DataWriterQos&  qos)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
@@ -1785,8 +1831,8 @@ TAO_DDS_DCPSInfo_i::update_publication_qos(
 void
 TAO_DDS_DCPSInfo_i::update_publication_qos(
   DDS::DomainId_t            domainId,
-  const OpenDDS::DCPS::RepoId& partId,
-  const OpenDDS::DCPS::RepoId& dwId,
+  const OpenDDS::DCPS::GUID_t& partId,
+  const OpenDDS::DCPS::GUID_t& dwId,
   const DDS::PublisherQos&   qos)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
@@ -1828,8 +1874,8 @@ TAO_DDS_DCPSInfo_i::update_publication_qos(
 
 CORBA::Boolean TAO_DDS_DCPSInfo_i::update_subscription_qos(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& partId,
-  const OpenDDS::DCPS::RepoId& drId,
+  const OpenDDS::DCPS::GUID_t& partId,
+  const OpenDDS::DCPS::GUID_t& drId,
   const DDS::DataReaderQos & qos,
   const DDS::SubscriberQos & subscriberQos)
 {
@@ -1905,8 +1951,8 @@ CORBA::Boolean TAO_DDS_DCPSInfo_i::update_subscription_qos(
 void
 TAO_DDS_DCPSInfo_i::update_subscription_qos(
   DDS::DomainId_t            domainId,
-  const OpenDDS::DCPS::RepoId& partId,
-  const OpenDDS::DCPS::RepoId& drId,
+  const OpenDDS::DCPS::GUID_t& partId,
+  const OpenDDS::DCPS::GUID_t& drId,
   const DDS::DataReaderQos&  qos)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
@@ -1949,8 +1995,8 @@ TAO_DDS_DCPSInfo_i::update_subscription_qos(
 void
 TAO_DDS_DCPSInfo_i::update_subscription_qos(
   DDS::DomainId_t            domainId,
-  const OpenDDS::DCPS::RepoId& partId,
-  const OpenDDS::DCPS::RepoId& drId,
+  const OpenDDS::DCPS::GUID_t& partId,
+  const OpenDDS::DCPS::GUID_t& drId,
   const DDS::SubscriberQos&  qos)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, this->lock_);
@@ -1993,8 +2039,8 @@ TAO_DDS_DCPSInfo_i::update_subscription_qos(
 CORBA::Boolean
 TAO_DDS_DCPSInfo_i::update_subscription_params(
     DDS::DomainId_t domainId,
-    const OpenDDS::DCPS::RepoId& participantId,
-    const OpenDDS::DCPS::RepoId& subscriptionId,
+    const OpenDDS::DCPS::GUID_t& participantId,
+    const OpenDDS::DCPS::GUID_t& subscriptionId,
     const DDS::StringSeq& params)
 {
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, this->lock_, 0);
@@ -2036,9 +2082,9 @@ TAO_DDS_DCPSInfo_i::update_subscription_params(
 }
 
 CORBA::Boolean TAO_DDS_DCPSInfo_i::update_topic_qos(
-  const OpenDDS::DCPS::RepoId& topicId,
+  const OpenDDS::DCPS::GUID_t& topicId,
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& participantId,
+  const OpenDDS::DCPS::GUID_t& participantId,
   const DDS::TopicQos & qos)
 {
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, this->lock_, 0);
@@ -2088,7 +2134,7 @@ CORBA::Boolean TAO_DDS_DCPSInfo_i::update_topic_qos(
 
 CORBA::Boolean TAO_DDS_DCPSInfo_i::update_domain_participant_qos(
   DDS::DomainId_t domainId,
-  const OpenDDS::DCPS::RepoId& participantId,
+  const OpenDDS::DCPS::GUID_t& participantId,
   const DDS::DomainParticipantQos & qos)
 {
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, this->lock_, 0);
@@ -2189,9 +2235,10 @@ int TAO_DDS_DCPSInfo_i::init_transport(int listen_address_given,
 {
   int status = 0;
 
+#ifndef DDS_HAS_MINIMUM_BIT
   try {
 
-#ifndef ACE_AS_STATIC_LIBS
+#  if OPENDDS_TCP_HAS_DLL
     if (ACE_Service_Config::current()->find(ACE_TEXT("OpenDDS_Tcp"))
         < 0 /* not found (-1) or suspended (-2) */) {
       static const ACE_TCHAR directive[] =
@@ -2199,27 +2246,34 @@ int TAO_DDS_DCPSInfo_i::init_transport(int listen_address_given,
         ACE_TEXT("OpenDDS_Tcp:_make_TcpLoader()");
       ACE_Service_Config::process_directive(directive);
     }
-#endif
+#  endif
 
-    std::string config_name =
+    const std::string config_name =
       OpenDDS::DCPS::TransportRegistry::DEFAULT_INST_PREFIX
       + std::string("InfoRepoBITTransportConfig");
     OpenDDS::DCPS::TransportConfig_rch config =
       OpenDDS::DCPS::TransportRegistry::instance()->create_config(config_name);
 
-    std::string inst_name =
+    const std::string inst_name =
       OpenDDS::DCPS::TransportRegistry::DEFAULT_INST_PREFIX
       + std::string("InfoRepoBITTCPTransportInst");
     OpenDDS::DCPS::TransportInst_rch inst =
       OpenDDS::DCPS::TransportRegistry::instance()->create_inst(inst_name,
                                                                "tcp");
+    if (!inst) {
+      if (OpenDDS::DCPS::log_level >= OpenDDS::DCPS::LogLevel::Error) {
+        ACE_DEBUG((LM_DEBUG, "(%P|%t) TAO_DDS_DCPSInfo_i::init_transport: "
+          "couldn't create TCP transport instance for BITs\n"));
+      }
+      return -1;
+    }
     config->instances_.push_back(inst);
 
     OpenDDS::DCPS::TcpInst_rch tcp_inst =
       OpenDDS::DCPS::dynamic_rchandle_cast<OpenDDS::DCPS::TcpInst>(inst);
-    inst->datalink_release_delay_ = 0;
+    inst->datalink_release_delay(0);
 
-    tcp_inst->conn_retry_attempts_ = 0;
+    tcp_inst->conn_retry_attempts(0);
 
     if (listen_address_given) {
       tcp_inst->local_address(listen_str);
@@ -2231,6 +2285,11 @@ int TAO_DDS_DCPSInfo_i::init_transport(int listen_address_given,
     // beyond this point.
     status = 1;
   }
+#else
+  ACE_UNUSED_ARG(listen_address_given);
+  ACE_UNUSED_ARG(listen_str);
+#endif
+
   return status;
 }
 
@@ -2321,16 +2380,17 @@ TAO_DDS_DCPSInfo_i::receive_image(const Update::UImage& image)
   for (Update::UImage::ReaderSeq::const_iterator iter = image.actors.begin();
        iter != image.actors.end(); iter++) {
     const Update::URActor* sub = *iter;
-
     // no reason to associate, there are no publishers yet to associate with
     if (!this->add_subscription(sub->domainId, sub->participantId
                                 , sub->topicId, sub->actorId
                                 , sub->callback.c_str(), sub->drdwQos
                                 , sub->transportInterfaceInfo
+                                , sub->transportContext
                                 , sub->pubsubQos
                                 , sub->contentSubscriptionProfile.filterClassName
                                 , sub->contentSubscriptionProfile.filterExpr
-                                , sub->contentSubscriptionProfile.exprParams)) {
+                                , sub->contentSubscriptionProfile.exprParams
+                                , sub->serializedTypeInfo)) {
       OpenDDS::DCPS::RepoIdConverter sub_converter(sub->actorId);
       OpenDDS::DCPS::RepoIdConverter part_converter(sub->participantId);
       ACE_ERROR((LM_ERROR,
@@ -2360,8 +2420,9 @@ TAO_DDS_DCPSInfo_i::receive_image(const Update::UImage& image)
     if (!this->add_publication(pub->domainId, pub->participantId
                                , pub->topicId, pub->actorId
                                , pub->callback.c_str() , pub->drdwQos
-                               , pub->transportInterfaceInfo
+                               , pub->transportInterfaceInfo, pub->transportContext
                                , pub->pubsubQos
+                               , pub->serializedTypeInfo
                                , true)) {
       OpenDDS::DCPS::RepoIdConverter pub_converter(pub->actorId);
       OpenDDS::DCPS::RepoIdConverter part_converter(pub->participantId);
@@ -2489,6 +2550,32 @@ TAO_DDS_DCPSInfo_i::dump_to_string()
 #endif // !defined (OPENDDS_INFOREPO_REDUCED_FOOTPRINT)
   return CORBA::string_dup(dump.c_str());
 
+}
+
+void TAO_DDS_DCPSInfo_i::cleanup_all_built_in_topics()
+{
+#ifndef DDS_HAS_MINIMUM_BIT
+  DCPS_IR_Domain_Map copy;
+  {
+    ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, lock_);
+    if (domains_.empty() || in_cleanup_all_built_in_topics_) {
+      return;
+    }
+    copy = domains_;
+    in_cleanup_all_built_in_topics_ = true;
+  }
+
+  for (DCPS_IR_Domain_Map::iterator it = copy.begin(); it != copy.end(); ++it) {
+    it->second->cleanup_built_in_topics();
+  }
+
+  {
+    ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, lock_);
+    in_cleanup_all_built_in_topics_ = false;
+    copy.clear();
+    domains_.clear();
+  }
+#endif
 }
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL

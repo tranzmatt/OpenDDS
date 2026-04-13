@@ -8,6 +8,9 @@
 #include "UdpReceiveStrategy.h"
 #include "UdpDataLink.h"
 
+#include <dds/DCPS/LogAddr.h>
+#include <dds/DCPS/transport/framework/TransportImpl.h>
+
 #include "ace/Reactor.h"
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
@@ -16,7 +19,8 @@ namespace OpenDDS {
 namespace DCPS {
 
 UdpReceiveStrategy::UdpReceiveStrategy(UdpDataLink* link)
-  : link_(link)
+  : TransportReceiveStrategy<>(link->impl()->config())
+  , link_(link)
   , expected_(SequenceNumber::SEQUENCENUMBER_UNKNOWN())
 {
 }
@@ -31,6 +35,8 @@ UdpReceiveStrategy::get_handle() const
 int
 UdpReceiveStrategy::handle_input(ACE_HANDLE fd)
 {
+  ThreadStatusManager::Event ev(TheServiceParticipant->get_thread_status_manager());
+
   return this->handle_dds_input(fd);
 }
 
@@ -85,9 +91,8 @@ UdpReceiveStrategy::start_i()
   if (Transport_debug_level > 5) {
     ACE_INET_Addr addr;
     link_->socket().get_local_addr(addr);
-    ACE_DEBUG((LM_DEBUG, "(%P|%t) UdpReceiveStrategy::start_i: "
-               "listening on %C:%hu\n",
-               addr.get_host_addr(), addr.get_port_number()));
+    ACE_DEBUG((LM_DEBUG, "(%P|%t) UdpReceiveStrategy::start_i: listening on %C\n",
+               LogAddr(addr).c_str()));
   }
   return 0;
 }
@@ -111,6 +116,9 @@ bool
 UdpReceiveStrategy::check_header(const TransportHeader& header)
 {
   ReassemblyInfo& info = reassembly_[remote_address_];
+  if (!info.first) {
+    info.first = make_rch<TransportReassembly>();
+  }
 
   if (header.sequence_ != info.second &&
       expected_ != SequenceNumber::SEQUENCENUMBER_UNKNOWN()) {
@@ -118,8 +126,8 @@ UdpReceiveStrategy::check_header(const TransportHeader& header)
                ACE_TEXT("(%P|%t) WARNING: UdpReceiveStrategy::check_header ")
                ACE_TEXT("expected %q received %q\n"),
                info.second.getValue(), header.sequence_.getValue()), 2);
-    SequenceRange range(info.second, header.sequence_.previous());
-    info.first.data_unavailable(range);
+    FragmentRange range(info.second.getValue(), header.sequence_.previous().getValue());
+    info.first->data_unavailable(range);
   }
 
   info.second = header.sequence_;
@@ -131,8 +139,11 @@ bool
 UdpReceiveStrategy::reassemble(ReceivedDataSample& data)
 {
   ReassemblyInfo& info = reassembly_[remote_address_];
+  if (!info.first) {
+    info.first = make_rch<TransportReassembly>();
+  }
   const TransportHeader& header = received_header();
-  return info.first.reassemble(header.sequence_, header.first_fragment_, data);
+  return info.first->reassemble(header.sequence_, header.first_fragment_, data);
 }
 
 } // namespace DCPS

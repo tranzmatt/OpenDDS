@@ -24,7 +24,7 @@ Writer::Writer(::DDS::DataWriter_ptr writer)
 void
 Writer::start ()
 {
-  ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) Writer::start \n")));
+  ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) Writer::start\n")));
   // Lanuch num_instances_per_writer threads.
   // Each thread writes one instance which uses the thread id as the
   // key value.
@@ -38,7 +38,7 @@ void
 Writer::end ()
 {
   ACE_DEBUG((LM_DEBUG,
-             ACE_TEXT("(%P|%t) Writer::end \n")));
+             ACE_TEXT("(%P|%t) Writer::end\n")));
   wait ();
 }
 
@@ -134,5 +134,5 @@ Writer::is_finished () const
 int
 Writer::get_timeout_writes () const
 {
-  return timeout_writes_.value ();
+  return timeout_writes_;
 }

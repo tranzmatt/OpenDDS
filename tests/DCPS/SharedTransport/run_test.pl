@@ -22,6 +22,7 @@ foreach my $arg (@ARGV) {
   if ($arg eq 'tcp') {
     $transport = "tcp.ini";
   } elsif ($arg eq 'udp') {
+    $ENV{'OPENDDS_TEST_BEST_EFFORT'} = 1;
     $transport = "udp.ini";
   } elsif ($arg eq 'multicast') {
     $transport = "multicast.ini";
@@ -66,7 +67,7 @@ $Test->Spawn();
 
 my $TestResult = $Test->WaitKill(300);
 if ($TestResult != 0) {
-  print STDERR "ERROR: test returned $TestResult \n";
+  print STDERR "ERROR: test returned $TestResult\n";
   $status = 1;
 }
 

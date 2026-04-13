@@ -5,17 +5,17 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef ZEROCOPYSEQ_T_CPP
-#define ZEROCOPYSEQ_T_CPP
+#ifndef OPENDDS_DCPS_ZEROCOPYSEQ_T_CPP
+#define OPENDDS_DCPS_ZEROCOPYSEQ_T_CPP
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 # pragma once
 #endif /* ACE_LACKS_PRAGMA_ONCE */
 
-#include "dds/DCPS/ZeroCopySeq_T.h"
+#include "ZeroCopySeq_T.h"
 
 #if !defined (__ACE_INLINE__)
-#include "dds/DCPS/ZeroCopySeq_T.inl"
+#include "ZeroCopySeq_T.inl"
 #endif /* __//ACE_INLINE__ */
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
@@ -110,6 +110,7 @@ ZeroCopyDataSeq<Sample_T, DEF_MAX>::length(CORBA::ULong length)
 
     } else { //grow to larger buffer
       ZeroCopyDataSeq<Sample_T, DEF_MAX> grow(max(length, sc_maximum_*2));
+      grow.sc_length_ = length;
       copy(sc_buffer_, &sc_buffer_[sc_length_], grow.sc_buffer_);
       fill(&grow.sc_buffer_[sc_length_], &grow.sc_buffer_[length],
            Sample_T());
@@ -155,8 +156,8 @@ ZeroCopyDataSeq<Sample_T, DEF_MAX>::get_buffer(
 #endif
 
 template <class Sample_T, size_t DEF_MAX>
-void
-ZeroCopyDataSeq<Sample_T, DEF_MAX>::increment_references(void){
+void ZeroCopyDataSeq<Sample_T, DEF_MAX>::increment_references()
+{
   if (is_zero_copy()) {
     for (size_t ii = 0; ii < ptrs_.size(); ++ii) {
       ptrs_[ii]->inc_ref();
@@ -169,4 +170,4 @@ ZeroCopyDataSeq<Sample_T, DEF_MAX>::increment_references(void){
 
 TAO_END_VERSIONED_NAMESPACE_DECL
 
-#endif /* ZEROCOPYSEQ_H  */
+#endif /* OPENDDS_DCPS_ZEROCOPYSEQ_CPP  */

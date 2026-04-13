@@ -1,21 +1,21 @@
 MIME-Version: 1.0
-Content-Type: multipart/signed; protocol="application/x-pkcs7-signature"; micalg="sha-256"; boundary="----5EFA45DA71E84B9B964AB2D83A4CC91C"
+Content-Type: multipart/signed; protocol="application/x-pkcs7-signature"; micalg="sha-256"; boundary="----67EE32B11F9777D84B08D1ED9B106B7E"
 
 This is an S/MIME signed message
 
-------5EFA45DA71E84B9B964AB2D83A4CC91C
+------67EE32B11F9777D84B08D1ED9B106B7E
 Content-Type: text/plain
 
-<?xml version="1.0"?>
-<dds xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.omg.org/spec/DDS-SECURITY/20160303/omg_shared_ca_permissions.xsd">
+<?xml version="1.0" encoding="utf-8"?>
+<dds xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.omg.org/spec/DDS-SECURITY/20170901/omg_shared_ca_permissions.xsd">
   <permissions>
     <grant name="ski_shop_grant_join_domain_1">
       <!-- only allow joining domain 0. No explicit permission to read or write any topic -->
-      <subject_name>/CN=Tahoe Joe/O=Super Swanky Ski and Snow Shop/ST=California/C=US</subject_name>
+      <subject_name>CN=Tahoe Joe,O=Super Swanky Ski and Snow Shop,ST=California,C=US</subject_name>
       <validity>
         <!-- Format is CCYY-MM-DDThh:mm:ss[Z|(+|-)hh:mm] in GMT -->
         <not_before>2015-09-15T01:00:00</not_before>
-        <not_after>2025-09-15T01:00:00</not_after>
+        <not_after>2035-06-27T03:13:14.908199+00:00</not_after>
       </validity>
       <allow_rule>
         <domains>
@@ -27,7 +27,7 @@ Content-Type: text/plain
   </permissions>
 </dds>
 
-------5EFA45DA71E84B9B964AB2D83A4CC91C
+------67EE32B11F9777D84B08D1ED9B106B7E
 Content-Type: application/x-pkcs7-signature; name="smime.p7s"
 Content-Transfer-Encoding: base64
 Content-Disposition: attachment; filename="smime.p7s"
@@ -60,16 +60,16 @@ T2JqZWN0IENvbXB1dGluZyAoVGVzdCBQZXJtaXNzaW9ucyBDQSkxLzAtBgNVBAMM
 Jk9iamVjdCBDb21wdXRpbmcgKFRlc3QgUGVybWlzc2lvbnMgQ0EpMScwJQYJKoZI
 hvcNAQkBFhhpbmZvQG9iamVjdGNvbXB1dGluZy5jb20CCQCkjopvwK438jANBglg
 hkgBZQMEAgEFAKCB5DAYBgkqhkiG9w0BCQMxCwYJKoZIhvcNAQcBMBwGCSqGSIb3
-DQEJBTEPFw0xODA2MTMwNDI2NDBaMC8GCSqGSIb3DQEJBDEiBCD3fvpfz4MqG9Fd
-3iwOXHAz8uAyZSXDtYwwBTI+VVGUNDB5BgkqhkiG9w0BCQ8xbDBqMAsGCWCGSAFl
+DQEJBTEPFw0yNTA5MjcwMzEzMjJaMC8GCSqGSIb3DQEJBDEiBCBJkK0uYTZrx/ro
+5qp0/3HKpk+tmmOQhEqHir9y3VroozB5BgkqhkiG9w0BCQ8xbDBqMAsGCWCGSAFl
 AwQBKjALBglghkgBZQMEARYwCwYJYIZIAWUDBAECMAoGCCqGSIb3DQMHMA4GCCqG
 SIb3DQMCAgIAgDANBggqhkiG9w0DAgIBQDAHBgUrDgMCBzANBggqhkiG9w0DAgIB
-KDANBgkqhkiG9w0BAQEFAASCAQBJXH11CvLhyDjKCUgt0QoetBGLgnBdFwT1S6NC
-08PeOzLss4jxm8OsdNFUGreUTmnow3RowwhMI4egzdTKVlC27P0tSLagzFPLstfY
-PXrvwh/u94u9aDK2ecSiRYt9jdrzJ6jO0DZ2ouxK6ojeSa2jIZddkBLhQ2je11NT
-lyEZDeWe+9iE0cvdtGGlngtbgZtE+n3OOjDEsylzcgarC4jnv8ZdCLaL0rnTn7AV
-oJoeO1GX58AGEKD7+Ip+XicDxWigcYhzYubRTl/WcvUijxUxVtANzWr/AeX3Oel5
-ubTRGiWXI3rEHvlghIoi4otQP9s1c2fl/6pNBzZ5uCF5gzFO
+KDANBgkqhkiG9w0BAQEFAASCAQCIOVWGZko3yDggC9NvXFUi6FCket35RRtfgoZo
+HteiG9JJ2dQfPoP8Pm0tG9wQsdq3DvYjqrTyuS4AD548Oubp/b2a2lO3d8mNss7b
+z8r05z1mE4yMqOkmP0q4dO6bD3FQWm5pzQvnkVzcI3drzxflZrWd+295CEEC1RzQ
+C+TVTim6YYcRHF7Et2SE190hZBemGqFZHRgrbJ/ACt4XpsmttNuumFkvbISAaOgB
+s2OMM9+Ttv0ZPiRTMbEk96wmGXKvrREkHQUuqMOCfE4WeXqSTGbPM/IMV+VYwegN
+y8VVVB8CHNei1RrCrOws4eWTkonMC7FIZS/rk0L7l8LZggZF
 
-------5EFA45DA71E84B9B964AB2D83A4CC91C--
+------67EE32B11F9777D84B08D1ED9B106B7E--
 

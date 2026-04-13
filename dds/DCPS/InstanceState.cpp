@@ -25,30 +25,30 @@ OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 namespace OpenDDS {
 namespace DCPS {
 
-InstanceState::InstanceState(DataReaderImpl* reader,
+InstanceState::InstanceState(const DataReaderImpl_rch& reader,
                              ACE_Recursive_Thread_Mutex& lock,
                              DDS::InstanceHandle_t handle)
-  : ReactorInterceptor(TheServiceParticipant->reactor(),
-                       TheServiceParticipant->reactor_owner()),
-    lock_(lock),
-    instance_state_(0),
-    view_state_(0),
-    disposed_generation_count_(0),
-    no_writers_generation_count_(0),
-    empty_(true),
-    release_pending_(false),
-    release_timer_id_(-1),
-    reader_(*reader),
-    handle_(handle),
-    owner_(GUID_UNKNOWN),
+  : lock_(lock)
+  , instance_state_(0)
+  , view_state_(0)
+  , disposed_generation_count_(0)
+  , no_writers_generation_count_(0)
+  , empty_(true)
+  , release_pending_(false)
+  , release_timer_id_(-1)
+  , reader_(reader)
+  , handle_(handle)
+  , owner_(GUID_UNKNOWN)
 #ifndef OPENDDS_NO_OWNERSHIP_KIND_EXCLUSIVE
-    exclusive_(reader->qos_.ownership.kind == DDS::EXCLUSIVE_OWNERSHIP_QOS),
+  , exclusive_(reader->qos_.ownership.kind == DDS::EXCLUSIVE_OWNERSHIP_QOS)
 #endif
-    registered_(false)
+  , registered_(false)
+  , release_task_(make_rch<SporadicEvent>(TheServiceParticipant->event_dispatcher(), make_rch<PmfEvent<InstanceState> >(rchandle_from(this), &InstanceState::do_release)))
 {}
 
 InstanceState::~InstanceState()
 {
+  release_task_->cancel();
 #ifndef OPENDDS_NO_OWNERSHIP_KIND_EXCLUSIVE
   if (registered_) {
     RcHandle<DataReaderImpl> reader = reader_.lock();
@@ -74,7 +74,7 @@ void InstanceState::sample_info(DDS::SampleInfo& si, const ReceivedDataElement* 
   RcHandle<DataReaderImpl> reader = reader_.lock();
   if (reader) {
     RcHandle<DomainParticipantImpl> participant = reader->participant_servant_.lock();
-    si.publication_handle = participant ? participant->id_to_handle(de->pub_) : DDS::HANDLE_NIL;
+    si.publication_handle = participant ? participant->lookup_handle(de->pub_) : DDS::HANDLE_NIL;
   } else {
     si.publication_handle = DDS::HANDLE_NIL;
   }
@@ -100,21 +100,19 @@ void InstanceState::sample_info(DDS::SampleInfo& si, const ReceivedDataElement* 
 
 // cannot ACE_INLINE because of #include loop
 
-int InstanceState::handle_timeout(const ACE_Time_Value&, const void*)
+void InstanceState::do_release()
 {
   if (DCPS_debug_level) {
     ACE_DEBUG((LM_NOTICE,
                ACE_TEXT("(%P|%t) NOTICE:")
-               ACE_TEXT(" InstanceState::handle_timeout:")
+               ACE_TEXT(" InstanceState::do_release:")
                ACE_TEXT(" autopurging samples with instance handle 0x%x!\n"),
                handle_));
   }
   release();
-
-  return 0;
 }
 
-bool InstanceState::dispose_was_received(const PublicationId& writer_id)
+bool InstanceState::dispose_was_received(const GUID_t& writer_id)
 {
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, lock_, false);
   writers_.erase(writer_id);
@@ -133,6 +131,7 @@ bool InstanceState::dispose_was_received(const PublicationId& writer_id)
         || (owner_manager && owner_manager->is_owner (handle_, writer_id))) {
 #endif
         instance_state_ = DDS::NOT_ALIVE_DISPOSED_INSTANCE_STATE;
+        state_updated();
         schedule_release();
         return true;
 #ifndef OPENDDS_NO_OWNERSHIP_KIND_EXCLUSIVE
@@ -144,12 +143,11 @@ bool InstanceState::dispose_was_received(const PublicationId& writer_id)
   return false;
 }
 
-bool InstanceState::unregister_was_received(const PublicationId& writer_id)
+bool InstanceState::unregister_was_received(const GUID_t& writer_id)
 {
   if (DCPS_debug_level > 1) {
-    GuidConverter conv(writer_id);
     ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) InstanceState::unregister_was_received on %C\n"),
-      OPENDDS_STRING(conv).c_str()
+      LogGuid(writer_id).c_str()
     ));
   }
 
@@ -170,6 +168,7 @@ bool InstanceState::unregister_was_received(const PublicationId& writer_id)
 
   if (writers_.empty() && (instance_state_ & DDS::ALIVE_INSTANCE_STATE)) {
     instance_state_ = DDS::NOT_ALIVE_NO_WRITERS_INSTANCE_STATE;
+    state_updated();
     schedule_release();
     return true;
   }
@@ -177,27 +176,17 @@ bool InstanceState::unregister_was_received(const PublicationId& writer_id)
   return false;
 }
 
-void InstanceState::writer_became_dead(const PublicationId& writer_id, int, const ACE_Time_Value&)
-{
-  if (DCPS_debug_level > 1) {
-    GuidConverter conv(writer_id);
-    ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) InstanceState::writer_became_dead on %C\n"),
-      OPENDDS_STRING(conv).c_str()
-    ));
-  }
-
-  ACE_GUARD(ACE_Recursive_Thread_Mutex, guard, lock_);
-  writers_.erase(writer_id);
-
-  if (writers_.empty() && (instance_state_ & DDS::ALIVE_INSTANCE_STATE)) {
-    instance_state_ = DDS::NOT_ALIVE_NO_WRITERS_INSTANCE_STATE;
-    schedule_release();
-  }
-}
-
 void InstanceState::schedule_pending()
 {
   release_pending_ = true;
+}
+
+void OpenDDS::DCPS::InstanceState::state_updated() const
+{
+  RcHandle<DataReaderImpl> reader = reader_.lock();
+  if (reader) {
+    reader->state_updated(handle_);
+  }
 }
 
 void InstanceState::schedule_release()
@@ -205,7 +194,7 @@ void InstanceState::schedule_release()
   DDS::DataReaderQos qos;
   RcHandle<DataReaderImpl> reader = reader_.lock();
   if (reader) {
-    reader->get_qos(qos);
+    qos = reader->qos_;
   } else {
     cancel_release();
     return;
@@ -232,10 +221,9 @@ void InstanceState::schedule_release()
 
   if (delay.sec != DDS::DURATION_INFINITE_SEC &&
       delay.nanosec != DDS::DURATION_INFINITE_NSEC) {
-    cancel_release();
 
-    ScheduleCommand cmd(this, duration_to_time_value(delay));
-    execute_or_enqueue(cmd);
+    release_task_->cancel();
+    release_task_->schedule(TimeDuration(delay));
 
   } else {
     // N.B. instance transitions are always followed by a non-valid
@@ -249,8 +237,7 @@ void InstanceState::schedule_release()
 void InstanceState::cancel_release()
 {
   release_pending_ = false;
-  CancelCommand cmd(this);
-  execute_or_enqueue(cmd);
+  release_task_->cancel();
 }
 
 bool InstanceState::release_if_empty()
@@ -273,13 +260,15 @@ void InstanceState::release()
   }
 }
 
-void InstanceState::set_owner(const PublicationId& owner)
+void InstanceState::set_owner(const GUID_t& owner)
 {
+  ACE_Guard<ACE_Thread_Mutex> guard(owner_lock_);
   owner_ = owner;
 }
 
-PublicationId& InstanceState::get_owner()
+GUID_t InstanceState::get_owner()
 {
+  ACE_Guard<ACE_Thread_Mutex> guard(owner_lock_);
   return owner_;
 }
 
@@ -290,6 +279,7 @@ bool InstanceState::is_exclusive() const
 
 bool InstanceState::registered()
 {
+  ACE_Guard<ACE_Recursive_Thread_Mutex> guard(lock_);
   const bool ret = registered_;
   registered_ = true;
   return ret;
@@ -297,12 +287,14 @@ bool InstanceState::registered()
 
 void InstanceState::registered(bool flag)
 {
+  ACE_Guard<ACE_Recursive_Thread_Mutex> guard(lock_);
   registered_ = flag;
 }
 
 void InstanceState::reset_ownership(DDS::InstanceHandle_t instance)
 {
-  owner_ = GUID_UNKNOWN;
+  ACE_Guard<ACE_Recursive_Thread_Mutex> guard(lock_);
+  set_owner(GUID_UNKNOWN);
   registered_ = false;
 
   RcHandle<DataReaderImpl> reader = reader_.lock();
@@ -322,26 +314,7 @@ bool InstanceState::reactor_is_shut_down() const
   return TheServiceParticipant->is_shut_down();
 }
 
-void InstanceState::CancelCommand::execute()
-{
-  if (instance_state_->release_timer_id_ != -1) {
-    instance_state_->reactor()->cancel_timer(instance_state_);
-    instance_state_->release_timer_id_ = -1;
-  }
-}
-
-void InstanceState::ScheduleCommand::execute()
-{
-  instance_state_->release_timer_id_ = instance_state_->reactor()->schedule_timer(instance_state_, 0, delay_);
-
-  if (instance_state_->release_timer_id_ == -1) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: InstanceState::ScheduleCommand::execute:")
-               ACE_TEXT(" Unable to schedule timer!\n")));
-  }
-}
-
-OPENDDS_STRING InstanceState::instance_state_string(DDS::InstanceStateKind value)
+const char* InstanceState::instance_state_string(DDS::InstanceStateKind value)
 {
   switch (value) {
   case DDS::ALIVE_INSTANCE_STATE:
@@ -355,13 +328,11 @@ OPENDDS_STRING InstanceState::instance_state_string(DDS::InstanceStateKind value
   case DDS::ANY_INSTANCE_STATE:
     return "ANY_INSTANCE_STATE";
   default:
-    ACE_ERROR((LM_ERROR,
-      ACE_TEXT("(%P|%t) ERROR: OpenDDS::DCPS::InstanceState::instance_state_string(): ")
+    ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: InstanceState::instance_state_string: ")
       ACE_TEXT("%d is either invalid or not recognized.\n"),
-      value
-    ));
+      value));
 
-    return "(Unknown Instance State: " + to_dds_string(value) + ")";
+    return "Invalid instance state";
   }
 }
 

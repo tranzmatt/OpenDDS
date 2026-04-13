@@ -30,9 +30,9 @@ void DataWriterListenerImpl::on_offered_incompatible_qos (
   ACE_UNUSED_ARG(writer) ;
   ACE_UNUSED_ARG(status) ;
 
-  ACE_ERROR ((LM_DEBUG,
-         ACE_TEXT("(%P|%t) DataWriterListenerImpl::on_offered_incompatible_qos ")
-         ACE_TEXT("This should appear when the test is designed to be incompatible.\n")));
+  ACE_ERROR((LM_WARNING,
+    ACE_TEXT("(%P|%t) WARNING: DataWriterListenerImpl::on_offered_incompatible_qos ")
+    ACE_TEXT("This should appear when the test is designed to be incompatible.\n")));
 }
 
 void DataWriterListenerImpl::on_liveliness_lost (
@@ -55,7 +55,7 @@ void DataWriterListenerImpl::on_publication_matched (
   publication_matched_ = true;
 
   ACE_DEBUG((LM_DEBUG,
-    ACE_TEXT("(%P|%t) DataWriterListenerImpl::on_publication_matched \n")));
+    ACE_TEXT("(%P|%t) DataWriterListenerImpl::on_publication_matched\n")));
 }
 
 void DataWriterListenerImpl::on_publication_disconnected (

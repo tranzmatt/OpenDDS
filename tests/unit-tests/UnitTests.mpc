@@ -1,0 +1,53 @@
+project(UnitTests): opendds_unit_test, googlemock, msvc_bigobj, dcpsexe, dcps_transports_for_test, \
+    optional_opendds_face, opendds_optional_security, optional_rapidjson, optional_rtps_relay_lib {
+
+  dcps_ts_flags += -Gxtypes-complete
+  idlflags += -SS -I dds/DCPS -I dds/DCPS/XTypes -I ../DCPS/Compiler/key_annotation
+  includes += . ../Utils
+
+  Idl_Files {
+    dds/DCPS/XTypes/CompleteToDynamicType.idl
+    dds/DCPS/XTypes/CompleteToMinimalTypeObject.idl
+    dds/DCPS/XTypes/DynamicDataXcdrReadImpl.idl
+    dds/DCPS/XTypes/DynamicDataImpl.idl
+    dds/DCPS/XTypes/XTypesUtils.idl
+    dds/DCPS/XTypes/DynamicDataAdapter.idl
+    ../DCPS/Compiler/key_annotation/key_annotation.idl
+    dds/DCPS/Xcdr2ValueWriter.idl
+  }
+
+  TypeSupport_Files {
+    dds/DCPS/XTypes/CompleteToDynamicType.idl
+    dds/DCPS/XTypes/CompleteToMinimalTypeObject.idl
+    dds/DCPS/XTypes/XTypesUtils.idl
+    dds/DCPS/XTypes/DynamicDataAdapter.idl
+    ../DCPS/Compiler/key_annotation/key_annotation.idl
+    dds/DCPS/Xcdr2ValueWriter.idl
+  }
+
+  TypeSupport_Files {
+    dcps_ts_flags += -SI -Sv
+    dds/DCPS/XTypes/DynamicDataXcdrReadImpl.idl
+    dds/DCPS/XTypes/DynamicDataImpl.idl
+  }
+
+  Source_Files {
+    *.cpp
+    dds/DCPS
+    dds/DCPS/RTPS
+    dds/DCPS/security
+    dds/DCPS/security/AccessControl
+    dds/DCPS/security/Authentication
+    dds/DCPS/security/SSL
+    dds/DCPS/transport/framework
+    dds/DCPS/transport/rtps_udp
+    dds/DCPS/XTypes
+    dds/FACE/config
+    FACE
+    tools/dds/rtpsrelaylib
+
+    // override default of Template_Files for *_T.cpp
+    dds/DCPS/RcHandle_T.cpp
+    dds/DCPS/SafeBool_T.cpp
+  }
+}

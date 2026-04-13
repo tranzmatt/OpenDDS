@@ -3,18 +3,18 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_CRYPTO_BUILTIN_IMPL_H
-#define OPENDDS_CRYPTO_BUILTIN_IMPL_H
+#ifndef OPENDDS_DCPS_SECURITY_CRYPTOBUILTINIMPL_H
+#define OPENDDS_DCPS_SECURITY_CRYPTOBUILTINIMPL_H
 
-#include "DdsSecurity_Export.h"
+#include "OpenDDS_Security_Export.h"
 #include "CryptoBuiltInC.h"
 
-#include "dds/DdsSecurityCoreC.h"
-#include "dds/Versioned_Namespace.h"
+#include <dds/DdsSecurityCoreC.h>
+#include <dds/Versioned_Namespace.h>
 
-#include "tao/LocalObject.h"
+#include <tao/LocalObject.h>
 
-#include "ace/Thread_Mutex.h"
+#include <ace/Thread_Mutex.h>
 
 #include <map>
 
@@ -29,7 +29,7 @@ OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 namespace OpenDDS {
 namespace Security {
 
-class DdsSecurity_Export CryptoBuiltInImpl
+class OpenDDS_Security_Export CryptoBuiltInImpl
   : public virtual DDS::Security::CryptoKeyFactory
   , public virtual DDS::Security::CryptoKeyExchange
   , public virtual DDS::Security::CryptoTransform
@@ -110,11 +110,19 @@ private:
     DDS::Security::ParticipantCryptoHandle remote_participant_crypto,
     DDS::Security::SecurityException& ex);
 
+  virtual bool have_local_participant_crypto_tokens(
+    DDS::Security::ParticipantCryptoHandle local_participant_crypto,
+    DDS::Security::ParticipantCryptoHandle remote_participant_crypto);
+
   virtual bool set_remote_participant_crypto_tokens(
     DDS::Security::ParticipantCryptoHandle local_participant_crypto,
     DDS::Security::ParticipantCryptoHandle remote_participant_crypto,
     const DDS::Security::ParticipantCryptoTokenSeq& remote_participant_tokens,
     DDS::Security::SecurityException& ex);
+
+  virtual bool have_remote_participant_crypto_tokens(
+    DDS::Security::ParticipantCryptoHandle local_participant_crypto,
+    DDS::Security::ParticipantCryptoHandle remote_participant_crypto);
 
   virtual bool create_local_datawriter_crypto_tokens(
     DDS::Security::DatawriterCryptoTokenSeq& local_datawriter_crypto_tokens,
@@ -122,11 +130,19 @@ private:
     DDS::Security::DatareaderCryptoHandle remote_datareader_crypto,
     DDS::Security::SecurityException& ex);
 
+  virtual bool have_local_datawriter_crypto_tokens(
+    DDS::Security::DatawriterCryptoHandle local_datawriter_crypto,
+    DDS::Security::DatareaderCryptoHandle remote_datareader_crypto);
+
   virtual bool set_remote_datawriter_crypto_tokens(
     DDS::Security::DatareaderCryptoHandle local_datareader_crypto,
     DDS::Security::DatawriterCryptoHandle remote_datawriter_crypto,
     const DDS::Security::DatawriterCryptoTokenSeq& remote_datawriter_tokens,
     DDS::Security::SecurityException& ex);
+
+  virtual bool have_remote_datawriter_crypto_tokens(
+    DDS::Security::DatareaderCryptoHandle local_datareader_crypto,
+    DDS::Security::DatawriterCryptoHandle remote_datawriter_crypto);
 
   virtual bool create_local_datareader_crypto_tokens(
     DDS::Security::DatareaderCryptoTokenSeq& local_datareader_crypto_tokens,
@@ -134,11 +150,19 @@ private:
     DDS::Security::DatawriterCryptoHandle remote_datawriter_crypto,
     DDS::Security::SecurityException& ex);
 
+  virtual bool have_local_datareader_crypto_tokens(
+    DDS::Security::DatareaderCryptoHandle local_datareader_crypto,
+    DDS::Security::DatawriterCryptoHandle remote_datawriter_crypto);
+
   virtual bool set_remote_datareader_crypto_tokens(
     DDS::Security::DatawriterCryptoHandle local_datawriter_crypto,
     DDS::Security::DatareaderCryptoHandle remote_datareader_crypto,
     const DDS::Security::DatareaderCryptoTokenSeq& remote_datareader_tokens,
     DDS::Security::SecurityException& ex);
+
+  virtual bool have_remote_datareader_crypto_tokens(
+    DDS::Security::DatawriterCryptoHandle local_datawriter_crypto,
+    DDS::Security::DatareaderCryptoHandle remote_datareader_crypto);
 
   virtual bool return_crypto_tokens(
     const DDS::Security::CryptoTokenSeq& crypto_tokens,
@@ -219,6 +243,7 @@ private:
   CryptoBuiltInImpl& operator=(const CryptoBuiltInImpl&);
 
   DDS::Security::NativeCryptoHandle generate_handle();
+  DDS::Security::NativeCryptoHandle generate_handle_i();
 
   ACE_Thread_Mutex mutex_;
   int next_handle_;
@@ -252,16 +277,21 @@ private:
   std::multimap<DDS::Security::ParticipantCryptoHandle,
                 EntityInfo> participant_to_entity_;
 
+  typedef std::pair<DDS::Security::NativeCryptoHandle, DDS::Security::NativeCryptoHandle> HandlePair_t;
+  typedef std::map<HandlePair_t, DDS::Security::NativeCryptoHandle> DerivedKeyIndex_t;
+  DerivedKeyIndex_t derived_key_handles_;
+
   struct Session {
     SessionIdType id_;
     IV_SuffixType iv_suffix_;
     KeyOctetSeq key_;
     ACE_UINT64 counter_;
 
-    KeyOctetSeq get_key(const KeyMaterial& master, const CryptoHeader& header);
-    void create_key(const KeyMaterial& master);
-    void derive_key(const KeyMaterial& master);
-    void next_id(const KeyMaterial& master);
+    KeyOctetSeq get_key(const KeyMaterial& master, const CryptoHeader& header,
+                        DDS::Security::SecurityException& ex);
+    bool create_key(const KeyMaterial& master, DDS::Security::SecurityException& ex);
+    bool derive_key(const KeyMaterial& master, DDS::Security::SecurityException& ex);
+    bool next_id(const KeyMaterial& master, DDS::Security::SecurityException& ex);
     void inc_iv();
   };
   typedef std::pair<DDS::Security::NativeCryptoHandle, unsigned int> KeyId_t;
@@ -269,6 +299,7 @@ private:
   SessionTable_t sessions_;
 
   void clear_endpoint_data(DDS::Security::NativeCryptoHandle handle);
+  void clear_common_data(DDS::Security::NativeCryptoHandle handle);
 
   bool encode_submessage(DDS::OctetSeq& encoded_rtps_submessage,
                          const DDS::OctetSeq& plain_rtps_submessage,
@@ -285,8 +316,9 @@ private:
                CryptoHeader& header, CryptoFooter& footer,
                DDS::Security::SecurityException& ex);
 
-  void encauth_setup(const KeyMaterial& master, Session& sess,
-                     const DDS::OctetSeq& plain, CryptoHeader& header);
+  bool encauth_setup(const KeyMaterial& master, Session& sess,
+                     const DDS::OctetSeq& plain, CryptoHeader& header,
+                     DDS::Security::SecurityException& ex);
 
   bool decode_submessage(DDS::OctetSeq& plain_rtps_submessage,
                          const DDS::OctetSeq& encoded_rtps_submessage,

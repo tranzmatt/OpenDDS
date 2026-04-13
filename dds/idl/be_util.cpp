@@ -13,11 +13,12 @@
 //=============================================================================
 
 #include "be_util.h"
+
 #include "be_extern.h"
 
-#include "ast_generator.h"
+#include <ast_generator.h>
 
-#include "ace/OS_NS_strings.h"
+#include <ace/OS_NS_strings.h>
 
 // Prepare an argument for a BE
 void
@@ -41,10 +42,10 @@ be_util::prep_be_arg(char* arg)
   static const size_t SZ_WB_JAVA = sizeof(WB_JAVA) - 1;
   static const char WB_TAO_INC_PRE[] = "tao_include_prefix=";
   static const size_t SZ_WB_TAO_INC_PRE = sizeof(WB_TAO_INC_PRE) - 1;
-  static const char WB_V8[] = "v8";
-  static const size_t SZ_WB_V8 = sizeof(WB_V8) - 1;
   static const char WB_TS_CPP_INCLUDE[] = "ts_cpp_include=";
   static const size_t SZ_WB_TS_CPP_INCLUDE = sizeof(WB_TS_CPP_INCLUDE) - 1;
+  static const char WB_DDS_SEQ_SUFFIX[] = "opendds_sequence_suffix=";
+  static const size_t SZ_WB_DDS_SEQ_SUFFIX = sizeof(WB_DDS_SEQ_SUFFIX) - 1;
 
   if (0 == ACE_OS::strncasecmp(arg, WB_EXPORT_MACRO, SZ_WB_EXPORT_MACRO)) {
     be_global->export_macro(arg + SZ_WB_EXPORT_MACRO);
@@ -80,12 +81,11 @@ be_util::prep_be_arg(char* arg)
   } else if (0 == ACE_OS::strncasecmp(arg, WB_TAO_INC_PRE, SZ_WB_TAO_INC_PRE)) {
     be_global->tao_inc_pre_ = arg + SZ_WB_TAO_INC_PRE;
 
-  } else if (0 == ACE_OS::strncasecmp(arg, WB_V8, SZ_WB_V8)) {
-    be_global->v8(true);
-
   } else if (0 == ACE_OS::strncasecmp(arg, WB_TS_CPP_INCLUDE, SZ_WB_TS_CPP_INCLUDE)) {
     be_global->add_include(arg + SZ_WB_TS_CPP_INCLUDE, BE_GlobalData::STREAM_CPP);
 
+  } else if (0 == ACE_OS::strncasecmp(arg, WB_DDS_SEQ_SUFFIX, SZ_WB_DDS_SEQ_SUFFIX)) {
+    be_global->sequence_suffix(arg + SZ_WB_DDS_SEQ_SUFFIX);
   }
 }
 
@@ -97,46 +97,61 @@ be_util::arg_post_proc()
 void
 be_util::usage()
 {
+  // see be_global.cpp parse_args()
   ACE_DEBUG((LM_DEBUG,
-    ACE_TEXT(" --[no-]default-nested\ttreat unannotated types as if they were nested\n")
-    ACE_TEXT(" -o <dir>\t\tsets output directory for all files\n")
-    ACE_TEXT(" -Lface\t\t\tgenerate FACE IDL to C++ mapping\n")
-    ACE_TEXT(" -Lspcpp\t\tgenerate Safety Profile IDL to C++ mapping\n")
-    ACE_TEXT(" -Lc++11\t\tgenerate IDL to C++11 mapping\n")
-    ACE_TEXT(" -SI\t\t\tsuppress generation of *TypeSupport.idl\n")
-    ACE_TEXT(" -Sa\t\t\tsuppress IDL any (ignored, for tao_idl compatibility)\n")
-    ACE_TEXT(" -St\t\t\tsuppress IDL typecode when -L* option is present\n")
-    ACE_TEXT(" -Sdefault\t\texclude default TypeSupport generators from output\n")
-    ACE_TEXT(" -Gitl\t\t\tgenerate ITL\n")
-    ACE_TEXT(" -GfaceTS\t\tgenerate FACE TS API for DCPS data types\n")
-    ACE_TEXT(" -Gv8\t\t\tgenerate TypeSupport for converting data samples ")
-    ACE_TEXT("to v8 JavaScript objects\n")
-    ACE_TEXT("\t\t\t\t-Wb,v8 is an alternative form for this option\n")
-    ACE_TEXT(" -Grapidjson\t\tgenerate TypeSupport for converting data samples ")
-    ACE_TEXT("to RapidJSON JavaScript objects\n")
-    ACE_TEXT(" --no-dcps-data-type-warnings\t\tdon't warn about #pragma DCPS_DATA_TYPE\n")
-    ACE_TEXT(" -Wb,export_macro=<macro name>\t\tsets export macro ")
-    ACE_TEXT("for all files\n")
-    ACE_TEXT("\t\t\t\t\t\t--export=<macro name> is an alternative form for this option\n")
-    ACE_TEXT(" -Wb,export_include=<include path>\tsets export include ")
-    ACE_TEXT("file for all files\n")
-    ACE_TEXT(" -Wb,versioning_name=<macro name>\tsets versioning name macro ")
-    ACE_TEXT("for all files\n")
-    ACE_TEXT(" -Wb,versioning_begin=<macro name>\tsets versioning begin macro ")
-    ACE_TEXT("for all files\n")
-    ACE_TEXT(" -Wb,versioning_end=<macro name>\tsets versioning end macro ")
-    ACE_TEXT("for all files\n")
-    ACE_TEXT(" -Wb,pch_include=<include path>\t\tsets include ")
-    ACE_TEXT("file for precompiled header mechanism\n")
-    ACE_TEXT(" -Wb,cpp_include=<include path>\t\tsets additional include ")
-    ACE_TEXT("file for cpp files. Useful for 'after the fact'\n\t\t\t\t\ttypesupport generation ")
-    ACE_TEXT("with different features enabled than in the\n\t\t\t\t\tfirst pass.\n")
-    ACE_TEXT(" -Wb,java[=<output_file>]\t\tenables Java support ")
-    ACE_TEXT("for TypeSupport files.  Do not specify an\n\t\t\t\t\t'output_file'")
-    ACE_TEXT("except for special cases.\n")
-    ACE_TEXT(" -Wb,tao_include_prefix=<path>\t\tPrefix for including the TAO-")
-    ACE_TEXT("generated header file.\n")
-    ACE_TEXT(" -Wb,ts_cpp_include=<include>\t\tadd <include> to *TypeSupportImpl.cpp\n")
+    " -o <dir>               set output directory for all files\n"
+    " -Lface                 generate FACE IDL to C++ mapping\n"
+    " -Lspcpp                generate Safety Profile IDL to C++ mapping\n"
+    " -Lc++11                generate IDL to C++11 mapping\n"
+    " -SI                    suppress generation of *TypeSupport.idl\n"
+    " -Sa                    suppress IDL any (ignored, for tao_idl compatibility)\n"
+    " -St                    suppress IDL typecode when -L* option is present\n"
+    " -Sv                    suppress ValueReader and ValueWriter generation\n"
+    " -Sx                    suppress XTypes TypeObject and TypeIdentifier generation\n"
+    " -Sdefault              exclude default TypeSupport generators from output\n"
+    " -Gitl                  generate ITL\n"
+    " -GfaceTS               generate FACE TS API for DCPS data types\n"
+    " -Gxtypes-complete      generate XTypes complete TypeObject and TypeIdentifier\n"
+    " -Gequality             generate == and != for structs and unions\n"
+    " --filename-only-includes                strip leading directories from generated\n"
+    "                                         #include lines\n"
+    " --[no-]default-nested                   topic types must be declared\n"
+    "                                         (true by default)\n"
+    " --no-dcps-data-type-warnings            don't warn about #pragma DCPS_DATA_TYPE\n"
+    " --default-extensibility final|appendable|mutable\n"
+    "                                         set the default XTypes extensibility\n"
+    "                                         kind (appendable if not set)\n"
+    " --default-autoid sequential|hash        set the default XTypes autoid approach\n"
+    "                                         (sequential if not set)\n"
+    " --default-try-construct discard|use-default|trim\n"
+    "                                         set the default XTypes try-construct\n"
+    "                                         behavior (discard if not set)\n"
+    " --old-typeobject-encoding               use the pre-3.18 encoding of TypeObjects\n"
+    "                                         when deriving TypeIdentifiers\n"
+    " --old-typeobject-member-order           use the pre-3.24 struct and union\n"
+    "                                         member order for TypeObjects, which is\n"
+    "                                         ordered by member id instead of\n"
+    "                                         declared order\n"
+    " -Wb,export_macro=<macro name>           set export macro for all files\n"
+    " --export=<macro name>                   Alias for -Wb,export_macro\n"
+    " -Wb,export_include=<include path>       set export include file for all files\n"
+    " -Wb,versioning_name=<macro name>        set versioning name macro for all files\n"
+    " -Wb,versioning_begin=<macro name>       set versioning begin macro for all files\n"
+    " -Wb,versioning_end=<macro name>         set versioning end macro for all files\n"
+    " -Wb,pch_include=<include path>          set include file for precompiled header\n"
+    "                                         mechanism\n"
+    " -Wb,cpp_include=<include path>          set additional include file for cpp\n"
+    "                                         files. Useful for 'after the fact'\n"
+    "                                         typesupport generation with different\n"
+    "                                         features enabled than in the first pass.\n"
+    " -Wb,java[=<output_file>]                enable Java support for TypeSupport\n"
+    "                                         files. Do not specify an 'output_file'\n"
+    "                                         except for special cases.\n"
+    " -Wb,tao_include_prefix=<path>           prefix for including the TAO-generated\n"
+    "                                         header file.\n"
+    " -Wb,ts_cpp_include=<include>            add <include> to *TypeSupportImpl.cpp\n"
+    " -Wb,opendds_sequence_suffix=<suffix>    set the implied DDS sequence suffix\n"
+    "                                         (default is 'Seq')\n"
     ));
 }
 
@@ -148,13 +163,20 @@ be_util::generator_init()
   return gen;
 }
 
-const std::string&
+const char*
 be_util::dds_root()
 {
-  static std::string value = ACE_OS::getenv("DDS_ROOT");
-  if (value.empty()) {
+  static const char* value = ACE_OS::getenv("DDS_ROOT");
+  if (!value || !value[0]) {
     ACE_ERROR((LM_ERROR, "Error - The environment variable DDS_ROOT must be set.\n"));
     BE_abort();
   }
   return value;
+}
+
+void
+be_util::misc_error_and_abort(const std::string& message, AST_Decl* node)
+{
+  idl_global->err()->misc_error(message.c_str(), node);
+  BE_abort();
 }

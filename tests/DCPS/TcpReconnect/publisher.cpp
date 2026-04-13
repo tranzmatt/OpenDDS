@@ -15,7 +15,7 @@
 #include <dds/DCPS/Marked_Default_Qos.h>
 #include <dds/DCPS/PublisherImpl.h>
 #include <dds/DCPS/Service_Participant.h>
-#include "model/Sync.h"
+#include "tests/Utils/StatusMatching.h"
 
 #include "dds/DCPS/StaticIncludes.h"
 #ifdef ACE_AS_STATIC_LIBS
@@ -89,7 +89,7 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[])
       ACE_TString command_line = stubCmd + ACE_TEXT(" ") + stubArgs;
       ACE_DEBUG((LM_INFO, ACE_TEXT("stub command line: %s\n"), command_line.c_str()));
 
-      if (options.command_line(command_line.c_str()) != 0)
+      if (options.command_line("%s", ACE_TEXT_ALWAYS_CHAR(command_line.c_str())) != 0)
         ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT ("%p\n"), ACE_TEXT("set options")) ,-1);
 
       if (stub_ready_filename.empty())
@@ -199,7 +199,7 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[])
                          -1);
       }
       // Block until Subscriber is available
-      OpenDDS::Model::WriterSync::wait_match(dw, 1);
+      Utils::wait_match(dw, 1, Utils::GTE);
 
       // Start writing threads
       std::cout << "Creating Writer" << std::endl;

@@ -23,7 +23,7 @@
 #include "ace/Condition_Thread_Mutex.h"
 
 class OpenDDS_DCPSInfoRepoServ_Export InfoRepo
-  : public ShutdownInterface, public ACE_Event_Handler {
+  : public ShutdownInterface, public virtual ACE_Event_Handler {
 public:
   struct InitError {
     InitError(const char* msg)
@@ -37,6 +37,8 @@ public:
 
   /// ShutdownInterface used to schedule a shutdown.
   virtual void shutdown();
+
+  void set_shutdown_signal(int which_signal);
 
   /// shutdown() and wait for it to complete: cannot be called from the reactor
   /// thread.
@@ -67,14 +69,16 @@ private:
   bool servant_finalized_;
 
   /// Repository Federation behaviors
-  OpenDDS::Federator::ManagerImpl federator_;
   OpenDDS::Federator::Config      federatorConfig_;
+  OpenDDS::Federator::ManagerImpl federator_;
 
   PortableServer::Servant_var<TAO_DDS_DCPSInfo_i> info_servant_;
 
   ACE_Thread_Mutex lock_;
   ACE_Condition_Thread_Mutex cond_;
   bool shutdown_complete_;
+
+  int shutdown_signal_;
 
   ACE_Time_Value dispatch_cleanup_delay_;
 };

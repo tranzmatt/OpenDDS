@@ -9,11 +9,14 @@
 
 using namespace Messenger;
 
-DataReaderListenerImpl::DataReaderListenerImpl()
-  : num_reads_(0),
-    num_samples_lost_ (0),
-    num_samples_rejected_ (0),
-    num_budget_exceeded_ (0)
+DataReaderListenerImpl::DataReaderListenerImpl(DistributedConditionSet_rch dcs,
+                                               long expected_num_data_available)
+  : dcs_(dcs)
+  , expected_num_data_available_(expected_num_data_available)
+  , num_data_available_(0)
+  , num_samples_lost_ (0)
+  , num_samples_rejected_ (0)
+  , num_budget_exceeded_ (0)
 {
 }
 
@@ -22,38 +25,13 @@ DataReaderListenerImpl::~DataReaderListenerImpl ()
 }
 
 void
-DataReaderListenerImpl::on_data_available(DDS::DataReader_ptr reader)
+DataReaderListenerImpl::on_data_available(DDS::DataReader_ptr /*reader*/)
 {
-  ++this->num_reads_;
+  ++num_data_available_;
 
-  try {
-    MessageDataReader_var message_dr = MessageDataReader::_narrow(reader);
-    if (CORBA::is_nil (message_dr.in ())) {
-      cerr << "read: _narrow failed." << endl;
-      exit(1);
-    }
-
-    Messenger::Message message;
-    DDS::SampleInfo si ;
-    DDS::ReturnCode_t status = message_dr->take_next_sample(message, si) ;
-
-    if (status == DDS::RETCODE_OK) {
-      if (si.valid_data) {
-        cout << "Message: subject    = " << message.subject.in() << endl
-            << "         subject_id = " << message.subject_id   << endl
-            << "         from       = " << message.from.in()    << endl
-            << "         count      = " << message.count        << endl
-            << "         text       = " << message.text.in()    << endl;
-      }
-      cout << "SampleInfo.sample_rank = " << si.sample_rank << endl;
-    } else if (status == DDS::RETCODE_NO_DATA) {
-      cerr << "ERROR: reader received DDS::RETCODE_NO_DATA!" << endl;
-    } else {
-      cerr << "ERROR: read Message: Error: " <<  status << endl;
-    }
-  } catch (CORBA::Exception& e) {
-    cerr << "Exception caught in read:" << endl << e << endl;
-    exit(1);
+  if (num_data_available_ == expected_num_data_available_) {
+    cerr << "Got sufficient number of data available callbacks" << endl;
+    dcs_->post(SUBSCRIBER, ON_DATA_AVAILABLE);
   }
 }
 
@@ -113,6 +91,10 @@ void DataReaderListenerImpl::on_sample_lost(
   DDS::DataReader_ptr,
   const DDS::SampleLostStatus& status)
 {
+  if (num_samples_lost_ == 0 && status.total_count_change > 0) {
+    dcs_->post(SUBSCRIBER, ON_SAMPLE_LOST);
+  }
+
   this->num_samples_lost_ += status.total_count_change;
 
   cerr << "DataReaderListenerImpl::on_sample_lost, "

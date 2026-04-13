@@ -8,7 +8,10 @@
 #include <vector>
 
 class AST_Decl;
+class AST_Type;
 class AST_Structure;
+class AST_Field;
+class AST_Union;
 
 /**
  * Find Keys in Topic Types
@@ -35,6 +38,8 @@ public:
     StructureType,
     ArrayType,
     UnionType,
+    SequenceType,
+    MapType,
     InvalidType
   };
 
@@ -89,7 +94,7 @@ public:
     Iterator(TopicKeys &parent);
 
     /**
-     * Create completely separate copy of another iterator
+     * Create a completely separate copy of another iterator
      */
     Iterator(const Iterator& other);
 
@@ -106,6 +111,7 @@ public:
      * Get the path of the key in reference to the root_
      */
     std::string path();
+    std::string canonical_path();
 
     /**
      * Get the level of recursion
@@ -151,10 +157,13 @@ public:
     /// Element Count in the Array
     size_t element_count_;
 
+    /// Used in struct field key iteration
+    bool implied_keys_;
+
     /**
      * Internal Recursive Impl. of path()
      */
-    void path_i(std::stringstream& ss);
+    void path_i(std::stringstream& ss, bool canonical = false);
 
     void cleanup();
   };
@@ -195,4 +204,5 @@ private:
   /// Have iterators recurse into structures
   bool recursive_;
 };
+
 #endif

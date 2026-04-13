@@ -3,6 +3,7 @@
 #include <dds/DCPS/Marked_Default_Qos.h>
 #include <dds/DCPS/WaitSet.h>
 #include <dds/DCPS/SafetyProfileStreams.h>
+#include <dds/DCPS/DCPS_Utils.h>
 #ifdef ACE_AS_STATIC_LIBS
 #  include "dds/DCPS/RTPS/RtpsDiscovery.h"
 #  include "dds/DCPS/transport/rtps_udp/RtpsUdp.h"
@@ -88,7 +89,7 @@ public:
     if (rc != DDS::RETCODE_OK) {
       ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("%N:%l setup_test() ERROR: ")
         ACE_TEXT("get_default_datawriter_qos failed: %C\n"),
-        retcode_to_string(rc).c_str()), false);
+        retcode_to_string(rc)), false);
     }
     writer_qos.history.kind = DDS::KEEP_ALL_HISTORY_QOS;
     writer_qos.reliability.kind = DDS::RELIABLE_RELIABILITY_QOS;
@@ -113,14 +114,14 @@ public:
         if (rc != DDS::RETCODE_OK) {
           ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("%N:%l setup_test() ERROR: ")
             ACE_TEXT("wait failed: %C\n"),
-            retcode_to_string(rc).c_str()), false);
+            retcode_to_string(rc)), false);
         }
 
         rc = writer_->get_publication_matched_status(matches);
         if (rc != ::DDS::RETCODE_OK) {
           ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("%N:%l setup_test() ERROR: ")
             ACE_TEXT("Failed to get publication match status: %C\n"),
-            retcode_to_string(rc).c_str()), false);
+            retcode_to_string(rc)), false);
         }
       } while (matches.total_count < 1);
       ws->detach_condition(cond);
@@ -138,7 +139,7 @@ public:
       if (rc != DDS::RETCODE_OK) {
         ACE_ERROR((LM_ERROR, ACE_TEXT("%N:%l ~Test() ERROR: ")
           ACE_TEXT("delete reader failed: %C\n"),
-          retcode_to_string(rc).c_str()));
+          retcode_to_string(rc)));
       }
     }
 
@@ -147,7 +148,7 @@ public:
       if (rc != DDS::RETCODE_OK) {
         ACE_ERROR((LM_ERROR, ACE_TEXT("%N:%l ~Test() ERROR: ")
           ACE_TEXT("delete writer failed: %C\n"),
-          retcode_to_string(rc).c_str()));
+          retcode_to_string(rc)));
       }
     }
 
@@ -156,7 +157,7 @@ public:
       if (rc != DDS::RETCODE_OK) {
         ACE_ERROR((LM_ERROR, ACE_TEXT("%N:%l ~Test() ERROR: ")
           ACE_TEXT("delete subscriber failed: %C\n"),
-          retcode_to_string(rc).c_str()));
+          retcode_to_string(rc)));
       }
     }
 
@@ -165,7 +166,7 @@ public:
       if (rc != DDS::RETCODE_OK) {
         ACE_ERROR((LM_ERROR, ACE_TEXT("%N:%l ~Test() ERROR: ")
           ACE_TEXT("delete publisher failed: %C\n"),
-          retcode_to_string(rc).c_str()));
+          retcode_to_string(rc)));
       }
     }
   }
@@ -185,7 +186,7 @@ bool wait_for_dispose(ElectionNews_tDataReader_var& reader_i) {
   if (rc != DDS::RETCODE_OK) {
     ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("%N:%l wait_for_dispose() ERROR: ")
       ACE_TEXT("wait failed: %C\n"),
-      retcode_to_string(rc).c_str()), false);
+      retcode_to_string(rc)), false);
   }
   return true;
 }
@@ -206,15 +207,14 @@ basic_test(DDS::DomainParticipant_var& participant, DDS::Topic_var& topic)
   canonical["Turtle"] = 5;
 
   // Calculate the canonical expected winner
-  ElectionResult_t canonical_result;
-  canonical_result.total_votes = 0;
+  ElectionResult_t canonical_result = { { "", 0 }, 0 };
   Vote_t max = 0;
-  Canonical::iterator i, finished = canonical.end();
-  for (i = canonical.begin(); i != finished; ++i) {
-    Vote_t votes = i->second;
+  Canonical::iterator iter, finished = canonical.end();
+  for (iter = canonical.begin(); iter != finished; ++iter) {
+    Vote_t votes = iter->second;
     if (votes > max) {
       Candidate_t c;
-      c.name = i->first.c_str();
+      c.name = iter->first.c_str();
       c.votes = max = votes;
       canonical_result.winner = c;
     }
@@ -246,22 +246,32 @@ basic_test(DDS::DomainParticipant_var& participant, DDS::Topic_var& topic)
   ACE_DEBUG((LM_DEBUG, ACE_TEXT("Writing Election Statuses...\n")));
   ElectionNews_t news;
   Candidate_t c;
-  for (i = canonical.begin(); i != finished; ++i) {
-    c.name = i->first.c_str();
-    c.votes = i->second;
+  for (iter = canonical.begin(); iter != finished; ++iter) {
+    c.name = iter->first.c_str();
+    c.votes = iter->second;
     news.status(c);
     rc = writer_i->write(news, DDS::HANDLE_NIL);
     if (rc != DDS::RETCODE_OK) {
       ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("%N:%l basic_test() ERROR: ")
         ACE_TEXT("Unable to write sample %C: %C\n"),
-        i->first.c_str(), retcode_to_string(rc).c_str()), false);
+        iter->first.c_str(), retcode_to_string(rc)), false);
     }
   }
+
+  DDS::Duration_t timeout =
+    { DDS::DURATION_INFINITE_SEC, DDS::DURATION_INFINITE_NSEC };
+  rc = writer_i->wait_for_acknowledgments(timeout);
+  if (rc != DDS::RETCODE_OK) {
+    ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("%N:%l basic_test() ERROR: ")
+      ACE_TEXT("Unable to wait for acknowledgements: %C\n"),
+      retcode_to_string(rc)), false);
+  }
+
   rc = writer_i->dispose(news, DDS::HANDLE_NIL);
   if (rc != DDS::RETCODE_OK) {
     ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("%N:%l basic_test() ERROR: ")
       ACE_TEXT("Unable to dispose: %C\n"),
-      retcode_to_string(rc).c_str()), false);
+      retcode_to_string(rc)), false);
   }
 
   // Wait for the Dispose and Read Them
@@ -271,8 +281,7 @@ basic_test(DDS::DomainParticipant_var& participant, DDS::Topic_var& topic)
   }
   max = 0;
   ElectionNews_tSeq newsSeq;
-  ElectionResult_t result_from_statuses;
-  result_from_statuses.total_votes = 0;
+  ElectionResult_t result_from_statuses = { { "", 0 }, 0 };
   DDS::SampleInfoSeq info;
   rc = reader_i->take(
     newsSeq, info,
@@ -283,7 +292,7 @@ basic_test(DDS::DomainParticipant_var& participant, DDS::Topic_var& topic)
   if (rc != DDS::RETCODE_OK) {
     ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("%N:%l basic_test() ERROR: ")
       ACE_TEXT("Unable to read: %C\n"),
-      retcode_to_string(rc).c_str()), false);
+      retcode_to_string(rc)), false);
   }
   size_t count = 0;
   bool got_dispose = false;
@@ -324,13 +333,13 @@ basic_test(DDS::DomainParticipant_var& participant, DDS::Topic_var& topic)
   if (rc != DDS::RETCODE_OK) {
     ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("%N:%l basic_test() ERROR: ")
       ACE_TEXT("Unable to write result sample: %C\n"),
-      retcode_to_string(rc).c_str()), false);
+      retcode_to_string(rc)), false);
   }
   rc = writer_i->dispose(news, DDS::HANDLE_NIL);
   if (rc != DDS::RETCODE_OK) {
     ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("%N:%l basic_test() ERROR: ")
       ACE_TEXT("Unable to dispose: %C\n"),
-      retcode_to_string(rc).c_str()), false);
+      retcode_to_string(rc)), false);
   }
 
   // Wait for the Dispose and Read
@@ -347,7 +356,7 @@ basic_test(DDS::DomainParticipant_var& participant, DDS::Topic_var& topic)
   if (rc != DDS::RETCODE_OK) {
     ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("%N:%l basic_test() ERROR: ")
       ACE_TEXT("Unable to read: %C\n"),
-      retcode_to_string(rc).c_str()), false);
+      retcode_to_string(rc)), false);
   }
   if (newsSeq.length() != 2) {
     ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("%N:%l basic_test() ERROR: ")
@@ -412,7 +421,7 @@ ACE_TMAIN(int argc, ACE_TCHAR** argv)
     if (rc != DDS::RETCODE_OK) {
       ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("%N:%l main() ERROR: ")
         ACE_TEXT("register_type failed: %C\n"),
-        retcode_to_string(rc).c_str()), 1);
+        retcode_to_string(rc)), 1);
     }
 
     // Create Topic
@@ -439,14 +448,14 @@ ACE_TMAIN(int argc, ACE_TCHAR** argv)
     if (rc != DDS::RETCODE_OK) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("%N:%l: main() ERROR: ")
         ACE_TEXT("delete_contained_entities failed: %C\n"),
-        retcode_to_string(rc).c_str()));
+        retcode_to_string(rc)));
       status = 1;
     }
     rc = dpf->delete_participant(participant.in());
     if (rc != DDS::RETCODE_OK) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("%N:%l: main() ERROR: ")
         ACE_TEXT("delete_participant failed: %C\n"),
-        retcode_to_string(rc).c_str()));
+        retcode_to_string(rc)));
       status = 1;
     }
     TheServiceParticipant->shutdown();

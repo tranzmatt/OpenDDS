@@ -1,42 +1,28 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
-
-
-#include <dds/DdsDcpsInfrastructureC.h>
-#include <dds/DCPS/Marked_Default_Qos.h>
-#include <dds/DCPS/Service_Participant.h>
-#include <dds/DCPS/SubscriberImpl.h>
-#include <dds/DCPS/WaitSet.h>
-
-#include "dds/DCPS/StaticIncludes.h"
-#ifdef ACE_AS_STATIC_LIBS
-# ifndef OPENDDS_SAFETY_PROFILE
-#include <dds/DCPS/transport/udp/Udp.h>
-#include <dds/DCPS/transport/multicast/Multicast.h>
-#include <dds/DCPS/RTPS/RtpsDiscovery.h>
-#include <dds/DCPS/transport/shmem/Shmem.h>
-# endif
-#include <dds/DCPS/transport/rtps_udp/RtpsUdp.h>
-#endif
-
-#include <dds/DCPS/transport/framework/TransportRegistry.h>
-#include <dds/DCPS/transport/framework/TransportConfig.h>
-#include <dds/DCPS/transport/framework/TransportInst.h>
 
 #include "DataReaderListener.h"
 #include "SecurityAttributesMessageTypeSupportImpl.h"
 #include "Args.h"
 
-const char DDSSEC_PROP_IDENTITY_CA[] = "dds.sec.auth.identity_ca";
-const char DDSSEC_PROP_IDENTITY_CERT[] = "dds.sec.auth.identity_certificate";
-const char DDSSEC_PROP_IDENTITY_PRIVKEY[] = "dds.sec.auth.private_key";
-const char DDSSEC_PROP_PERM_CA[] = "dds.sec.access.permissions_ca";
-const char DDSSEC_PROP_PERM_GOV_DOC[] = "dds.sec.access.governance";
-const char DDSSEC_PROP_PERM_DOC[] = "dds.sec.access.permissions";
+#include <dds/DCPS/Marked_Default_Qos.h>
+#include <dds/DCPS/Service_Participant.h>
+#include <dds/DCPS/SubscriberImpl.h>
+#include <dds/DCPS/WaitSet.h>
+#include <dds/DCPS/BuiltInTopicUtils.h>
+#ifdef ACE_AS_STATIC_LIBS
+#  include <dds/DCPS/RTPS/RtpsDiscovery.h>
+#  include <dds/DCPS/transport/rtps_udp/RtpsUdp.h>
+#  include <dds/DCPS/security/BuiltInPlugins.h>
+#endif
+#include <dds/DCPS/transport/framework/TransportRegistry.h>
+#include <dds/DCPS/transport/framework/TransportConfig.h>
+#include <dds/DCPS/transport/framework/TransportInst.h>
+#include <dds/DCPS/security/framework/Properties.h>
+
+#include <dds/DdsDcpsInfrastructureC.h>
 
 #define CLEAN_ERROR_RETURN(stuff, val) \
 do { \
@@ -71,9 +57,8 @@ void append(DDS::PropertySeq& props, const char* name, const char* value)
   props[len] = prop;
 }
 
-using SecurityAttributes::Args;
-
-int run_test(int argc, ACE_TCHAR *argv[], Args& my_args) {
+int run_test(int argc, ACE_TCHAR *argv[], Args& my_args)
+{
   int status = 0;
   try {
     // Initialize DomainParticipantFactory
@@ -89,13 +74,14 @@ int run_test(int argc, ACE_TCHAR *argv[], Args& my_args) {
     dpf->get_default_participant_qos(part_qos);
 
     if (TheServiceParticipant->get_security()) {
+      using namespace DDS::Security::Properties;
       DDS::PropertySeq& props = part_qos.property.value;
-      append(props, DDSSEC_PROP_IDENTITY_CA, my_args.auth_ca_file_.data());
-      append(props, DDSSEC_PROP_IDENTITY_CERT, my_args.id_cert_file_.data());
-      append(props, DDSSEC_PROP_IDENTITY_PRIVKEY, my_args.id_key_file_.data());
-      append(props, DDSSEC_PROP_PERM_CA, my_args.perm_ca_file_.data());
-      append(props, DDSSEC_PROP_PERM_GOV_DOC, my_args.governance_file_.data());
-      append(props, DDSSEC_PROP_PERM_DOC, my_args.permissions_file_.data());
+      append(props, AuthIdentityCA, my_args.auth_ca_file_.data());
+      append(props, AuthIdentityCertificate, my_args.id_cert_file_.data());
+      append(props, AuthPrivateKey, my_args.id_key_file_.data());
+      append(props, AccessPermissionsCA, my_args.perm_ca_file_.data());
+      append(props, AccessGovernance, my_args.governance_file_.data());
+      append(props, AccessPermissions, my_args.permissions_file_.data());
     }
 
     // Create DomainParticipant
@@ -136,9 +122,15 @@ int run_test(int argc, ACE_TCHAR *argv[], Args& my_args) {
                           ACE_TEXT("main() - create_topic() failed!\n")), -23);
     }
 
+    DDS::SubscriberQos sub_qos = SUBSCRIBER_QOS_DEFAULT;
+    if (!my_args.partition_.empty()) {
+      participant->get_default_subscriber_qos(sub_qos);
+      my_args.partition_to_qos(sub_qos.partition);
+    }
+
     // Create Subscriber
     DDS::Subscriber_var sub =
-      participant->create_subscriber(SUBSCRIBER_QOS_DEFAULT,
+      participant->create_subscriber(sub_qos,
                                      DDS::SubscriberListener::_nil(),
                                      OpenDDS::DCPS::DEFAULT_STATUS_MASK);
 
@@ -148,14 +140,24 @@ int run_test(int argc, ACE_TCHAR *argv[], Args& my_args) {
                           ACE_TEXT("main() - create_subscriber() failed!\n")), -24);
     }
 
-    // Create DataReader
-    DataReaderListenerImpl* const listener_servant = new DataReaderListenerImpl(my_args);
+    // Create DataReaderListener
+    DDS::DataReader_var part_reader;
+#ifndef DDS_HAS_MINIMUM_BIT
+    DDS::Subscriber_var bit_subscriber = participant->get_builtin_subscriber();
+    part_reader = bit_subscriber->lookup_datareader(OpenDDS::DCPS::BUILT_IN_PARTICIPANT_TOPIC);
+#endif
+    DataReaderListenerImpl* const listener_servant = new DataReaderListenerImpl(my_args, part_reader.in());
     DDS::DataReaderListener_var listener(listener_servant);
+#ifndef DDS_HAS_MINIMUM_BIT
+    part_reader->set_listener(listener.in(), OpenDDS::DCPS::DEFAULT_STATUS_MASK);
+    listener->on_data_available(part_reader);
+#endif
 
+    // Create DataReader
     DDS::DataReaderQos dr_qos;
     sub->get_default_datareader_qos(dr_qos);
     if (DataReaderListenerImpl::is_reliable()) {
-      std::cout << "Reliable DataReader" << std::endl;
+      std::cerr << "Reliable DataReader" << std::endl;
       dr_qos.reliability.kind = DDS::RELIABLE_RELIABILITY_QOS;
     }
 
@@ -178,21 +180,26 @@ int run_test(int argc, ACE_TCHAR *argv[], Args& my_args) {
     DDS::WaitSet_var ws = new DDS::WaitSet;
     ws->attach_condition(condition);
 
+    const DDS::Duration_t infinite = { DDS::DURATION_INFINITE_SEC, DDS::DURATION_INFINITE_NSEC };
+    const DDS::Duration_t one_second = { 1, 0 };
+
+    bool wait_forever = false;
     DDS::Duration_t timeout;
     if (my_args.timeout_ == 0) {
-      timeout.sec = DDS::DURATION_INFINITE_SEC;
-      timeout.nanosec = DDS::DURATION_INFINITE_NSEC;
+      timeout = infinite;
+      wait_forever = true;
     } else {
       timeout.sec = my_args.timeout_;
       timeout.nanosec = 0;
     }
-    ACE_Time_Value deadline = OpenDDS::DCPS::duration_to_absolute_time_value(timeout, ACE_OS::gettimeofday());
+
+    const ACE_Time_Value deadline = OpenDDS::DCPS::duration_to_absolute_time_value(timeout, ACE_OS::gettimeofday());
 
     DDS::ConditionSeq conditions;
     DDS::SubscriptionMatchedStatus matches = { 0, 0, 0, 0, 0 };
 
     ACE_Time_Value current_time = ACE_OS::gettimeofday();
-    while (current_time < deadline) {
+    while (wait_forever || current_time < deadline) {
       if (reader->get_subscription_matched_status(matches) != DDS::RETCODE_OK) {
         CLEAN2_ERROR_RETURN((LM_WARNING,
                              ACE_TEXT("(%P|%t) %N:%l - WARNING: ")
@@ -202,17 +209,18 @@ int run_test(int argc, ACE_TCHAR *argv[], Args& my_args) {
         break;
       }
 
-      DDS::ReturnCode_t rc = ws->wait(conditions, timeout);
-      if (rc == DDS::RETCODE_TIMEOUT) {
-        CLEAN2_ERROR_RETURN((LM_WARNING,
-                             ACE_TEXT("(%P|%t) %N:%l - WARNING: ")
-                             ACE_TEXT("main() - wait() timed out!\n")), -27);
-      } else if (rc != DDS::RETCODE_OK) {
+      DDS::ReturnCode_t rc = ws->wait(conditions, one_second);
+      if (rc != DDS::RETCODE_TIMEOUT && rc != DDS::RETCODE_OK) {
         CLEAN2_ERROR_RETURN((LM_WARNING,
                              ACE_TEXT("(%P|%t) %N:%l - WARNING: ")
                              ACE_TEXT("main() - wait() failed!\n")), -28);
       }
       current_time = ACE_OS::gettimeofday();
+    }
+    if (!wait_forever && deadline <= current_time && !(matches.current_count == 0 && matches.total_count > 0)) {
+      CLEAN2_ERROR_RETURN((LM_WARNING,
+                           ACE_TEXT("(%P|%t) %N:%l - WARNING: ")
+                           ACE_TEXT("main() - wait() timed out!\n")), -27);
     }
 
     status = listener_servant->is_valid() ? 0 : -29;
@@ -220,6 +228,13 @@ int run_test(int argc, ACE_TCHAR *argv[], Args& my_args) {
     ws->detach_condition(condition);
 
     // Clean-up!
+
+#ifndef DDS_HAS_MINIMUM_BIT
+    part_reader->set_listener(0, OpenDDS::DCPS::DEFAULT_STATUS_MASK);
+    part_reader = 0;
+    bit_subscriber = 0;
+#endif
+
     std::cerr << "deleting contained entities" << std::endl;
     participant->delete_contained_entities();
     std::cerr << "deleting participant" << std::endl;
@@ -235,16 +250,13 @@ int run_test(int argc, ACE_TCHAR *argv[], Args& my_args) {
   return status;
 }
 
-int
-ACE_TMAIN(int argc, ACE_TCHAR *argv[])
+int ACE_TMAIN(int argc, ACE_TCHAR *argv[])
 {
   Args my_args;
-
-  int result = run_test(argc, argv, my_args);
-  if (result == my_args.expected_result_) {
-    return 0;
-  } else {
+  const int result = run_test(argc, argv, my_args);
+  if (result != my_args.expected_result_) {
     std::cerr << "Subscriber exiting with unexpected result: " << result << std::endl;
-    return result == 0 ? -1 : result; // If unexpected result is zero (we expected a failure, but got a success), return -1 to signal error
+    return 1;
   }
+  return 0;
 }

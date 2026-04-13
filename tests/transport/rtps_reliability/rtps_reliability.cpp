@@ -6,6 +6,8 @@
 #include "dds/DCPS/transport/rtps_udp/RtpsUdp.h"
 #endif
 
+#include "../RtpsUtils.h"
+
 #include "dds/DCPS/transport/framework/TransportRegistry.h"
 #include "dds/DCPS/transport/framework/TransportSendListener.h"
 #include "dds/DCPS/transport/framework/TransportClient.h"
@@ -13,9 +15,9 @@
 #include "dds/DCPS/transport/framework/ReceivedDataSample.h"
 
 #include "dds/DCPS/RTPS/RtpsCoreTypeSupportImpl.h"
-#include "dds/DCPS/RTPS/BaseMessageTypes.h"
+#include "dds/DCPS/RTPS/RtpsSubmessageKindTypeSupportImpl.h"
 #include "dds/DCPS/RTPS/MessageTypes.h"
-#include "dds/DCPS/RTPS/BaseMessageUtils.h"
+#include "dds/DCPS/RTPS/MessageUtils.h"
 #include "dds/DCPS/RTPS/GuidGenerator.h"
 
 #include "dds/DCPS/Service_Participant.h"
@@ -23,6 +25,10 @@
 #include "dds/DCPS/DisjointSequence.h"
 #include "dds/DCPS/SendStateDataSampleList.h"
 #include "dds/DCPS/DataSampleElement.h"
+#include "dds/DCPS/GuidUtils.h"
+#include "dds/DCPS/EncapsulationHeader.h"
+
+#include <dds/OpenddsDcpsExtTypeSupportImpl.h>
 
 #include <tao/Exception.h>
 
@@ -39,19 +45,16 @@
 using namespace OpenDDS::DCPS;
 using namespace OpenDDS::RTPS;
 
-const bool host_is_bigendian = !ACE_CDR_BYTE_ORDER;
-const char* smkinds[] = {"RESERVED_0", "PAD", "RESERVED_2", "RESERVED_3",
-  "RESERVED_4", "RESERVED_5", "ACKNACK", "HEARTBEAT", "GAP", "INFO_TS",
-  "RESERVED_10", "RESERVED_11", "INFO_SRC", "INFO_REPLY_IP4", "INFO_DST",
-  "INFO_REPLY", "RESERVED_16", "RESERVED_17", "NACK_FRAG", "HEARTBEAT_FRAG",
-  "RESERVED_20", "DATA", "DATA_FRAG"};
-const size_t n_smkinds = sizeof(smkinds) / sizeof(smkinds[0]);
-
+const Encoding encoding(Encoding::KIND_XCDR1, OpenDDS::DCPS::ENDIAN_LITTLE);
+const Encoding& blob_encoding = get_locators_encoding();
 
 struct SimpleTC: TransportClient {
-  explicit SimpleTC(const RepoId& local) : local_id_(local), mutex_(), cond_(mutex_) {}
+  explicit SimpleTC(const GUID_t& local) : local_id_(local), mutex_(), cond_(mutex_)
+  {
+    TransportClient::set_guid(local_id_);
+  }
 
-  void transport_assoc_done(int flags, const RepoId& remote) {
+  void transport_assoc_done(int flags, const GUID_t& remote) {
     if (!(flags & ASSOC_OK)) {
       return;
     }
@@ -60,7 +63,7 @@ struct SimpleTC: TransportClient {
     cond_.broadcast();
   }
 
-  void wait_for_assoc(const RepoId& remote) {
+  void wait_for_assoc(const GUID_t& remote) {
     ACE_GUARD(ACE_Thread_Mutex, g, mutex_);
     while (associated_.find(remote) == associated_.end()) {
       cond_.wait(mutex_);
@@ -73,12 +76,12 @@ struct SimpleTC: TransportClient {
   using TransportClient::send;
   using TransportClient::connection_info;
 
-  const RepoId& get_repo_id() const { return local_id_; }
+  GUID_t get_guid() const { return local_id_; }
   DDS::DomainId_t domain_id() const { return 0; }
   bool check_transport_qos(const TransportInst&) { return true; }
   CORBA::Long get_priority_value(const AssociationData&) const { return 0; }
 
-  RepoId local_id_;
+  GUID_t local_id_;
   RepoIdSet associated_;
   ACE_Thread_Mutex mutex_;
   ACE_Condition<ACE_Thread_Mutex> cond_;
@@ -86,7 +89,7 @@ struct SimpleTC: TransportClient {
 
 
 struct SimpleDataReader: SimpleTC, TransportReceiveListener {
-  explicit SimpleDataReader(const RepoId& sub_id)
+  explicit SimpleDataReader(const GUID_t& sub_id)
     : SimpleTC(sub_id), have_frag_(false) {
 
       // The reference count is explicited incremented to avoid been explcitly deleted
@@ -105,7 +108,7 @@ struct SimpleDataReader: SimpleTC, TransportReceiveListener {
     }
     if (sample.header_.sequence_ == 6) { // reassembled from DATA_FRAG
       if (sample.header_.message_length_ != 3 * 1024
-          || sample.sample_->total_length() != 3 * 1024) {
+          || sample.data_length() != 3 * 1024) {
         ACE_ERROR((LM_ERROR, "ERROR: unexpected reassembled sample length\n"));
       }
       if (have_frag_) {
@@ -138,7 +141,7 @@ public:
 
 
 struct SimpleDataWriter: SimpleTC, TransportSendListener {
-  explicit SimpleDataWriter(const RepoId& pub_id)
+  explicit SimpleDataWriter(const GUID_t& pub_id)
     : SimpleTC(pub_id)
     , dsle_(pub_id, this, OpenDDS::DCPS::PublicationInstance_rch())
   {
@@ -147,11 +150,12 @@ struct SimpleDataWriter: SimpleTC, TransportSendListener {
     dsle_.get_header().message_length_ = 8;
     dsle_.get_header().byte_order_ = ACE_CDR_BYTE_ORDER;
     payload_.init(dsle_.get_header().message_length_);
-    const ACE_CDR::ULong encap = 0x00000100, // {CDR_LE, options} in LE format
-      data = 0xDCBADCBA;
-    Serializer ser(&payload_, host_is_bigendian, Serializer::ALIGN_CDR);
-    ser << encap;
-    ser << data;
+    const EncapsulationHeader encap(encoding, FINAL);
+    const ACE_CDR::ULong data = 0xDCBADCBA;
+    Serializer ser(&payload_, encoding);
+    if (!(ser << encap && ser << data)) {
+      ACE_DEBUG((LM_DEBUG, "ERROR: SimpleDataWriter(): serialization failed\n"));
+    }
 
     // The reference count is explicited incremented to avoid been explcitly deleted
     // via the RcHandle<TransportClient> because the object is always been created
@@ -166,8 +170,9 @@ struct SimpleDataWriter: SimpleTC, TransportSendListener {
   void send_data(const SequenceNumber& seq)
   {
     dsle_.get_header().sequence_ = seq;
-    Message_Block_Ptr sample(new ACE_Message_Block(DataSampleHeader::max_marshaled_size()));
-    dsle_.set_sample(move(sample));
+    Message_Block_Ptr sample(
+      new ACE_Message_Block(DataSampleHeader::get_max_serialized_size()));
+    dsle_.set_sample(OpenDDS::DCPS::move(sample));
     *dsle_.get_sample() << dsle_.get_header();
     dsle_.get_sample()->cont(payload_.duplicate());
     ACE_DEBUG((LM_INFO, "sending with seq#: %q\n", seq.getValue()));
@@ -200,8 +205,7 @@ struct TestParticipant: ACE_Event_Handler {
   {
     const Header hdr = {
       {'R', 'T', 'P', 'S'}, PROTOCOLVERSION, VENDORID_OPENDDS,
-      {prefix[0], prefix[1], prefix[2], prefix[3], prefix[4], prefix[5],
-       prefix[6], prefix[7], prefix[8], prefix[9], prefix[10], prefix[11]}
+      {INITIALIZE_GUID_PREFIX(prefix)}
     };
     std::memcpy(&hdr_, &hdr, sizeof(Header));
     for (CORBA::ULong i = 0; i < FRAG_SIZE; ++i) {
@@ -238,28 +242,19 @@ struct TestParticipant: ACE_Event_Handler {
   bool send_data(const OpenDDS::DCPS::EntityId_t& writer,
                  const SequenceNumber_t& seq, const ACE_INET_Addr& send_to)
   {
-#ifdef __SUNPRO_CC
-    DataSubmessage ds = {
-      {DATA, FLAG_E | FLAG_D, 0}, 0, DATA_OCTETS_TO_IQOS};
-    ds.readerId = ENTITYID_UNKNOWN;
-    ds.writerId = writer;
-    ds.writerSN = seq;
-#else
     const DataSubmessage ds = {
       {DATA, FLAG_E | FLAG_D, 0},
       0, DATA_OCTETS_TO_IQOS, ENTITYID_UNKNOWN, writer, seq, ParameterList()
     };
-#endif
-    size_t size = 0, padding = 0;
-    gen_find_size(hdr_, size, padding);
-    gen_find_size(ds, size, padding);
+    size_t size = 0;
+    serialized_size(encoding, size, hdr_);
+    serialized_size(encoding, size, ds);
     size += 8; // CDR encap header + 4 bytes of data
-    ACE_Message_Block mb(size + padding);
-    Serializer ser(&mb, host_is_bigendian, Serializer::ALIGN_CDR);
-    const ACE_CDR::ULong encap = 0x00000100, // {CDR_LE, options} in BE format
-      data = 0xABCDABCD;
-    bool ok = (ser << hdr_) && (ser << ds) && (ser << encap) && (ser << data);
-    if (!ok) {
+    ACE_Message_Block mb(size);
+    Serializer ser(&mb, encoding);
+    const EncapsulationHeader encap(encoding, FINAL);
+    const ACE_CDR::ULong data = 0xABCDABCD;
+    if (!(ser << hdr_ && ser << ds && ser << encap && ser << data)) {
       ACE_DEBUG((LM_DEBUG, "ERROR: failed to serialize data\n"));
       return false;
     }
@@ -276,40 +271,24 @@ struct TestParticipant: ACE_Event_Handler {
       inlineQoS[0].string_data("my_topic_name");
       inlineQoS[0]._d(PID_TOPIC_NAME);
     }
-#ifdef __SUNPRO_CC
-    DataFragSubmessage df;
-    df.smHeader.submessageId = DATA_FRAG;
-    df.smHeader.flags = FLAG_E | (i ? 0 : FLAG_Q);
-    df.smHeader.submessageLength = 0;
-    df.extraFlags = 0;
-    df.octetsToInlineQos = DATA_FRAG_OCTETS_TO_IQOS;
-    df.readerId = ENTITYID_UNKNOWN;
-    df.writerId = writer;
-    df.writerSN = seq;
-    df.fragmentStartingNum.value = i + 1;
-    df.fragmentsInSubmessage = 1;
-    df.fragmentSize = FRAG_SIZE;
-    df.sampleSize = N * FRAG_SIZE;
-    df.inlineQos = inlineQoS;
-#else
     const DataFragSubmessage df = {
       {DATA_FRAG, CORBA::Octet(FLAG_E | (i ? 0 : FLAG_Q)), 0},
       0, DATA_FRAG_OCTETS_TO_IQOS, ENTITYID_UNKNOWN, writer, seq,
       {i + 1},       // fragmentStartingNum
       1,             // fragmentsInSubmessage
-      FRAG_SIZE,     // fragmentSize (smallest fragmentSize allowed is 1KB)
+      FRAG_SIZE,     // fragmentSize (smallest fragmentSize allowed is 1KiB)
       N * FRAG_SIZE, // sampleSize
       inlineQoS
     };
-#endif
-    size_t size = 0, padding = 0;
-    gen_find_size(hdr_, size, padding);
-    gen_find_size(df, size, padding);
+
+    size_t size = 0;
+    serialized_size(encoding, size, hdr_);
+    serialized_size(encoding, size, df);
     size += FRAG_SIZE;
-    ACE_Message_Block mb(size + padding);
-    Serializer ser(&mb, host_is_bigendian, Serializer::ALIGN_CDR);
-    const ACE_CDR::ULong encap = 0x00000100; // {CDR_LE, options} in LE format
-    bool ok = (ser << hdr_) && (ser << df);
+    ACE_Message_Block mb(size);
+    Serializer ser(&mb, encoding);
+    const EncapsulationHeader encap(encoding, FINAL);
+    bool ok = (ser << hdr_ && ser << df);
     if (i == 0) ok &= (ser << encap);
     ok &= ser.write_octet_array(data_for_frag_,
                                 i ? FRAG_SIZE : FRAG_SIZE - 4);
@@ -329,26 +308,15 @@ struct TestParticipant: ACE_Event_Handler {
     SequenceNumber_t seq_pp = {seq.high, seq.low + 1};
     GapSubmessage gap = {
       {GAP, FLAG_E, 0}
-#ifdef __SUNPRO_CC
-    };
-    gap.readerId = ENTITYID_UNKNOWN;
-    gap.writerId = writer;
-    gap.gapStart = seq;
-    gap.gapList.bitmapBase = seq_pp;
-    gap.gapList.numBits = 1;
-    gap.gapList.bitmap = bitmap;
-#else
     , ENTITYID_UNKNOWN, writer, seq,
       {seq_pp, 1, bitmap}
     };
-#endif
-    size_t size = 0, padding = 0;
-    gen_find_size(hdr_, size, padding);
-    gen_find_size(gap, size, padding);
-    ACE_Message_Block mb(size + padding);
-    Serializer ser(&mb, host_is_bigendian, Serializer::ALIGN_CDR);
-    bool ok = (ser << hdr_) && (ser << gap);
-    if (!ok) {
+    size_t size = 0;
+    serialized_size(encoding, size, hdr_);
+    serialized_size(encoding, size, gap);
+    ACE_Message_Block mb(size);
+    Serializer ser(&mb, encoding);
+    if (!(ser << hdr_ && ser << gap)) {
       ACE_DEBUG((LM_DEBUG, "ERROR: failed to serialize gap\n"));
       return false;
     }
@@ -357,64 +325,32 @@ struct TestParticipant: ACE_Event_Handler {
 
   bool send_hb(const OpenDDS::DCPS::EntityId_t& writer,
                const SequenceNumber_t& firstSN, const SequenceNumber_t& lastSN,
-               const ACE_INET_Addr& send_to)
+               const ACE_INET_Addr& send_to, const GUID_t& reader = GUID_UNKNOWN)
   {
-#ifdef __SUNPRO_CC
-    HeartBeatSubmessage hb;
-    hb.smHeader.submessageId = HEARTBEAT;
-    hb.smHeader.flags = FLAG_E;
-    hb.smHeader.submessageLength = 0;
-    hb.readerId = ENTITYID_UNKNOWN;
-    hb.writerId = writer;
-    hb.firstSN = firstSN;
-    hb.lastSN = lastSN;
-    hb.count.value = ++heartbeat_count_;
-#else
-    const HeartBeatSubmessage hb = {
-      {HEARTBEAT, FLAG_E, 0},
-      ENTITYID_UNKNOWN, writer, firstSN, lastSN, {++heartbeat_count_}
-    };
-#endif
-    size_t size = 0, padding = 0;
-    gen_find_size(hdr_, size, padding);
-    gen_find_size(hb, size, padding);
-    ACE_Message_Block mb(size + padding);
-    Serializer ser(&mb, host_is_bigendian, Serializer::ALIGN_CDR);
-    bool ok = (ser << hdr_) && (ser << hb);
-    if (!ok) {
+    const Message_Block_Ptr mb(buildHeartbeat(writer, hdr_,
+                                              std::make_pair(firstSN, lastSN),
+                                              heartbeat_count_, reader));
+    if (!mb) {
       ACE_DEBUG((LM_DEBUG, "ERROR: failed to serialize heartbeat\n"));
       return false;
     }
-    return send(mb, send_to);
+    return send(*mb, send_to);
   }
 
   bool send_hbfrag(const OpenDDS::DCPS::EntityId_t& writer,
                    const SequenceNumber_t& seq, CORBA::ULong lastAvailFrag,
                    const ACE_INET_Addr& send_to)
   {
-#ifdef __SUNPRO_CC
-    HeartBeatFragSubmessage hbf;
-    hbf.smHeader.submessageId = HEARTBEAT_FRAG;
-    hbf.smHeader.flags = FLAG_E;
-    hbf.smHeader.submessageLength = 0;
-    hbf.readerId = ENTITYID_UNKNOWN;
-    hbf.writerId = writer;
-    hbf.writerSN = seq;
-    hbf.lastFragmentNum.value = lastAvailFrag;
-    hbf.count.value = ++hbfrag_count_;
-#else
     const HeartBeatFragSubmessage hbf = {
       {HEARTBEAT_FRAG, FLAG_E, 0},
       ENTITYID_UNKNOWN, writer, seq, {lastAvailFrag}, {++hbfrag_count_}
     };
-#endif
-    size_t size = 0, padding = 0;
-    gen_find_size(hdr_, size, padding);
-    gen_find_size(hbf, size, padding);
-    ACE_Message_Block mb(size + padding);
-    Serializer ser(&mb, host_is_bigendian, Serializer::ALIGN_CDR);
-    bool ok = (ser << hdr_) && (ser << hbf);
-    if (!ok) {
+    size_t size = 0;
+    serialized_size(encoding, size, hdr_);
+    serialized_size(encoding, size, hbf);
+    ACE_Message_Block mb(size);
+    Serializer ser(&mb, encoding);
+    if (!(ser << hdr_ && ser << hbf)) {
       ACE_DEBUG((LM_DEBUG, "ERROR: failed to serialize heartbeatfrag\n"));
       return false;
     }
@@ -428,32 +364,18 @@ struct TestParticipant: ACE_Event_Handler {
     LongSeq8 bitmap;
     bitmap.length(1);
     bitmap[0] = set_bit_in_bitmap ? 0xF0000000 : 0;
-#ifdef __SUNPRO_CC
-    AckNackSubmessage an;
-    an.smHeader.submessageId = ACKNACK;
-    an.smHeader.flags = FLAG_E;
-    an.smHeader.submessageLength = 0;
-    an.readerId = reader_ent_;
-    an.writerId = writer;
-    an.readerSNState.bitmapBase = nack;
-    an.readerSNState.numBits = 1;
-    an.readerSNState.bitmap = bitmap;
-    an.count.value = ++acknack_count_;
-#else
     const AckNackSubmessage an = {
       {ACKNACK, FLAG_E, 0},
       reader_ent_, writer,
       {nack, 1, bitmap},
       {++acknack_count_}
     };
-#endif
-    size_t size = 0, padding = 0;
-    gen_find_size(hdr_, size, padding);
-    gen_find_size(an, size, padding);
-    ACE_Message_Block mb(size + padding);
-    Serializer ser(&mb, host_is_bigendian, Serializer::ALIGN_CDR);
-    bool ok = (ser << hdr_) && (ser << an);
-    if (!ok) {
+    size_t size = 0;
+    serialized_size(encoding, size, hdr_);
+    serialized_size(encoding, size, an);
+    ACE_Message_Block mb(size);
+    Serializer ser(&mb, encoding);
+    if (!(ser << hdr_ && ser << an)) {
       ACE_DEBUG((LM_DEBUG, "ERROR: failed to serialize acknack\n"));
       return false;
     }
@@ -472,7 +394,7 @@ struct TestParticipant: ACE_Event_Handler {
       return -1;
     }
     recv_mb_.wr_ptr(ret);
-    Serializer ser(&recv_mb_, host_is_bigendian, Serializer::ALIGN_CDR);
+    Serializer ser(&recv_mb_, encoding);
     if (!(ser >> recv_hdr_)) {
       ACE_ERROR((LM_ERROR,
         "ERROR: in handle_input() failed to deserialize RTPS Header\n"));
@@ -498,12 +420,12 @@ struct TestParticipant: ACE_Event_Handler {
         if (!recv_nackfrag(ser, peer)) return false;
         break;
       default:
-        if (static_cast<unsigned char>(subm) < n_smkinds) {
+        if (gen_OpenDDS_RTPS_SubmessageKind_helper->valid(subm)) {
           ACE_DEBUG((LM_INFO, "Received submessage type: %C\n",
-                     smkinds[static_cast<unsigned char>(subm)]));
+                     gen_OpenDDS_RTPS_SubmessageKind_helper->get_name(subm)));
         } else {
-          ACE_ERROR((LM_ERROR, "ERROR: Received unknown submessage type: %d\n",
-                     int(subm)));
+          ACE_ERROR((LM_ERROR, "ERROR: Received unknown submessage type: %u\n",
+                     unsigned(subm)));
         }
         SubmessageHeader smh;
         if (!(ser >> smh)) {
@@ -648,7 +570,7 @@ struct TestParticipant: ACE_Event_Handler {
       }
     }
     // pretend #2 was lost
-    if (do_nack_ && hb.firstSN.low <= 2 && hb.lastSN.low >= 2) {
+    if (!recvd_.contains(2) && hb.firstSN.low <= 2 && hb.lastSN.low >= 2) {
       SequenceNumber_t nack = {0, 2};
       ACE_DEBUG((LM_INFO, "recv_hb() requesting retransmit of #2\n"));
       if (!send_an(hb.writerId, nack, peer)) {
@@ -704,9 +626,9 @@ void transport_setup()
     std::cerr << "ERROR: Could not cast to RtpsUdpInst\n";
     return;
   }
-  rtps_inst->use_multicast_ = false;
-  rtps_inst->datalink_release_delay_ = 0;
-  rtps_inst->heartbeat_period_ = ACE_Time_Value(0, 500*1000 /*microseconds*/);
+  rtps_inst->use_multicast(false);
+  rtps_inst->datalink_release_delay(0);
+  rtps_inst->heartbeat_period(TimeDuration::from_msec(500));
   TransportConfig_rch cfg = TheTransportRegistry->create_config("cfg");
   cfg->instances_.push_back(inst);
   TheTransportRegistry->global_config(cfg);
@@ -739,18 +661,14 @@ void make_blob(const ACE_INET_Addr& part1_addr, ACE_Message_Block& mb_locator)
 {
   LocatorSeq part1_locators;
   part1_locators.length(1);
-  part1_locators[0].kind =
-#ifdef ACE_HAS_IPV6
-    (part1_addr.get_type() == AF_INET6) ? LOCATOR_KIND_UDPv6 :
-#endif
-      LOCATOR_KIND_UDPv4;
-  part1_locators[0].port = part1_addr.get_port_number();
-  address_to_bytes(part1_locators[0].address, part1_addr);
-  size_t size_locator = 0, padding_locator = 0;
-  gen_find_size(part1_locators, size_locator, padding_locator);
-  mb_locator.init(size_locator + padding_locator + 1);
-  Serializer ser_loc(&mb_locator, ACE_CDR_BYTE_ORDER, Serializer::ALIGN_CDR);
+  address_to_locator(part1_locators[0], part1_addr);
+  size_t size = 0;
+  serialized_size(blob_encoding, size, part1_locators);
+  serialized_size(blob_encoding, size, VENDORID_OPENDDS);
+  mb_locator.init(size + 1);
+  Serializer ser_loc(&mb_locator, blob_encoding);
   ser_loc << part1_locators;
+  ser_loc << VENDORID_OPENDDS;
   ser_loc << ACE_OutputCDR::from_boolean(false); // requires inline QoS
 }
 
@@ -761,19 +679,19 @@ bool blob_to_addr(const TransportBLOB& blob, ACE_INET_Addr& addr)
     0 /*alloc*/, 0 /*lock*/, ACE_Message_Block::DONT_DELETE, 0 /*db_alloc*/);
   ACE_Message_Block mb(&db, ACE_Message_Block::DONT_DELETE, 0 /*mb_alloc*/);
   mb.wr_ptr(mb.space());
-  Serializer ser(&mb, ACE_CDR_BYTE_ORDER, Serializer::ALIGN_CDR);
+  Serializer ser(&mb, blob_encoding);
   LocatorSeq locators;
   if (!(ser >> locators) || locators.length() < 1) {
     ACE_DEBUG((LM_DEBUG,
                "ERROR: couldn't deserialize Locators from participant 2\n"));
     return false;
   }
-  if (locators[0].kind == LOCATOR_KIND_UDPv6) {
+  if (locators[0].kind == OpenDDS::RTPS::LOCATOR_KIND_UDPv6) {
 #ifdef ACE_HAS_IPV6
     addr.set_type(AF_INET6);
 #endif
     addr.set_address(reinterpret_cast<const char*>(locators[0].address), 16, 0 /*encode*/);
-  } else if (locators[0].kind == LOCATOR_KIND_UDPv4) {
+  } else if (locators[0].kind == OpenDDS::RTPS::LOCATOR_KIND_UDPv4) {
     addr.set_type(AF_INET);
     addr.set_address(reinterpret_cast<const char*>(locators[0].address) + 12,
                      4, 0 /*network order*/);
@@ -812,10 +730,10 @@ bool run_test()
   part1_addr.set(part1_addr.get_port_number(), "localhost");
 #endif
   SimpleDataWriter sdw2(writer2);
-  sdw2.enable_transport(true /*reliable*/, true /*durable*/);
+  sdw2.enable_transport(true /*reliable*/, false /*durable*/, writer2);
 
   SimpleDataReader sdr2(reader2);
-  sdr2.enable_transport(true /*reliable*/, true /*durable*/);
+  sdr2.enable_transport(true /*reliable*/, true /*durable*/, reader2);
 
 
   // "local" setup is now done, start making associations
@@ -828,13 +746,12 @@ bool run_test()
   part1_writer.remote_durable_ = true;
   part1_writer.remote_data_.length(1);
   part1_writer.remote_data_[0].transport_type = "rtps_udp";
-  message_block_to_sequence (mb_locator, part1_writer.remote_data_[0].data);
+  message_block_to_sequence(mb_locator, part1_writer.remote_data_[0].data);
   if (!sdr2.associate(part1_writer, false /*active*/)) {
     ACE_DEBUG((LM_DEBUG,
                "SimpleDataReader(reader2) could not associate with writer1\n"));
     return false;
   }
-  sdr2.wait_for_assoc(writer1);
 
   const TransportLocatorSeq& part2_loc = sdr2.connection_info();
   if (part2_loc.length() < 1) {
@@ -854,9 +771,7 @@ bool run_test()
     //need to map address to IPV6
     LocatorSeq locators;
     locators.length(1);
-    locators[0].kind = address_to_kind(part2_addr);
-    locators[0].port = part2_addr.get_port_number();
-    address_to_bytes(locators[0].address, part2_addr);
+    address_to_locator(locators[0], part2_addr);
     locator_to_address(part2_addr, locators[0], tmp.get_type() != AF_INET);
   }
 #endif
@@ -867,14 +782,22 @@ bool run_test()
 
   TestParticipant part1(part1_sock, reader1.guidPrefix, reader1.entityId);
   SequenceNumber_t first_seq = {0, 1}, seq = first_seq;
+  if (!part1.send_hb(writer1.entityId, seq, seq, part2_addr, reader2)) {
+    return false;
+  }
+
   if (!part1.send_data(writer1.entityId, seq, part2_addr)) {
     return false;
   }
+
+  reactor_wait();
+
   // this heartbeat isn't final, so reader needs to ack even if it has all data:
   if (!part1.send_hb(writer1.entityId, seq, seq, part2_addr)) {
     return false;
   }
   reactor_wait();
+  sdr2.wait_for_assoc(writer1);
 
   seq.low = 3; // #2 is the "lost" message
   if (!part1.send_data(writer1.entityId, seq, part2_addr)) {
@@ -983,24 +906,39 @@ bool run_test()
   sdw2.send_data(seq_dw2++);  // send #5
   reactor_wait();
 
-  if (part1.recvd_.disjoint() || part1.recvd_.empty()
-      || part1.recvd_.high() != seq_dw2.previous()
-      || part1.recvd_.low() != SequenceNumber()) {
-    ACE_ERROR((LM_ERROR, "ERROR: reader1 did not receive expected data\n"));
+  if (part1.recvd_.disjoint()) {
+    ACE_ERROR((LM_ERROR, "ERROR: reader1 did not receive expected data (disjoint)\n"));
+    return false;
+  }
+
+  if (part1.recvd_.empty()) {
+    ACE_ERROR((LM_ERROR, "ERROR: reader1 did not receive expected data (empty)\n"));
+    return false;
+  }
+
+  if (part1.recvd_.high() != seq_dw2.previous()) {
+    ACE_ERROR((LM_ERROR, "ERROR: reader1 did not receive expected data (high)\n"));
+    return false;
+  }
+
+  if (part1.recvd_.low() != SequenceNumber()) {
+    ACE_ERROR((LM_ERROR, "ERROR: reader1 did not receive expected data (low)\n"));
+    return false;
   }
 
   // cleanup
   sdw2.disassociate(reader1);
   sdr2.disassociate(writer1);
+  sdw2.transport_stop();
+  sdr2.transport_stop();
   return true;
 }
 
 int ACE_TMAIN(int /*argc*/, ACE_TCHAR* /*argv*/[])
 {
-  try
-  {
-    ::DDS::DomainParticipantFactory_var dpf =
-      TheServiceParticipant->get_domain_participant_factory();
+  DDS::DomainParticipantFactory_var dpf;
+  try {
+    dpf = TheServiceParticipant->get_domain_participant_factory();
   }
   catch (const CORBA::BAD_PARAM& ex)
   {

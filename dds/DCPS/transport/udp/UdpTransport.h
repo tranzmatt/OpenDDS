@@ -5,18 +5,19 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_UDPTRANSPORT_H
-#define DCPS_UDPTRANSPORT_H
+#ifndef OPENDDS_DCPS_TRANSPORT_UDP_UDPTRANSPORT_H
+#define OPENDDS_DCPS_TRANSPORT_UDP_UDPTRANSPORT_H
 
 #include "Udp_Export.h"
-
-#include "UdpDataLink.h"
 #include "UdpDataLink_rch.h"
+#include "UdpDataLink.h"
 
-#include "dds/DCPS/transport/framework/PriorityKey.h"
-#include "dds/DCPS/transport/framework/TransportImpl.h"
-#include "dds/DCPS/transport/framework/TransportClient.h"
-#include "dds/DCPS/PoolAllocator.h"
+#include <dds/DCPS/PoolAllocator.h>
+#include <dds/DCPS/ConditionVariable.h>
+#include <dds/DCPS/TimeTypes.h>
+#include <dds/DCPS/transport/framework/PriorityKey.h>
+#include <dds/DCPS/transport/framework/TransportImpl.h>
+#include <dds/DCPS/transport/framework/TransportClient.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -27,11 +28,12 @@ class UdpInst;
 
 class OpenDDS_Udp_Export UdpTransport : public TransportImpl {
 public:
-  explicit UdpTransport(UdpInst& inst);
+  UdpTransport(const UdpInst_rch& inst,
+               DDS::DomainId_t domain);
 
   void passive_connection(const ACE_INET_Addr& remote_address,
-                          const Message_Block_Ptr& data);
-  UdpInst& config() const;
+                          const ReceivedDataSample& data);
+  UdpInst_rch config() const;
 protected:
   virtual AcceptConnectResult connect_datalink(const RemoteTransport& remote,
                                                const ConnectionAttribs& attribs,
@@ -42,13 +44,15 @@ protected:
                                               const TransportClient_rch& client);
 
   virtual void stop_accepting_or_connecting(const TransportClient_wrch& client,
-                                            const RepoId& remote_id);
+                                            const GUID_t& remote_id,
+                                            bool disassociate,
+                                            bool association_failed);
 
-  bool configure_i(UdpInst& config);
+  bool configure_i(const UdpInst_rch& config);
 
   virtual void shutdown_i();
 
-  virtual bool connection_info_i(TransportLocator& info) const;
+  virtual bool connection_info_i(TransportLocator& info, ConnectionInfoFlags flags) const;
   ACE_INET_Addr get_connection_addr(const TransportBLOB& data) const;
 
   virtual void release_datalink(DataLink* link);
@@ -62,9 +66,9 @@ private:
   PriorityKey blob_to_key(const TransportBLOB& remote,
                           Priority priority, ACE_INET_Addr local_addr, bool active);
 
-  typedef ACE_SYNCH_MUTEX         LockType;
-  typedef ACE_Guard<LockType>     GuardType;
-  typedef ACE_Condition<LockType> ConditionType;
+  typedef ACE_SYNCH_MUTEX LockType;
+  typedef ACE_Guard<LockType> GuardType;
+  typedef ConditionVariable<LockType> ConditionVariableType;
 
   /// This lock is used to protect the client_links_ data member.
   LockType client_links_lock_;

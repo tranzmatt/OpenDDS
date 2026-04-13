@@ -1,12 +1,6 @@
-#ifndef FACE_TS_COMMON_HPP_HEADER_FILE
-#define FACE_TS_COMMON_HPP_HEADER_FILE
+#ifndef OPENDDS_FACE_TS_COMMON_HPP
+#define OPENDDS_FACE_TS_COMMON_HPP
 #include "common.hpp"
-
-// Solaris already has NOSIGNAL in system headers
-// which we do not use
-#if (defined (__sun) && defined (NOSIGNAL))
-#undef NOSIGNAL
-#endif
 
 namespace FACE {
 

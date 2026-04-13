@@ -12,8 +12,11 @@
 #include "tests/DCPS/FooType4/FooDefTypeSupportC.h"
 #include "tests/DCPS/FooType4/FooDefTypeSupportImpl.h"
 
+using OpenDDS::DCPS::Encoding;
+
 const int default_key = 101010;
 
+const Encoding encoding(Encoding::KIND_UNALIGNED_CDR);
 
 Writer::Writer(::DDS::DataReader_ptr reader,
                int num_writes_per_thread,
@@ -28,7 +31,7 @@ Writer::Writer(::DDS::DataReader_ptr reader,
 void
 Writer::start()
 {
-  ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) Writer::start \n")));
+  ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) Writer::start\n")));
 
   try {
     OpenDDS::DCPS::DataReaderImpl* dr_servant =
@@ -37,6 +40,8 @@ Writer::start()
     ::Xyz::Foo foo;
     foo.x = 0.0;
     foo.y = 0.0;
+
+    const size_t foo_size = serialized_size(encoding, foo);
 
     ::OpenDDS::DCPS::SequenceNumber seq;
 
@@ -58,9 +63,14 @@ Writer::start()
 
       ACE_OS::printf("\"writing\" foo.x = %f foo.y = %f, foo.key = %d\n",
                      foo.x, foo.y, foo.key);
-      OpenDDS::DCPS::ReceivedDataSample sample(0);
 
-      sample.header_.message_length_ = sizeof(foo);
+      OpenDDS::DCPS::Message_Block_Ptr mb(new ACE_Message_Block(foo_size));
+      OpenDDS::DCPS::Serializer ser(mb.get(), encoding);
+      ser << foo;
+
+      OpenDDS::DCPS::ReceivedDataSample sample(*mb);
+
+      sample.header_.message_length_ = static_cast<unsigned>(foo_size);
       sample.header_.message_id_ = OpenDDS::DCPS::SAMPLE_DATA;
       sample.header_.sequence_ = seq.getValue();
 
@@ -75,15 +85,9 @@ Writer::start()
       sample.header_.source_timestamp_sec_ = static_cast<ACE_INT32>(now.sec());
       sample.header_.source_timestamp_nanosec_ = now.usec() * 1000;
 
-      sample.sample_.reset(new ACE_Message_Block(sizeof(foo)));
-
-      ::OpenDDS::DCPS::Serializer ser(sample.sample_.get());
-      ser << foo;
-
       dr_servant->data_received(sample);
     }
   } catch (const CORBA::Exception& ex) {
     ex._tao_print_exception("Exception caught in svc:");
   }
 }
-

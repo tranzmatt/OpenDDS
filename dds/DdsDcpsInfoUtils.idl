@@ -5,18 +5,20 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_INFO_UTILS_IDL
-#define OPENDDS_DCPS_INFO_UTILS_IDL
-#include "dds/DdsDcpsCore.idl"
-#include "dds/DdsDcpsGuid.idl"
+#ifndef OPENDDS_DDSDCPSINFOUTILS_IDL
+#define OPENDDS_DDSDCPSINFOUTILS_IDL
+
+#include <dds/DdsDcpsCore.idl>
+#include <dds/DdsDcpsGuid.idl>
 
 module OpenDDS
 {
   module DCPS
   {
-    // These are unique across a domain
-    // They are also the InstanceHandle_t in Sample_Info for built-in Topics
-    typedef GUID_t RepoId;
+    struct MonotonicTime_t {
+      long sec;
+      unsigned long nanosec;
+    };
 
     typedef DDS::OctetSeq TransportBLOB;
 
@@ -39,7 +41,7 @@ module OpenDDS
 
     // Information returned from call to add_domain_participant()
     struct AddDomainStatus {
-      RepoId  id;
+      GUID_t  id;
       boolean federated;
     };
 
@@ -58,36 +60,32 @@ module OpenDDS
 
     struct WriterAssociation {
       TransportLocatorSeq writerTransInfo;
-      RepoId writerId;
+      TransportLocator writerDiscInfo;
+      unsigned long transportContext;
+      GUID_t writerId;
       ::DDS::PublisherQos pubQos;
       ::DDS::DataWriterQos writerQos;
+      ::DDS::OctetSeq serializedTypeInfo;
+      MonotonicTime_t participantDiscoveredAt;
     };
 
     struct ReaderAssociation {
       TransportLocatorSeq readerTransInfo;
-      RepoId readerId;
+      TransportLocator readerDiscInfo;
+      unsigned long transportContext;
+      GUID_t readerId;
       ::DDS::SubscriberQos subQos;
       ::DDS::DataReaderQos readerQos;
       string filterClassName;
       string filterExpression;
       ::DDS::StringSeq exprParams;
+      ::DDS::OctetSeq serializedTypeInfo;
+      MonotonicTime_t participantDiscoveredAt;
     };
 
-    typedef sequence<RepoId> WriterIdSeq;
+    typedef sequence<GUID_t> WriterIdSeq;
 
-    typedef sequence<RepoId> ReaderIdSeq;
-
-    typedef octet OctetArray16[16];
-
-    /* Type used to represent the addressing information needed to send a
-       message to an RTPS Endpoint */
-    struct Locator_t {
-      long kind;
-      unsigned long _port;
-      OctetArray16 address;
-    };
-
-    typedef sequence<Locator_t> LocatorSeq;
+    typedef sequence<GUID_t> ReaderIdSeq;
 
     typedef string<256> String256;
 
@@ -103,8 +101,6 @@ module OpenDDS
     struct ReaderProxy_t {
       GUID_t remoteReaderGuid;  // optional in DiscoveredReaderData
       boolean expectsInlineQos;
-      LocatorSeq unicastLocatorList;
-      LocatorSeq multicastLocatorList;
       TransportLocatorSeq allLocators;
       GUIDSeq associatedWriters;
     };
@@ -118,8 +114,6 @@ module OpenDDS
 
     struct WriterProxy_t {
       GUID_t remoteWriterGuid;  // optional in DiscoveredWriterData
-      LocatorSeq unicastLocatorList;
-      LocatorSeq multicastLocatorList;
       TransportLocatorSeq allLocators;
     };
 
@@ -129,7 +123,7 @@ module OpenDDS
       WriterProxy_t writerProxy;
     };
 
-  }; // module DDS
+  }; // module DCPS
 }; // module OpenDDS
 
 #endif /* OPENDDS_DCPS_INFO_UTILS_IDL */

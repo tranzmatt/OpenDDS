@@ -14,60 +14,54 @@ use PerlDDS::Run_Test;
 
 PerlDDS::add_lib_path('../FooType');
 
+my $test = new PerlDDS::TestFramework();
+
 my $debug_level = 0;
-my $pub_opts = "";
-my $sub_opts = "";
-# $pub_opts .= "-DCPSChunks 1 ";
+my $opts = "";
+# $opts .= "-DCPSChunks 1 ";
 
-my $arg = shift || "";
-if ($arg eq 'low') {
-  $pub_opts .= "-t 8 -s 128";
-  $sub_opts .= "-t 8 -n 1024";
-
-} elsif ($arg eq 'medium') {
-  $pub_opts .= "-t 16 -s 64";
-  $sub_opts .= "-t 16 -n 1024";
-
-} elsif ($arg eq 'high') {
-  $pub_opts .= "-t 32 -s 32";
-  $sub_opts .= "-t 32 -n 1024";
-
-} elsif ($arg eq 'aggressive') {
-  $pub_opts .= "-t 64 -s 16";
-  $sub_opts .= "-t 64 -n 1024";
-
-} elsif ($arg eq 'single') {
-  $pub_opts .= "-t 1 -s 1";
-  $sub_opts .= "-t 1 -n 1";
-
+if ($test->flag('low')) {
+  $opts .= "-t 8 -s 128 -n 1024";
+} elsif ($test->flag('medium')) {
+  $opts .= "-t 16 -s 64 -n 1024";
+} elsif ($test->flag('high')) {
+  $opts .= "-t 32 -s 32 -n 1024";
+} elsif ($test->flag('aggressive')) {
+  $opts .= "-t 64 -s 16 -n 1024";
+} elsif ($test->flag('triangle')) {
+  $opts .= "-t 3 -s 3 -n 9";
+} elsif ($test->flag('double')) {
+  $opts .= "-t 2 -s 1 -n 2";
+} elsif ($test->flag('single')) {
+  $opts .= "-t 1 -s 1 -n 1";
+} elsif ($test->flag('superlow')) {
+  $opts .= "-t 4 -s 256 -n 1024";
+} elsif ($test->flag('megalow')) {
+  $opts .= "-t 2 -s 512 -n 1024";
 } else { # default (i.e. lazy)
-  $pub_opts .= "-t 1 -s 1024";
-  $sub_opts .= "-t 1 -n 1024";
+  $opts .= "-t 1 -s 1024 -n 1024";
+}
+
+if ($test->flag('durable')) {
+  $opts .= " -d";
 }
 
 if ($debug_level) {
-  unlink 'publisher.log' , 'subscriber.log';
-  $pub_opts .= " -DCPSDebugLevel $debug_level -DCPSTransportDebugLevel $debug_level -ORBLogFile publisher.log";
-  $sub_opts .= " -DCPSDebugLevel $debug_level -DCPSTransportDebugLevel $debug_level -ORBLogFile subscriber.log";
+  unlink 'Thrasher.log';
+  $opts .= " -DCPSDebugLevel $debug_level -DCPSTransportDebugLevel $debug_level -ORBLogFile Thrasher.log";
 }
 
 my $ini_file = "thrasher.ini";
-
-if (("rtps" eq $arg) || ("rtps" eq (shift || ""))) {
+if ($test->flag('rtps')) {
   $ini_file = "thrasher_rtps.ini";
 }
+$opts .= " -DCPSConfigFile $ini_file";
+if ("thrasher.ini" eq $ini_file) {
+  $test->setup_discovery();
+}
 
-$pub_opts .= " -DCPSConfigFile $ini_file";
-$sub_opts .= " -DCPSConfigFile $ini_file";
-
-my $test = new PerlDDS::TestFramework();
-$test->setup_discovery();
 $test->enable_console_logging();
+$test->process('Thrasher', 'Thrasher', $opts);
+$test->start_process('Thrasher');
 
-$test->process('sub', 'subscriber', $sub_opts);
-$test->process('pub', 'publisher', $pub_opts);
-
-$test->start_process('sub');
-$test->start_process('pub');
-
-exit $test->finish(300);
+exit $test->finish(900);

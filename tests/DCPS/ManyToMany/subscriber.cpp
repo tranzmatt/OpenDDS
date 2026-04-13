@@ -18,10 +18,6 @@
 #include "dds/DCPS/transport/framework/TransportRegistry.h"
 #include <dds/DCPS/transport/framework/TransportExceptions.h>
 #include "dds/DCPS/transport/framework/TransportInst_rch.h"
-#if defined (sun)
-#include "dds/DCPS/transport/udp/UdpInst.h"
-#include "dds/DCPS/transport/udp/UdpInst_rch.h"
-#endif
 
 #include "dds/DCPS/StaticIncludes.h"
 #if defined ACE_AS_STATIC_LIBS && !defined OPENDDS_SAFETY_PROFILE
@@ -58,22 +54,6 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[])
     DDS::DomainParticipantFactory_var dpf =
       TheParticipantFactoryWithArgs(argc, argv);
 
-    // handle test performance issue on one platform
-#if defined (sun)
-    const char* udpTransName = "udp";
-    OpenDDS::DCPS::TransportInst_rch inst = OpenDDS::DCPS::TransportRegistry::instance()->get_inst(udpTransName);
-    if (inst != 0) {
-      OpenDDS::DCPS::UdpInst_rch udp_inst = OpenDDS::DCPS::dynamic_rchandle_cast<OpenDDS::DCPS::UdpInst>(inst);
-      if (udp_inst == 0) {
-        ACE_ERROR_RETURN((LM_ERROR,
-                          ACE_TEXT("%N:%l main()")
-                          ACE_TEXT(" ERROR: retrieving transport config for: %C failed!\n"),
-                          udpTransName), -1);
-      }
-      udp_inst->rcv_buffer_size_ = 0x40000;
-    }
-#endif
-
     const Options options(argc, argv);
     // Create DomainParticipant
     typedef std::vector<DDS::DomainParticipant_var> Participants;
@@ -90,13 +70,13 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[])
 
     const std::string pid = ss.str();
 
-    ACE_DEBUG((LM_DEBUG, ACE_TEXT("%T (%P|%t) Created dpf\n")));
+    ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) Created dpf\n")));
 
     unsigned int part_index = 0;
     for (Participants::iterator part = participants.begin();
          part != participants.end();
          ++part, ++part_index) {
-      ACE_DEBUG((LM_DEBUG, ACE_TEXT("%T (%P|%t) Creating participant\n")));
+      ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) Creating participant\n")));
 
       *part =
         dpf->create_participant(111,
@@ -162,7 +142,7 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[])
       }
 
       for (unsigned int reader = 0; reader < options.num_readers; ++reader) {
-        ACE_DEBUG((LM_DEBUG, ACE_TEXT("%T (%P|%t) Creating reader\n")));
+        ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) Creating reader\n")));
 
         // Create DataReader
         listener_servants.push_back(new DataReaderListenerImpl(options, pid, part_index, reader));
@@ -200,7 +180,7 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[])
       delay += sleep_delay_msec;
       ACE_OS::sleep(ACE_Time_Value(0, sleep_delay_msec * 1000));
     }
-    ACE_DEBUG((LM_DEBUG, ACE_TEXT("%T (%P|%t) Listeners done (ran for %d msec)\n"), delay));
+    ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) Listeners done (ran for %d msec)\n"), delay));
 
     if (delay >= options.total_duration_msec) {
       for (ListenerServants::const_iterator listener = listener_servants.begin();
@@ -233,6 +213,6 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[])
     return -1;
   }
 
-  ACE_DEBUG((LM_DEBUG, ACE_TEXT("%T (%P|%t) Subscriber exiting\n")));
+  ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) Subscriber exiting\n")));
   return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

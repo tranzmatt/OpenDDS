@@ -5,29 +5,31 @@
  * See: http://www.OpenDDS.org/license.html
  */
 
+#ifndef OPENDDS_DCPS_SECURITY_ACCESSCONTROLBUILTINIMPL_H
+#define OPENDDS_DCPS_SECURITY_ACCESSCONTROLBUILTINIMPL_H
 
+#include "OpenDDS_Security_Export.h"
+#include "AccessControl/LocalAccessCredentialData.h"
+#include "AccessControl/Governance.h"
+#include "AccessControl/Permissions.h"
+#include "SSL/SubjectName.h"
 
-#ifndef DDS_ACCESS_CONTROL_BUILTIN_IMPL_H
-#define DDS_ACCESS_CONTROL_BUILTIN_IMPL_H
+#include <dds/DCPS/Service_Participant.h>
+#include <dds/DCPS/TimeTypes.h>
+#include <dds/DCPS/SporadicEvent.h>
+#include <dds/Versioned_Namespace.h>
 
-#include "dds/DCPS/security/DdsSecurity_Export.h"
-#include "dds/DdsSecurityCoreC.h"
-#include "dds/Versioned_Namespace.h"
-#include "dds/DCPS/Service_Participant.h"
+#include <dds/DdsSecurityCoreC.h>
 
-#include "ace/Thread_Mutex.h"
-#include "ace/Reactor.h"
+#include <ace/Thread_Mutex.h>
+#include <ace/Reactor.h>
+
 #include <map>
 #include <set>
 #include <list>
 #include <vector>
 #include <string>
 #include <memory>
-
-#include "AccessControl/LocalAccessCredentialData.h"
-#include "AccessControl/Governance.h"
-#include "AccessControl/Permissions.h"
-#include "SSL/SubjectName.h"
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 #pragma once
@@ -40,7 +42,6 @@ OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 namespace OpenDDS {
 namespace Security {
 
-
 /**
 * @class AccessControlBuiltInImpl
 *
@@ -51,7 +52,7 @@ namespace Security {
 * the interface this class is implementing.
 *
 */
-class DdsSecurity_Export AccessControlBuiltInImpl
+class OpenDDS_Security_Export AccessControlBuiltInImpl
   : public virtual DDS::Security::AccessControl {
 public:
   AccessControlBuiltInImpl();
@@ -106,13 +107,13 @@ public:
   virtual bool check_local_datawriter_register_instance(
     DDS::Security::PermissionsHandle permissions_handle,
     DDS::DataWriter_ptr writer,
-    DDS::Security::DynamicData_ptr key,
+    DDS::DynamicData_ptr key,
     DDS::Security::SecurityException& ex);
 
   virtual bool check_local_datawriter_dispose_instance(
     DDS::Security::PermissionsHandle permissions_handle,
     DDS::DataWriter_ptr writer,
-    DDS::Security::DynamicData_ptr key,
+    DDS::DynamicData_ptr key,
     DDS::Security::SecurityException& ex);
 
   virtual bool check_remote_participant(
@@ -158,15 +159,14 @@ public:
     DDS::Security::PermissionsHandle permissions_handle,
     DDS::DataReader_ptr reader,
     DDS::InstanceHandle_t publication_handle,
-    DDS::Security::DynamicData_ptr key,
-    DDS::InstanceHandle_t instance_handle,
+    DDS::DynamicData_ptr key,
     DDS::Security::SecurityException& ex);
 
   virtual bool check_remote_datawriter_dispose_instance(
     DDS::Security::PermissionsHandle permissions_handle,
     DDS::DataReader_ptr reader,
     DDS::InstanceHandle_t publication_handle,
-    DDS::Security::DynamicData_ptr key,
+    DDS::DynamicData_ptr key,
     DDS::Security::SecurityException& ex);
 
   virtual bool get_permissions_token(
@@ -181,6 +181,10 @@ public:
 
   virtual bool set_listener(
     DDS::Security::AccessControlListener_ptr listener,
+    DDS::Security::SecurityException& ex);
+
+  virtual bool return_permissions_handle(
+    DDS::Security::PermissionsHandle handle,
     DDS::Security::SecurityException& ex);
 
   virtual bool return_permissions_token(
@@ -230,6 +234,9 @@ public:
     const DDS::Security::EndpointSecurityAttributes& attributes,
     DDS::Security::SecurityException& ex);
 
+  static bool pattern_match(const char* string, const char* pattern);
+
+  SSL::SubjectName get_subject_name(DDS::Security::PermissionsHandle permissions_handle) const;
 
 private:
 
@@ -251,42 +258,48 @@ private:
   typedef std::map<DDS::Security::IdentityHandle, DDS::Security::PermissionsHandle> ACIdentityMap;
   ACIdentityMap local_identity_map_;
 
-  class RevokePermissionsTimer : public ACE_Event_Handler {
+  class RevokePermissions : public DCPS::RcObject {
   public:
-    RevokePermissionsTimer(AccessControlBuiltInImpl& impl);
-    virtual ~RevokePermissionsTimer();
-    bool start_timer(const ACE_Time_Value length, DDS::Security::PermissionsHandle pm_handle);
-    virtual int handle_timeout(const ACE_Time_Value& tv, const void* arg);
-    bool is_scheduled() { return scheduled_; }
+    explicit RevokePermissions(AccessControlBuiltInImpl& impl);
+    virtual ~RevokePermissions();
 
-  protected:
-    AccessControlBuiltInImpl& impl_;
-
-    ACE_Time_Value interval() const { return interval_; }
+    void insert(DDS::Security::PermissionsHandle pm_handle, const time_t& expiration);
+    void erase(DDS::Security::PermissionsHandle pm_handle);
 
   private:
-    ACE_Time_Value interval_;
-    bool scheduled_;
-    long timer_id_;
-    ACE_Thread_Mutex lock_;
-  };
+    typedef OPENDDS_MAP(DDS::Security::PermissionsHandle, time_t) HandleToExpiration;
+    typedef OPENDDS_MULTIMAP(time_t, DDS::Security::PermissionsHandle) ExpirationToHandle;
 
-  RevokePermissionsTimer local_rp_timer_;
-  RevokePermissionsTimer remote_rp_timer_;
+    void process();
+
+    AccessControlBuiltInImpl& impl_;
+    DCPS::SporadicEvent_rch revokation_event_;
+
+    mutable ACE_Thread_Mutex lock_;
+    HandleToExpiration handle_to_expiration_;
+    ExpirationToHandle expiration_to_handle_;
+  };
+  typedef DCPS::PmfEvent<RevokePermissions> RevokePermissionsEvent;
+  typedef DCPS::RcHandle<RevokePermissions> RevokePermissions_rch;
+
+  RevokePermissions_rch local_rp_task_;
+  RevokePermissions_rch remote_rp_task_;
 
   int generate_handle();
 
-  ACE_Thread_Mutex handle_mutex_;
-  ACE_Thread_Mutex gen_handle_mutex_;
+  mutable ACE_Thread_Mutex handle_mutex_;
+  mutable ACE_Thread_Mutex gen_handle_mutex_;
 
   int next_handle_;
 
   DDS::Security::AccessControlListener_ptr listener_ptr_;
 
-  time_t convert_permissions_time(const std::string& timeString);
+  RevokePermissions_rch& make_task(RevokePermissions_rch& task);
 
-  bool validate_date_time(ACPermsMap::iterator ac_iter,
-                          time_t& delta_time,
+  static time_t utc_now();
+
+  bool validate_date_time(const Permissions::Validity_t& validity,
+                          time_t now_utc,
                           DDS::Security::SecurityException& ex);
 
   bool get_sec_attributes(DDS::Security::PermissionsHandle permissions_handle,
@@ -296,18 +309,14 @@ private:
                           DDS::Security::EndpointSecurityAttributes& attributes,
                           DDS::Security::SecurityException& ex);
 
-  bool search_local_permissions(const char* topic_name,
-                                DDS::Security::DomainId_t domain_id,
-                                const DDS::PartitionQosPolicy& partition,
-                                Permissions::PublishSubscribe_t pub_or_sub,
-                                ACPermsMap::iterator ac_iter,
-                                DDS::Security::SecurityException& ex);
-
-  bool search_remote_permissions(const char* topic_name,
-                                 DDS::Security::DomainId_t domain_id,
-                                 ACPermsMap::iterator ac_iter,
-                                 Permissions::PublishSubscribe_t pub_or_sub,
-                                 DDS::Security::SecurityException& ex);
+  bool search_permissions(const char* topic_name,
+                          DDS::Security::DomainId_t domain_id,
+                          const DDS::PartitionQosPolicy& partition,
+                          Permissions::PublishSubscribe_t pub_or_sub,
+                          const Permissions::Grant& grant,
+                          time_t now_utc,
+                          time_t& expiration_time,
+                          DDS::Security::SecurityException& ex);
 
   void parse_class_id(const std::string& class_id,
                       std::string& plugin_class_name,
@@ -321,4 +330,4 @@ private:
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
 
-#endif
+#endif // OPENDDS_DCPS_SECURITY_ACCESSCONTROLBUILTINIMPL_H

@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_TRANSPORTSENDLISTENER_H
-#define OPENDDS_DCPS_TRANSPORTSENDLISTENER_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTSENDLISTENER_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTSENDLISTENER_H
 
 #include "dds/DCPS/dcps_export.h"
 #include "dds/DCPS/RcHandle_T.h"
@@ -45,6 +45,8 @@ public:
   virtual void data_dropped(const DataSampleElement* sample,
                             bool dropped_by_transport);
 
+  virtual void data_acked(const GUID_t&) {}
+
   virtual void control_delivered(const Message_Block_Ptr& sample);
   virtual void control_dropped(const Message_Block_Ptr& sample,
                                bool dropped_by_transport);
@@ -54,6 +56,8 @@ public:
   virtual void notify_publication_lost(const ReaderIdSeq& subids) = 0;
 
   virtual void remove_associations(const ReaderIdSeq& subids, bool notify) = 0;
+
+  virtual void replay_durable_data_for(const GUID_t&) {}
 
   /// Hook for the listener to override a normal control message with
   /// customized messages to different DataLinks.
@@ -70,6 +74,8 @@ public:
   };
 
   virtual void retrieve_inline_qos_data(InlineQosData& qos_data) const;
+
+  virtual void transport_discovery_change() {}
 
 protected:
 

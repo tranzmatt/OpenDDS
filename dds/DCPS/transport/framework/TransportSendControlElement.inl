@@ -5,9 +5,6 @@
  * See: http://www.opendds.org/license.html
  */
 
-#include "EntryExit.h"
-#include "dds/DCPS/DataSampleElement.h"
-
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace OpenDDS {
@@ -24,7 +21,7 @@ ACE_INLINE
 SequenceNumber
 TransportSendControlElement::sequence() const
 {
-  return this->header_.sequence_;
+  return header_.sequence_;
 }
 
 }

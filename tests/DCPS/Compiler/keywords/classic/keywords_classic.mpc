@@ -1,0 +1,16 @@
+project: dcps_test, googletest, msvc_bigobj {
+  exename = keywords-classic
+  includes += .
+  macros += CPP11_MAPPING=0
+  Source_Files {
+    ../main.cpp
+  }
+  idlflags += -I..
+  IDL_Files {
+    ../test.idl
+  }
+  dcps_ts_flags += -Gxtypes-complete
+  TypeSupport_Files {
+    ../test.idl
+  }
+}

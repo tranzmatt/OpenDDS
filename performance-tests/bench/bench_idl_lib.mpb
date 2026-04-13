@@ -1,0 +1,10 @@
+project: dcps_rtps_udp, opendds_uses_cxx11 {
+  after    += Bench_Idl
+  libs     += Bench_Idl
+  expand(BENCH_ROOT) {
+    $BENCH_ROOT
+    $(DDS_ROOT)/performance-tests/bench
+  }
+  libpaths += $(BENCH_ROOT)/lib
+  includes += $(BENCH_ROOT)/idl
+}

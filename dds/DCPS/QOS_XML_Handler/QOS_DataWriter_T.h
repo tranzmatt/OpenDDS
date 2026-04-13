@@ -4,8 +4,8 @@
  *
  * Starting point for parsing the Topic QOS settings.
  */
-#ifndef QOS_DATAWRITER_T_H_
-#define QOS_DATAWRITER_T_H_
+#ifndef OPENDDS_DCPS_QOS_XML_HANDLER_QOS_DATAWRITER_T_H
+#define OPENDDS_DCPS_QOS_XML_HANDLER_QOS_DATAWRITER_T_H
 
 #include "QOS_DwTp_Base_T.h"
 
@@ -16,8 +16,8 @@ class QOS_DataWriter_T
   : public QOS_DwTp_Base_T<XML_QOS_TYPE, DDS_QOS_TYPE>
 {
 public:
-  QOS_DataWriter_T (void);
-  ~QOS_DataWriter_T (void);
+  QOS_DataWriter_T ();
+  ~QOS_DataWriter_T ();
 
   void read_qos (DDS_QOS_TYPE&, const XML_QOS_TYPE);
 
@@ -27,6 +27,6 @@ private:
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
 
-#include "dds/DCPS/QOS_XML_Handler/QOS_DataWriter_T.cpp"
+#include "QOS_DataWriter_T.cpp"
 
 #endif /* QOS_DATAWRITER_T_H_ */

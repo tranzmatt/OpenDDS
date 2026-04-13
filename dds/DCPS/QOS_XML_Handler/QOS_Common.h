@@ -5,8 +5,8 @@
  * Converting most common QOS XML settings to IDL QOS.
  *
  */
-#ifndef QOS_COMMON_H
-#define QOS_COMMON_H
+#ifndef OPENDDS_DCPS_QOS_XML_HANDLER_QOS_COMMON_H
+#define OPENDDS_DCPS_QOS_XML_HANDLER_QOS_COMMON_H
 
 #include /**/ "ace/pre.h"
 
@@ -22,7 +22,6 @@ OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 class QosCommon
 {
 public:
-
   //@{
   /** Operations which convert QOS XML kinds to QOS IDL kinds. */
 
@@ -36,9 +35,12 @@ public:
                                      ::DDS::ReliabilityQosPolicyKind& dds_kind);
   static void get_destination_order_kind (const ::dds::destinationOrderKind kind,
                                           ::DDS::DestinationOrderQosPolicyKind& dds_kind);
-
   static void get_ownership_kind (::dds::ownershipKind kind,
                                   ::DDS::OwnershipQosPolicyKind& dds_kind);
+  static void get_type_consistency_kind (::dds::typeConsistencyKind kind,
+                                         ::DDS::TypeConsistencyEnforcementQosPolicyKind_t& dds_kind);
+  static void get_data_presentation_id_kind (::dds::dataRepresentationIdKind kind,
+                                             ::DDS::DataRepresentationId_t& dds_kind);
   //@}
 
   /**
@@ -59,7 +61,6 @@ public:
    *
    */
   static ::CORBA::Long get_qos_long (const ACE_TCHAR * value);
-
 };
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL

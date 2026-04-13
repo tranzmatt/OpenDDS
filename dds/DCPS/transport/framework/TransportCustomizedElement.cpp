@@ -40,26 +40,11 @@ TransportCustomizedElement::release_element(bool dropped_by_transport)
   }
 }
 
-RepoId
-TransportCustomizedElement::publication_id() const
+ACE_Message_Block*
+TransportCustomizedElement::duplicate_msg() const
 {
-  DBG_ENTRY_LVL("TransportCustomizedElement", "publication_id", 6);
-  return publication_id_;
-}
-
-RepoId
-TransportCustomizedElement::subscription_id() const
-{
-  DBG_ENTRY_LVL("TransportCustomizedElement", "subscription_id", 6);
-  const TransportSendElement* ose = original_send_element();
-  return ose ? ose->subscription_id() : GUID_UNKNOWN;
-}
-
-void
-TransportCustomizedElement::set_publication_id(const RepoId& id)
-{
-  DBG_ENTRY_LVL("TransportCustomizedElement", "set_msg", 6);
-  publication_id_ = id;
+  DBG_ENTRY_LVL("TransportCustomizedElement", "duplicate_msg", 6);
+  return msg_->duplicate();
 }
 
 const ACE_Message_Block*
@@ -84,17 +69,30 @@ TransportCustomizedElement::msg_payload() const
 }
 
 const TransportSendElement*
-TransportCustomizedElement::original_send_element() const
+TransportCustomizedElement::find_original_send_element(TransportQueueElement* orig)
 {
   const TransportSendElement* ose =
-    dynamic_cast<const TransportSendElement*>(orig_);
+    dynamic_cast<const TransportSendElement*>(orig);
   if (!ose) {
     const TransportCustomizedElement* tce =
-      dynamic_cast<const TransportCustomizedElement*>(orig_);
+      dynamic_cast<const TransportCustomizedElement*>(orig);
     return tce ? tce->original_send_element() : 0;
   }
   return ose;
 }
+
+const TransportSendElement*
+TransportCustomizedElement::original_send_element() const
+{
+  return original_send_element_;
+}
+
+bool
+TransportCustomizedElement::is_last_fragment() const
+{
+  return original_send_element_ ? original_send_element_->is_last_fragment() : false;
+}
+
 
 } // namespace DCPS
 } // namespace OpenDDS

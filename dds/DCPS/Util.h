@@ -1,12 +1,16 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
 #ifndef OPENDDS_DCPS_UTIL_H
 #define OPENDDS_DCPS_UTIL_H
+
+#include <dds/Versioned_Namespace.h>
+
+#include <ace/CDR_Base.h>
+
+#include <cstring>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -135,11 +139,97 @@ int remove(
 template <typename Seq>
 void push_back(Seq& seq, const typename Seq::value_type& val)
 {
-  const CORBA::ULong len = seq.length();
+  const ACE_CDR::ULong len = seq.length();
+  // Grow by factor of 2 when length is a power of 2 in order to prevent every call to length(+1)
+  // allocating a new buffer & copying previous results. The maximum is kept when length is reduced.
+  if (len && !(len & (len - 1))) {
+    seq.length(2 * len);
+  }
   seq.length(len + 1);
   seq[len] = val;
 }
 
+template <typename Seq>
+typename Seq::size_type grow(Seq& seq)
+{
+  const ACE_CDR::ULong len = seq.length();
+  // Grow by factor of 2 when length is a power of 2 in order to prevent every call to length(+1)
+  // allocating a new buffer & copying previous results. The maximum is kept when length is reduced.
+  if (len && !(len & (len - 1))) {
+    seq.length(2 * len);
+  }
+  seq.length(len + 1);
+  return len + 1;
+}
+
+// Constructs a sorted intersect of the given two sorted ranges [a,aEnd) and [b,bEnd).
+// (for pre-c++17 code for the similar effect of std::set_intersection in c++17)
+template <typename InputIteratorA, typename InputIteratorB, typename OutputIterator>
+OutputIterator intersect_sorted_ranges(InputIteratorA a, InputIteratorA aEnd,
+                                       InputIteratorB b, InputIteratorB bEnd,
+                                       OutputIterator intersect)
+{
+  while (a != aEnd && b != bEnd) {
+    if (*a < *b) { ++a; }
+    else if (*b < *a) { ++b; }
+    else { *intersect++ = *a++; ++b; }
+  }
+  return intersect;
+}
+
+// Constructs a sorted intersect of the given two sorted ranges [a,aEnd) and [b,bEnd).
+// (for pre-c++17 code for the similar effect of std::set_intersection in c++17)
+template <typename InputIteratorA, typename InputIteratorB, typename OutputIterator, typename LessThan>
+OutputIterator intersect_sorted_ranges(InputIteratorA a, InputIteratorA aEnd,
+                                       InputIteratorB b, InputIteratorB bEnd,
+                                       OutputIterator intersect, LessThan lessThan)
+{
+  while (a != aEnd && b != bEnd) {
+    if (lessThan(*a, *b)) { ++a; }
+    else if (lessThan(*b, *a)) { ++b; }
+    else { *intersect++ = *a++; ++b; }
+  }
+  return intersect;
+}
+
+// Keeps the intersection of the two sorted collections in the first one,
+// and returns whether an intersection exists between the two colloctions.
+// Note:
+// The generic scope of the first template parameter is narrowed down to std::set<T> because
+// the pre-c++11 erase() may not work here with some collections (e.g. a sorted std::vector).
+// The since-c++11 erase() works properly with both an std::set and a sorted std::vector.
+template <typename SetA, typename SortedB, typename LessThan>
+bool set_intersect(SetA& sA, const SortedB& sB, LessThan lessThan)
+{
+  typename SetA::iterator a = sA.begin();
+  typename SortedB::const_iterator b = sB.begin();
+  while (a != sA.end()) {
+    if (b != sB.end()) {
+      if (lessThan(*a, *b)) {
+        sA.erase(a++);
+      } else {
+        if (!lessThan(*b, *a)) { ++a; }
+        ++b;
+      }
+    } else {
+      sA.erase(a, sA.end());
+      break;
+    }
+  }
+  return !sA.empty();
+}
+
+template <typename Type, size_t count>
+size_t array_count(Type(&)[count])
+{
+  return count;
+}
+
+template <typename T>
+inline int mem_cmp(const T& a, const T& b)
+{
+  return std::memcmp(&a, &b, sizeof(T));
+}
 
 } // namespace DCPS
 } // namespace OpenDDS

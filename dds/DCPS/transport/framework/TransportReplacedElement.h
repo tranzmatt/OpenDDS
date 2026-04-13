@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_TRANSPORTREPLACEDELEMENT_H
-#define OPENDDS_DCPS_TRANSPORTREPLACEDELEMENT_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTREPLACEDELEMENT_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTREPLACEDELEMENT_H
 
 #include "dds/DCPS/dcps_export.h"
 #include "TransportQueueElement.h"
@@ -28,7 +28,9 @@ public:
   virtual ~TransportReplacedElement();
 
   /// Accessor for the publisher id.
-  virtual RepoId publication_id() const;
+  virtual GUID_t publication_id() const;
+
+  virtual ACE_Message_Block* duplicate_msg() const;
 
   /// Accessor for the ACE_Message_Block
   virtual const ACE_Message_Block* msg() const;
@@ -36,6 +38,8 @@ public:
   virtual const ACE_Message_Block* msg_payload() const;
 
   virtual bool owned_by_transport();
+
+  virtual bool is_retained_replaced() const;
 
 protected:
 
@@ -48,7 +52,7 @@ private:
   DataBlockAllocator* db_allocator_;
 
   /// The publication_id() from the original TransportQueueElement
-  RepoId publisher_id_;
+  GUID_t publisher_id_;
 
   /// A deep-copy of the msg() from the original TransportQueueElement.
   Message_Block_Ptr msg_;

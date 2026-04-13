@@ -5,14 +5,14 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_ICE_H
-#define OPENDDS_ICE_H
+#ifndef OPENDDS_DCPS_ICE_H
+#define OPENDDS_DCPS_ICE_H
 
-#include "dds/DCPS/dcps_export.h"
-#include "dds/DCPS/GuidUtils.h"
-#include "dds/DCPS/PoolAllocationBase.h"
-#include "dds/DCPS/PoolAllocator.h"
-#include "dds/DCPS/Serializer.h"
+#include "dcps_export.h"
+#include "GuidUtils.h"
+#include "PoolAllocationBase.h"
+#include "PoolAllocator.h"
+#include "Serializer.h"
 
 #include "dds/DdsDcpsInfoUtilsC.h"
 
@@ -99,6 +99,8 @@ struct AgentInfo {
     return !(*this == other);
   }
 };
+
+typedef OPENDDS_MAP(OPENDDS_STRING, ICE::AgentInfo) AgentInfoMap;
 
 } // namespace ICE
 } // namespace OpenDDS

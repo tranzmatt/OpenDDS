@@ -6,10 +6,10 @@
  */
 
 #include "DCPS/DdsDcps_pch.h" //Only the _pch include should start with DCPS/
-#include "dds/DCPS/GroupRakeData.h"
-#include "dds/DCPS/SubscriptionInstance.h"
-#include "dds/DCPS/DataReaderImpl.h"
-#include "dds/DCPS/QueryConditionImpl.h"
+#include "GroupRakeData.h"
+#include "SubscriptionInstance.h"
+#include "DataReaderImpl.h"
+#include "QueryConditionImpl.h"
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -22,6 +22,7 @@ GroupRakeData::GroupRakeData()
 
 
 bool GroupRakeData::insert_sample(ReceivedDataElement* sample,
+                                  ReceivedDataElementList* rdel,
                                   SubscriptionInstance_rch instance,
                                   size_t index_in_instance)
 {
@@ -31,7 +32,7 @@ bool GroupRakeData::insert_sample(ReceivedDataElement* sample,
     return false;
   }
 
-  RakeData rd = {sample, instance, index_in_instance};
+  RakeData rd = {sample, rdel, instance, index_in_instance};
   this->sorted_.insert(rd);
 
   this->current_sample_ = this->sorted_.begin();

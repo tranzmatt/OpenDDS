@@ -31,7 +31,7 @@ class Monitor;
 *
 * @brief Implements the DDS::Topic interface.
 *
-* See the DDS specification, OMG formal/04-12-02, for a description of
+* See the DDS specification, OMG formal/2015-04-10, for a description of
 * the interface this class is implementing.
 */
 class OpenDDS_Dcps_Export TopicImpl
@@ -40,7 +40,6 @@ class OpenDDS_Dcps_Export TopicImpl
     public virtual TopicCallbacks,
     public virtual TopicDescriptionImpl {
 public:
-
   TopicImpl(const char*                    topic_name,
             const char*                    type_name,
             OpenDDS::DCPS::TypeSupport_ptr type_support,
@@ -71,20 +70,32 @@ public:
   *  internal use.
   *  Return the id given by discovery.
   */
-  RepoId get_id() const;
+  GUID_t get_id() const;
 
   // OpenDDS extension which doesn't duplicate the string to prevent
   // the runtime costs of making a copy
   const char* type_name() const;
 
+  // OpenDDS extension which doesn't duplicate the string to prevent
+  // the runtime costs of making a copy
+  const char* topic_name() const;
+
   virtual void transport_config(const TransportConfig_rch& cfg);
 
   void inconsistent_topic(int count);
+
+  /**
+   * Compare the QoS of the IDL Type and the Topic/DataWriter/DataReader to see
+   * whether the type matches all values in the QoS.
+   */
+  bool check_data_representation(const DDS::DataRepresentationIdSeq& qos_ids, bool is_data_writer);
 
 private:
   /// The topic qos
   DDS::TopicQos                qos_;
 
+  /// Mutex to protect listener info
+  ACE_Thread_Mutex             listener_mutex_;
   /// The mask for which kind of events the listener
   ///  will be notified about.
   DDS::StatusMask              listener_mask_;
@@ -92,14 +103,16 @@ private:
   DDS::TopicListener_var       listener_;
 
   /// The id given by discovery.
-  RepoId                       id_;
+  GUID_t                       id_;
 
+  /// Mutex to protect status info
+  ACE_Thread_Mutex             status_mutex_;
   /// Count of discovered (readers/writers using) topics with the same
   /// topic name but different characteristics (typename)
   DDS::InconsistentTopicStatus inconsistent_topic_status_;
 
   /// Pointer to the monitor object for this entity
-  Monitor* monitor_;
+  unique_ptr<Monitor> monitor_;
 };
 
 

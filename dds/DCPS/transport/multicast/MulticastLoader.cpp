@@ -24,7 +24,8 @@ class MulticastType : public TransportType {
 public:
   const char* name() { return MULTICAST_NAME; }
 
-  TransportInst_rch new_inst(const std::string& name)
+  TransportInst_rch new_inst(const std::string& name,
+                             bool)
   {
     return make_rch<MulticastInst>(name);
   }
@@ -38,7 +39,10 @@ MulticastLoader::init(int /*argc*/, ACE_TCHAR* /*argv*/[])
   if (initialized) return 0;  // already initialized
 
   TransportRegistry* registry = TheTransportRegistry;
-  registry->register_type(make_rch<MulticastType>());
+  if (!registry->register_type(make_rch<MulticastType>())) {
+    return 0;
+  }
+
   TransportConfig_rch cfg =
     registry->get_config(TransportRegistry::DEFAULT_CONFIG_NAME);
 
@@ -51,7 +55,7 @@ MulticastLoader::init(int /*argc*/, ACE_TCHAR* /*argv*/[])
     ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("(%P|%t) MulticastLoader::init:")
       ACE_TEXT(" failed to obtain MulticastInst.\n")), -1);
   }
-  mi->reliable_ = false;
+  mi->reliable(false);
   cfg->sorted_insert(default_unrel);
 
   TransportInst_rch default_rel =

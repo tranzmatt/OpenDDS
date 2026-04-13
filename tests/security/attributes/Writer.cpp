@@ -5,23 +5,26 @@
  * See: http://www.opendds.org/license.html
  */
 
+#include "Writer.h"
+
+#include "Args.h"
+#include "SecurityAttributesMessageTypeSupportC.h"
+
+#include <dds/DCPS/WaitSet.h>
+
+#include <dds/DdsDcpsPublicationC.h>
+
 #include <ace/Log_Msg.h>
 #include <ace/OS_NS_stdlib.h>
 #include <ace/OS_NS_unistd.h>
 
-#include <dds/DdsDcpsPublicationC.h>
-#include <dds/DCPS/WaitSet.h>
-
-#include "Args.h"
-#include "SecurityAttributesMessageTypeSupportC.h"
-#include "Writer.h"
-
 const int num_instances_per_writer = 1;
 
-Writer::Writer(DDS::DataWriter_ptr writer, const SecurityAttributes::Args& args)
+Writer::Writer(DDS::DataWriter_ptr writer, const Args& args)
   : writer_(DDS::DataWriter::_duplicate(writer))
   , args_(args)
   , finished_instances_(0)
+  , guard_condition_(new DDS::GuardCondition)
 {
 }
 
@@ -34,13 +37,14 @@ Writer::start()
     ACE_ERROR((LM_ERROR,
                ACE_TEXT("%N:%l: start()")
                ACE_TEXT(" activate failed!\n")));
-    ACE_OS::exit(-1);
+    ACE_OS::exit(1);
   }
 }
 
 void
 Writer::end()
 {
+  guard_condition_->set_trigger_value(true);
   wait();
 }
 
@@ -56,31 +60,50 @@ Writer::svc()
 
     DDS::WaitSet_var ws = new DDS::WaitSet;
     ws->attach_condition(condition);
-
-    DDS::Duration_t timeout =
-      { DDS::DURATION_INFINITE_SEC, DDS::DURATION_INFINITE_NSEC };
+    ws->attach_condition(guard_condition_);
+    const DDS::Duration_t timeout = { 1 , 0 };
 
     DDS::ConditionSeq conditions;
     DDS::PublicationMatchedStatus matches = {0, 0, 0, 0, 0};
 
-    do {
-      if (ws->wait(conditions, timeout) != DDS::RETCODE_OK) {
+    if (writer_->get_publication_matched_status(matches) != ::DDS::RETCODE_OK) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("%N:%l: svc()")
+                 ACE_TEXT(" ERROR: get_publication_matched_status failed!\n")));
+      ACE_OS::exit(1);
+    }
+
+    while (matches.current_count < 1) {
+      DDS::ReturnCode_t ret = ws->wait(conditions, timeout);
+
+      if (ret != DDS::RETCODE_OK && ret != DDS::RETCODE_TIMEOUT) {
         ACE_ERROR((LM_ERROR,
                    ACE_TEXT("%N:%l: svc()")
                    ACE_TEXT(" ERROR: wait failed!\n")));
-        ACE_OS::exit(-1);
+        ACE_OS::exit(1);
+      }
+
+      for (unsigned i = 0; i < conditions.length(); i++) {
+        if (conditions[i] == guard_condition_) {
+          ACE_DEBUG((LM_DEBUG, ACE_TEXT("match timed out\n")));
+          return 0;
+        }
       }
 
       if (writer_->get_publication_matched_status(matches) != ::DDS::RETCODE_OK) {
         ACE_ERROR((LM_ERROR,
                    ACE_TEXT("%N:%l: svc()")
                    ACE_TEXT(" ERROR: get_publication_matched_status failed!\n")));
-        ACE_OS::exit(-1);
+        ACE_OS::exit(1);
       }
-
-    } while (matches.current_count < 1);
+    }
 
     ws->detach_condition(condition);
+    ws->detach_condition(guard_condition_);
+    if (args_.secure_part_user_data_) {
+      // Give secure participant writer time to send
+      ACE_OS::sleep(3);
+    }
 
     // Write samples
     SecurityAttributes::MessageDataWriter_var message_dw
@@ -90,7 +113,7 @@ Writer::svc()
         ACE_ERROR((LM_ERROR,
                    ACE_TEXT("%N:%l: svc()")
                    ACE_TEXT(" ERROR: _narrow failed!\n")));
-        ACE_OS::exit(-1);
+        ACE_OS::exit(1);
     }
 
     SecurityAttributes::Message message;
@@ -102,6 +125,10 @@ Writer::svc()
     message.subject      = "Review";
     message.text         = "Worst. Movie. Ever.";
     message.count        = 0;
+    if (args_.extra_space_ > 0) {
+      message.extra_space.length(args_.extra_space_);
+      memset(&message.extra_space[0], 'a', args_.extra_space_);
+    }
 
     for (int i = 0; i < args_.num_messages_; i++) {
       DDS::ReturnCode_t error;
@@ -116,6 +143,7 @@ Writer::svc()
       }
 
       message.count++;
+      message.subject_id--;
     }
 
   } catch (const CORBA::Exception& e) {

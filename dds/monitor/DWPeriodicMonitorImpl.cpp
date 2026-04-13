@@ -14,10 +14,10 @@
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace OpenDDS {
-namespace DCPS {
+namespace Monitor {
 
-DWPeriodicMonitorImpl::DWPeriodicMonitorImpl(DataWriterImpl* dw,
-              OpenDDS::DCPS::DataWriterPeriodicReportDataWriter_ptr dw_per_writer)
+DWPeriodicMonitorImpl::DWPeriodicMonitorImpl(DCPS::DataWriterImpl* dw,
+                                            DataWriterPeriodicReportDataWriter_ptr dw_per_writer)
   : dw_(dw),
     dw_per_writer_(DataWriterPeriodicReportDataWriter::_duplicate(dw_per_writer))
 {
@@ -31,7 +31,7 @@ void
 DWPeriodicMonitorImpl::report() {
   if (!CORBA::is_nil(this->dw_per_writer_.in())) {
     DataWriterPeriodicReport report;
-    report.dw_id   = dw_->get_publication_id();
+    report.dw_id   = dw_->get_guid();
     //report.data_dropped_count = dw_->
     //report.data_delivered_count  = dw_->
     //report.control_dropped_count  = dw_->
@@ -42,7 +42,7 @@ DWPeriodicMonitorImpl::report() {
 }
 
 
-} // namespace DCPS
-} // namespace OpenDDS
+}
+}
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL

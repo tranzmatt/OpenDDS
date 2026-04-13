@@ -5,8 +5,6 @@
  * See: http://www.opendds.org/license.html
  */
 
-#include "Tcp_pch.h"
-
 #include "TcpLoader.h"
 #include "TcpInst.h"
 #include "dds/DCPS/transport/framework/TransportRegistry.h"
@@ -39,7 +37,8 @@ class TcpType : public TransportType {
 public:
   const char* name() { return TCP_NAME; }
 
-  TransportInst_rch new_inst(const std::string& name)
+  TransportInst_rch new_inst(const std::string& name,
+                             bool)
   {
     return make_rch<TcpInst>(name);
   }
@@ -57,7 +56,10 @@ TcpLoader::init(int, ACE_TCHAR*[])
     return 0;
 
   TransportRegistry* registry = TheTransportRegistry;
-  registry->register_type(make_rch<TcpType>());
+  if (!registry->register_type(make_rch<TcpType>())) {
+    return 0;
+  }
+
   TransportInst_rch default_inst =
     registry->create_inst(TransportRegistry::DEFAULT_INST_PREFIX +
                           std::string("0500_TCP"), TCP_NAME);

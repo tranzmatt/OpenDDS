@@ -1,6 +1,4 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
@@ -8,14 +6,16 @@
 #ifndef OPENDDS_DCPS_PUBLISHER_IMPL_H
 #define OPENDDS_DCPS_PUBLISHER_IMPL_H
 
-#include "dds/DdsDcpsInfoUtilsC.h"
 #include "EntityImpl.h"
 #include "DataWriterImpl.h"
-#include "ace/Reverse_Lock_T.h"
 
-#if !defined (ACE_LACKS_PRAGMA_ONCE)
-#pragma once
-#endif /* ACE_LACKS_PRAGMA_ONCE */
+#include <dds/DdsDcpsInfoUtilsC.h>
+
+#include <ace/Reverse_Lock_T.h>
+
+#ifndef ACE_LACKS_PRAGMA_ONCE
+#  pragma once
+#endif
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -32,7 +32,7 @@ class Monitor;
 *
 * This class acts as a factory and container of the datawriter.
 *
-* See the DDS specification, OMG formal/04-12-02, for a description of
+* See the DDS specification, OMG formal/2015-04-10, for a description of
 * the interface this class is implementing.
 */
 class OpenDDS_Dcps_Export PublisherImpl
@@ -43,7 +43,7 @@ public:
   friend class DataWriterImpl;
 
   PublisherImpl(DDS::InstanceHandle_t handle,
-                RepoId id,
+                GUID_t id,
                 const DDS::PublisherQos& qos,
                 DDS::PublisherListener_ptr a_listener,
                 const DDS::StatusMask& mask,
@@ -112,11 +112,12 @@ public:
 
   ACE_Recursive_Thread_Mutex& get_pi_lock() { return pi_lock_; }
 
-  /** This method is not defined in the IDL and is defined for
-  *  internal use.
-  *  Check if there is any datawriter associated with this publisher.
-  */
-  bool is_clean() const;
+  /**
+   * This method is not defined in the IDL and is defined for
+   * internal use.
+   * Check if there is any datawriter associated with this publisher.
+   */
+  bool is_clean(String* leftover_entities = 0) const;
 
   /** This method is called when the datawriter created by this
   * publisher was enabled.
@@ -134,11 +135,11 @@ public:
   DDS::PublisherListener_ptr listener_for(::DDS::StatusKind kind);
 
   DDS::ReturnCode_t assert_liveliness_by_participant();
-  ACE_Time_Value liveliness_check_interval(DDS::LivelinessQosPolicyKind kind);
-  bool participant_liveliness_activity_after(const ACE_Time_Value& tv);
+  TimeDuration liveliness_check_interval(DDS::LivelinessQosPolicyKind kind);
+  bool participant_liveliness_activity_after(const MonotonicTimePoint& tv);
 
-  typedef OPENDDS_VECTOR(PublicationId) PublicationIdVec;
-  /// Populates a std::vector with the PublicationIds (GUIDs)
+  typedef OPENDDS_VECTOR(GUID_t) PublicationIdVec;
+  /// Populates a std::vector with the GUID_ts
   /// of this Publisher's Data Writers
   void get_publication_ids(PublicationIdVec& pubs);
 
@@ -146,17 +147,21 @@ public:
 
   virtual RcHandle<EntityImpl> parent() const;
   static bool validate_datawriter_qos(const DDS::DataWriterQos& qos,
-                                         const DDS::DataWriterQos& default_qos,
-                                         DDS::Topic_ptr a_topic,
-                                         DDS::DataWriterQos& dw_qos);
+                                      const DDS::DataWriterQos& default_qos,
+                                      DDS::Topic_ptr a_topic,
+                                      DDS::DataWriterQos& dw_qos);
+
+  bool prepare_to_delete_datawriters();
+  bool set_wait_pending_deadline(const MonotonicTimePoint& deadline);
+
 private:
   typedef OPENDDS_MULTIMAP(OPENDDS_STRING, DataWriterImpl_rch) DataWriterMap;
 
-  typedef OPENDDS_MAP_CMP(PublicationId, DataWriterImpl_rch, GUID_tKeyLessThan)
+  typedef OPENDDS_MAP_CMP(GUID_t, DataWriterImpl_rch, GUID_tKeyLessThan)
     PublicationMap;
 
   // DataWriter id to qos map.
-  typedef OPENDDS_MAP_CMP(RepoId, DDS::DataWriterQos, GUID_tKeyLessThan) DwIdToQosMap;
+  typedef OPENDDS_MAP_CMP(GUID_t, DDS::DataWriterQos, GUID_tKeyLessThan) DwIdToQosMap;
 
   DDS::InstanceHandle_t        handle_;
 
@@ -165,6 +170,8 @@ private:
   /// Default datawriter Qos policy list.
   DDS::DataWriterQos           default_datawriter_qos_;
 
+  /// Mutex to protect listener info
+  ACE_Thread_Mutex             listener_mutex_;
   /// The StatusKind bit mask indicates which status condition change
   /// can be notified by the listener of this entity.
   DDS::StatusMask              listener_mask_;
@@ -193,20 +200,21 @@ private:
   /// -  NOT USED IN FIRST IMPL - not supporting GROUP scope
   SequenceNumber               sequence_number_;
   /// Start of current aggregation period. - NOT USED IN FIRST IMPL
-  ACE_Time_Value               aggregation_period_start_;
+  MonotonicTimePoint aggregation_period_start_;
 
   typedef ACE_Recursive_Thread_Mutex  lock_type;
   typedef ACE_Reverse_Lock<lock_type> reverse_lock_type;
   /// The recursive lock to protect datawriter map and suspend count.
   mutable lock_type                   pi_lock_;
   reverse_lock_type                   reverse_pi_lock_;
+  mutable lock_type                   pi_suspended_lock_;
 
   /// Monitor object for this entity
-  Monitor* monitor_;
+  unique_ptr<Monitor> monitor_;
 
   /// @note The publisher_id_ is not generated by repository, it's unique
   ///       in DomainParticipant scope.
-  RepoId                        publisher_id_;
+  GUID_t                        publisher_id_;
 };
 
 } // namespace  DDS

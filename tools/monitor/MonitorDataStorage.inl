@@ -71,8 +71,8 @@ MonitorDataStorage::update(const DataType&, DDS::DomainParticipant_ptr, bool)
 template<>
 inline
 void
-MonitorDataStorage::update<OpenDDS::DCPS::ServiceParticipantReport>(
-  const OpenDDS::DCPS::ServiceParticipantReport& data,
+MonitorDataStorage::update<OpenDDS::Monitor::ServiceParticipantReport>(
+  const OpenDDS::Monitor::ServiceParticipantReport& data,
   DDS::DomainParticipant_ptr,
   bool remove
 )
@@ -117,12 +117,12 @@ MonitorDataStorage::update<OpenDDS::DCPS::ServiceParticipantReport>(
   //       added to the host/pid as they are received by this update.  It
   //       does *not* remove any deleted participants.  This is left for
   //       the DomainParticipantReport updates.
-  int size = data.domain_participants.length();
-  for( int index = 0; index < size; ++index) {
+  DDS::UInt32 size = data.domain_participants.length();
+  for (DDS::UInt32 index = 0; index < size; ++index) {
     create = true;
     (void)this->getParticipantNode(
       pid,
-      data.domain_participants[ index],
+      data.domain_participants[index],
       create
     );
     layoutChanged |= create;
@@ -130,11 +130,11 @@ MonitorDataStorage::update<OpenDDS::DCPS::ServiceParticipantReport>(
 
   // TRANSPORTS
   size = data.transports.length();
-  for( int index = 0; index < size; ++index) {
+  for (DDS::UInt32 index = 0; index < size; ++index) {
     create = true;
-    int transport = data.transports[ index];
-    TransportKey key( host, data.pid, transport);
-    (void)this->getTransportNode( key, create);
+    const DDS::UInt32 transport = data.transports[index];
+    TransportKey key(host, data.pid, static_cast<int>(transport));
+    this->getTransportNode(key, create);
     layoutChanged |= create;
   }
 
@@ -145,8 +145,8 @@ MonitorDataStorage::update<OpenDDS::DCPS::ServiceParticipantReport>(
 template<>
 inline
 void
-MonitorDataStorage::update<OpenDDS::DCPS::DomainParticipantReport>(
-  const OpenDDS::DCPS::DomainParticipantReport& data,
+MonitorDataStorage::update<OpenDDS::Monitor::DomainParticipantReport>(
+  const OpenDDS::Monitor::DomainParticipantReport& data,
   DDS::DomainParticipant_ptr,
   bool remove
 )
@@ -160,13 +160,12 @@ MonitorDataStorage::update<OpenDDS::DCPS::DomainParticipantReport>(
   //    NVPSeq           values;
   //  };
 
-  OpenDDS::DCPS::GuidConverter converter( data.dp_id);
   ACE_DEBUG((LM_DEBUG,
     ACE_TEXT("(%P|%t) MonitorDataStorage::update() - ")
     ACE_TEXT("%s DomainParticipantReport, id: %C, domain: %d.\n"),
     remove? "removing": "processing",
     (data.dp_id == OpenDDS::DCPS::GUID_UNKNOWN)? "GUID_UNKNOWN":
-    std::string(converter).c_str(),
+    OpenDDS::DCPS::LogGuid(data.dp_id).c_str(),
     data.domain_id
   ));
 
@@ -208,13 +207,13 @@ MonitorDataStorage::update<OpenDDS::DCPS::DomainParticipantReport>(
   //       the DomainParticipant as they are received by this update.
   //       It does *not* remove any deleted topics.  This is left for
   //       the TopicReport updates.
-  int size = data.topics.length();
-  for( int index = 0; index < size; ++index) {
+  const DDS::UInt32 size = data.topics.length();
+  for (DDS::UInt32 index = 0; index < size; ++index) {
     bool create = true;
     (void)this->getNode(
-      std::string( "Topic"),
+      std::string("Topic"),
       data.dp_id,
-      data.topics[ index],
+      data.topics[index],
       create
     );
     layoutChanged |= create;
@@ -227,8 +226,8 @@ MonitorDataStorage::update<OpenDDS::DCPS::DomainParticipantReport>(
 template<>
 inline
 void
-MonitorDataStorage::update<OpenDDS::DCPS::TopicReport>(
-  const OpenDDS::DCPS::TopicReport& data,
+MonitorDataStorage::update<OpenDDS::Monitor::TopicReport>(
+  const OpenDDS::Monitor::TopicReport& data,
   DDS::DomainParticipant_ptr,
   bool remove
 )
@@ -241,13 +240,12 @@ MonitorDataStorage::update<OpenDDS::DCPS::TopicReport>(
   //    NVPSeq  values;
   //  };
 
-  OpenDDS::DCPS::GuidConverter converter( data.topic_id);
   ACE_DEBUG((LM_DEBUG,
     ACE_TEXT("(%P|%t) MonitorDataStorage::update() - ")
     ACE_TEXT("%s TopicReport, id: %C, name: %C, type: %C.\n"),
     remove? "removing": "processing",
     (data.topic_id == OpenDDS::DCPS::GUID_UNKNOWN)? "GUID_UNKNOWN":
-    std::string(converter).c_str(),
+    OpenDDS::DCPS::LogGuid(data.topic_id).c_str(),
     (const char*)data.topic_name,
     (const char*)data.type_name
   ));
@@ -314,8 +312,8 @@ MonitorDataStorage::update<OpenDDS::DCPS::TopicReport>(
 template<>
 inline
 void
-MonitorDataStorage::update<OpenDDS::DCPS::PublisherReport>(
-  const OpenDDS::DCPS::PublisherReport& data,
+MonitorDataStorage::update<OpenDDS::Monitor::PublisherReport>(
+  const OpenDDS::Monitor::PublisherReport& data,
   DDS::DomainParticipant_ptr,
   bool remove
 )
@@ -328,13 +326,12 @@ MonitorDataStorage::update<OpenDDS::DCPS::PublisherReport>(
   //   NVPSeq        values;
   // };
 
-  OpenDDS::DCPS::GuidConverter converter( data.dp_id);
   ACE_DEBUG((LM_DEBUG,
     ACE_TEXT("(%P|%t) MonitorDataStorage::update() - ")
     ACE_TEXT("%s PublisherReport, id: %C, handle: %d, transport: 0x%x.\n"),
     remove? "removing": "processing",
     (data.dp_id == OpenDDS::DCPS::GUID_UNKNOWN)? "GUID_UNKNOWN":
-    std::string(converter).c_str(),
+    OpenDDS::DCPS::LogGuid(data.dp_id).c_str(),
     data.handle,
     data.transport_id
   ));
@@ -363,7 +360,7 @@ MonitorDataStorage::update<OpenDDS::DCPS::PublisherReport>(
   // TRANSPORT
   create = true;
   if (data.transport_id != 0) {
-    this->manageTransportLink( node, data.transport_id, create);
+    this->manageTransportLink(node, static_cast<int>(data.transport_id), create);
   }
   layoutChanged |= create;
 
@@ -372,16 +369,16 @@ MonitorDataStorage::update<OpenDDS::DCPS::PublisherReport>(
   //       the Publisher as they are received by this update.  It does
   //       *not* remove any deleted writers.  This is left for the
   //       DataWriterReport updates.
-  int size = data.writers.length();
-  for( int index = 0; index < size; ++index) {
-    bool create = true;
+  const DDS::UInt32 size = data.writers.length();
+  for (DDS::UInt32 index = 0; index < size; ++index) {
+    bool createEndpointNode = true;
     (void)this->getEndpointNode(
-      std::string( "Writer"),
+      std::string("Writer"),
       key,
-      data.writers[ index],
-      create
+      data.writers[index],
+      createEndpointNode
     );
-    layoutChanged |= create;
+    layoutChanged |= createEndpointNode;
   }
 
   // NAME / VALUE DATA, notify GUI of changes.
@@ -391,8 +388,8 @@ MonitorDataStorage::update<OpenDDS::DCPS::PublisherReport>(
 template<>
 inline
 void
-MonitorDataStorage::update<OpenDDS::DCPS::SubscriberReport>(
-  const OpenDDS::DCPS::SubscriberReport& data,
+MonitorDataStorage::update<OpenDDS::Monitor::SubscriberReport>(
+  const OpenDDS::Monitor::SubscriberReport& data,
   DDS::DomainParticipant_ptr,
   bool remove
 )
@@ -405,13 +402,12 @@ MonitorDataStorage::update<OpenDDS::DCPS::SubscriberReport>(
   //   NVPSeq        values;
   // };
 
-  OpenDDS::DCPS::GuidConverter converter( data.dp_id);
   ACE_DEBUG((LM_DEBUG,
     ACE_TEXT("(%P|%t) MonitorDataStorage::update() - ")
     ACE_TEXT("%s SubscriberReport, id: %C, handle: %d, transport: 0x%x.\n"),
     remove? "removing": "processing",
     (data.dp_id == OpenDDS::DCPS::GUID_UNKNOWN)? "GUID_UNKNOWN":
-    std::string(converter).c_str(),
+    OpenDDS::DCPS::LogGuid(data.dp_id).c_str(),
     data.handle,
     data.transport_id
   ));
@@ -440,7 +436,7 @@ MonitorDataStorage::update<OpenDDS::DCPS::SubscriberReport>(
   // TRANSPORT
   create = true;
   if (data.transport_id != 0) {
-    this->manageTransportLink( node, data.transport_id, create);
+    this->manageTransportLink(node, static_cast<int>(data.transport_id), create);
   }
   layoutChanged |= create;
 
@@ -449,13 +445,13 @@ MonitorDataStorage::update<OpenDDS::DCPS::SubscriberReport>(
   //       the Subscriber as they are received by this update.  It does
   //       *not* remove any deleted writers.  This is left for the
   //       DataReaderReport updates.
-  int size = data.readers.length();
-  for( int index = 0; index < size; ++index) {
+  const DDS::UInt32 size = data.readers.length();
+  for (DDS::UInt32 index = 0; index < size; ++index) {
     create = true;
     (void)this->getEndpointNode(
-      std::string( "Reader"),
+      std::string("Reader"),
       key,
-      data.readers[ index],
+      data.readers[index],
       create
     );
     layoutChanged |= create;
@@ -468,8 +464,8 @@ MonitorDataStorage::update<OpenDDS::DCPS::SubscriberReport>(
 template<>
 inline
 void
-MonitorDataStorage::update<OpenDDS::DCPS::DataWriterReport>(
-  const OpenDDS::DCPS::DataWriterReport& data,
+MonitorDataStorage::update<OpenDDS::Monitor::DataWriterReport>(
+  const OpenDDS::Monitor::DataWriterReport& data,
   DDS::DomainParticipant_ptr,
   bool remove
 )
@@ -488,16 +484,14 @@ MonitorDataStorage::update<OpenDDS::DCPS::DataWriterReport>(
   //    NVPSeq                 values;
   //  };
 
-  OpenDDS::DCPS::GuidConverter idconverter( data.dw_id);
-  OpenDDS::DCPS::GuidConverter topicconverter( data.topic_id);
   ACE_DEBUG((LM_DEBUG,
     ACE_TEXT("(%P|%t) MonitorDataStorage::update() - ")
     ACE_TEXT("%s DataWriterReport, id: %C, topic: %C.\n"),
     remove? "removing": "processing",
     (data.dw_id == OpenDDS::DCPS::GUID_UNKNOWN)? "GUID_UNKNOWN":
-    std::string(idconverter).c_str(),
+    OpenDDS::DCPS::LogGuid(data.dw_id).c_str(),
     (data.topic_id == OpenDDS::DCPS::GUID_UNKNOWN)? "GUID_UNKNOWN":
-    std::string(topicconverter).c_str()
+    OpenDDS::DCPS::LogGuid(data.topic_id).c_str()
   ));
 
   // Retain knowledge of node insertions, updates, and deletions.
@@ -534,19 +528,18 @@ MonitorDataStorage::update<OpenDDS::DCPS::DataWriterReport>(
   layoutChanged |= create;
 
   // ASSOCIATIONS
-  int size = data.associations.length();
-  for( int index = 0; index < size; ++index) {
+  const DDS::UInt32 size = data.associations.length();
+  for (DDS::UInt32 index = 0; index < size; ++index) {
     // Create a child node to hold the association if its not already in
     // the tree.
-    OpenDDS::DCPS::GuidConverter converter( data.associations[ index].dr_id);
-    QString reader( std::string(converter).c_str());
-    int row = node->indexOf( 1, reader);
-    if( row == -1) {
+    QString reader(OpenDDS::DCPS::LogGuid(data.associations[index].dr_id).c_str());
+    const int row = node->indexOf(1, reader);
+    if (row == -1) {
       // New data, insert.
       QList<QVariant> list;
-      list << QString( QObject::tr("Reader")) << reader;
-      TreeNode* valueNode = new TreeNode( list, node);
-      node->append( valueNode);
+      list << QString(QObject::tr("Reader")) << reader;
+      TreeNode* valueNode = new TreeNode(list, node);
+      node->append(valueNode);
       layoutChanged = true;
     }
   }
@@ -558,8 +551,8 @@ MonitorDataStorage::update<OpenDDS::DCPS::DataWriterReport>(
 template<>
 inline
 void
-MonitorDataStorage::update<OpenDDS::DCPS::DataWriterPeriodicReport>(
-  const OpenDDS::DCPS::DataWriterPeriodicReport& data,
+MonitorDataStorage::update<OpenDDS::Monitor::DataWriterPeriodicReport>(
+  const OpenDDS::Monitor::DataWriterPeriodicReport& data,
   DDS::DomainParticipant_ptr,
   bool remove
 )
@@ -579,13 +572,12 @@ MonitorDataStorage::update<OpenDDS::DCPS::DataWriterPeriodicReport>(
   //   NVPSeq        values;
   // };
 
-  OpenDDS::DCPS::GuidConverter converter( data.dw_id);
   ACE_DEBUG((LM_DEBUG,
     ACE_TEXT("(%P|%t) MonitorDataStorage::update() - ")
     ACE_TEXT("%s DataWriterPeriodicReport, id: %C.\n"),
     remove? "removing": "processing",
     (data.dw_id == OpenDDS::DCPS::GUID_UNKNOWN)? "GUID_UNKNOWN":
-    std::string(converter).c_str()
+    OpenDDS::DCPS::LogGuid(data.dw_id).c_str()
   ));
 
   // Ignore remove flag for these samples - the static reports control
@@ -666,51 +658,46 @@ MonitorDataStorage::update<OpenDDS::DCPS::DataWriterPeriodicReport>(
   }
 
   // ASSOCIATIONS
-  int size = data.associations.length();
-  for( int index = 0; index < size; ++index) {
+  const DDS::UInt32 size = data.associations.length();
+  for (DDS::UInt32 index = 0; index < size; ++index) {
     // Create a child node to hold the association if its not already in
     // the tree.
     TreeNode* readerNode = 0;
-    OpenDDS::DCPS::GuidConverter converter( data.associations[ index].dr_id);
-    QString reader( std::string(converter).c_str());
-    int row = node->indexOf( 1, reader);
-    if( row == -1) {
+    QString reader(OpenDDS::DCPS::LogGuid(data.associations[index].dr_id).c_str());
+    const int row = node->indexOf(1, reader);
+    if (row == -1) {
       // New data, insert.
       QList<QVariant> list;
-      list << QString( QObject::tr("Reader")) << reader;
-      readerNode = new TreeNode( list, node);
-      node->append( readerNode);
+      list << QString(QObject::tr("Reader")) << reader;
+      readerNode = new TreeNode(list, node);
+      node->append(readerNode);
       layoutChanged = true;
 
     } else {
       // Existing data, use it.
-      readerNode = (*node)[ row];
+      readerNode = (*node)[row];
     }
 
     // Add or update the current sequence number for this association.
-    TreeNode* child = 0;
-    QString sequenceLabel( QObject::tr("sequence number"));
-    QString sequenceValue
-      = QString::number( data.associations[ index].sequence_number);
-    if( this->manageChildValue(
-          readerNode, child, sequenceLabel, sequenceValue
-      )) {
+    TreeNode* child2 = 0;
+    QString sequenceLabel(QObject::tr("sequence number"));
+    QString sequenceValue = QString::number(data.associations[index].sequence_number);
+    if (this->manageChildValue(readerNode, child2, sequenceLabel, sequenceValue)) {
       layoutChanged = true;
-
     } else {
       dataChanged = true;
     }
   }
 
   // NAME / VALUE DATA, notify GUI of changes.
-  this->displayNvp( node, data.values, layoutChanged, dataChanged);
+  this->displayNvp(node, data.values, layoutChanged, dataChanged);
 }
 
 template<>
 inline
 void
-MonitorDataStorage::update<OpenDDS::DCPS::DataReaderReport>(
-  const OpenDDS::DCPS::DataReaderReport& data,
+MonitorDataStorage::update<OpenDDS::Monitor::DataReaderReport>(
+  const OpenDDS::Monitor::DataReaderReport& data,
   DDS::DomainParticipant_ptr,
   bool remove
 )
@@ -730,16 +717,14 @@ MonitorDataStorage::update<OpenDDS::DCPS::DataReaderReport>(
   //    NVPSeq                 values;
   //  };
 
-  OpenDDS::DCPS::GuidConverter idconverter( data.dr_id);
-  OpenDDS::DCPS::GuidConverter topicconverter( data.topic_id);
   ACE_DEBUG((LM_DEBUG,
     ACE_TEXT("(%P|%t) MonitorDataStorage::update() - ")
     ACE_TEXT("%s DataReaderReport, id: %C, topic: %C.\n"),
     remove? "removing": "processing",
     (data.dr_id == OpenDDS::DCPS::GUID_UNKNOWN)? "GUID_UNKNOWN":
-    std::string(idconverter).c_str(),
+    OpenDDS::DCPS::LogGuid(data.dr_id).c_str(),
     (data.topic_id == OpenDDS::DCPS::GUID_UNKNOWN)? "GUID_UNKNOWN":
-    std::string(topicconverter).c_str()
+    OpenDDS::DCPS::LogGuid(data.topic_id).c_str()
   ));
 
   // Retain knowledge of node insertions, updates, and deletions.
@@ -776,32 +761,31 @@ MonitorDataStorage::update<OpenDDS::DCPS::DataReaderReport>(
   layoutChanged |= create;
 
   // ASSOCIATIONS
-  int size = data.associations.length();
-  for( int index = 0; index < size; ++index) {
+  const DDS::UInt32 size = data.associations.length();
+  for (DDS::UInt32 index = 0; index < size; ++index) {
     // Create a child node to hold the association if its not already in
     // the tree.
-    OpenDDS::DCPS::GuidConverter converter( data.associations[ index].dw_id);
-    QString writer( std::string(converter).c_str());
-    int row = node->indexOf( 1, writer);
-    if( row == -1) {
+    QString writer(OpenDDS::DCPS::LogGuid(data.associations[index].dw_id).c_str());
+    const int row = node->indexOf(1, writer);
+    if (row == -1) {
       // New data, insert.
       QList<QVariant> list;
-      list << QString( QObject::tr("Writer")) << writer;
-      TreeNode* valueNode = new TreeNode( list, node);
-      node->append( valueNode);
+      list << QString(QObject::tr("Writer")) << writer;
+      TreeNode* valueNode = new TreeNode(list, node);
+      node->append(valueNode);
       layoutChanged = true;
     }
   }
 
   // NAME / VALUE DATA, notify GUI of changes.
-  this->displayNvp( node, data.values, layoutChanged, dataChanged);
+  this->displayNvp(node, data.values, layoutChanged, dataChanged);
 }
 
 template<>
 inline
 void
-MonitorDataStorage::update<OpenDDS::DCPS::DataReaderPeriodicReport>(
-  const OpenDDS::DCPS::DataReaderPeriodicReport& data,
+MonitorDataStorage::update<OpenDDS::Monitor::DataReaderPeriodicReport>(
+  const OpenDDS::Monitor::DataReaderPeriodicReport& data,
   DDS::DomainParticipant_ptr,
   bool remove
 )
@@ -818,13 +802,12 @@ MonitorDataStorage::update<OpenDDS::DCPS::DataReaderPeriodicReport>(
   //   NVPSeq        values;
   // };
 
-  OpenDDS::DCPS::GuidConverter converter( data.dr_id);
   ACE_DEBUG((LM_DEBUG,
     ACE_TEXT("(%P|%t) MonitorDataStorage::update() - ")
     ACE_TEXT("%s DataReaderPeriodicReport, id: %C.\n"),
     remove? "removing": "processing",
     (data.dr_id == OpenDDS::DCPS::GUID_UNKNOWN)? "GUID_UNKNOWN":
-    std::string(converter).c_str()
+    OpenDDS::DCPS::LogGuid(data.dr_id).c_str()
   ));
 
   // Ignore remove flag for these samples - the static reports control
@@ -849,51 +832,46 @@ MonitorDataStorage::update<OpenDDS::DCPS::DataReaderPeriodicReport>(
   }
 
   // ASSOCIATIONS
-  int size = data.associations.length();
-  for( int index = 0; index < size; ++index) {
+  const DDS::UInt32 size = data.associations.length();
+  for (DDS::UInt32 index = 0; index < size; ++index) {
     // Create a child node to hold the association if its not already in
     // the tree.
     TreeNode* writerNode = 0;
-    OpenDDS::DCPS::GuidConverter converter( data.associations[ index].dw_id);
-    QString writer( std::string(converter).c_str());
-    int row = node->indexOf( 1, writer);
-    if( row == -1) {
+    QString writer(OpenDDS::DCPS::LogGuid(data.associations[index].dw_id).c_str());
+    const int row = node->indexOf(1, writer);
+    if (row == -1) {
       // New data, insert.
       QList<QVariant> list;
-      list << QString( QObject::tr("Writer")) << writer;
-      writerNode = new TreeNode( list, node);
-      node->append( writerNode);
+      list << QString(QObject::tr("Writer")) << writer;
+      writerNode = new TreeNode(list, node);
+      node->append(writerNode);
       layoutChanged = true;
 
     } else {
       // Existing data, use it.
-      writerNode = (*node)[ row];
+      writerNode = (*node)[row];
     }
 
     // Add or update the current number of samples available for this association.
     TreeNode* child = 0;
-    QString samplesLabel( QObject::tr("samples available"));
-    QString samplesValue
-      = QString::number( data.associations[ index].samples_available);
-    if( this->manageChildValue(
-          writerNode, child, samplesLabel, samplesValue
-      )) {
+    QString samplesLabel(QObject::tr("samples available"));
+    QString samplesValue = QString::number(data.associations[index].samples_available);
+    if (this->manageChildValue(writerNode, child, samplesLabel, samplesValue)) {
       layoutChanged = true;
-
     } else {
       dataChanged = true;
     }
   }
 
   // NAME / VALUE DATA, notify GUI of changes.
-  this->displayNvp( node, data.values, layoutChanged, dataChanged);
+  this->displayNvp(node, data.values, layoutChanged, dataChanged);
 }
 
 template<>
 inline
 void
-MonitorDataStorage::update<OpenDDS::DCPS::TransportReport>(
-  const OpenDDS::DCPS::TransportReport& data,
+MonitorDataStorage::update<OpenDDS::Monitor::TransportReport>(
+  const OpenDDS::Monitor::TransportReport& data,
   DDS::DomainParticipant_ptr,
   bool remove
 )
@@ -920,7 +898,7 @@ MonitorDataStorage::update<OpenDDS::DCPS::TransportReport>(
   // Retain knowledge of node insertions, updates, and deletions.
   bool layoutChanged = !remove; // Updated by getTransportNode()
 
-  TransportKey key( std::string(data.host), data.pid, data.transport_id);
+  TransportKey key(std::string(data.host), data.pid, static_cast<int>(data.transport_id));
   TreeNode* node = this->getTransportNode( key, layoutChanged);
   if( !node) {
     return;
@@ -958,9 +936,8 @@ inline
 void
 MonitorDataStorage::update<DDS::ParticipantBuiltinTopicData>(
   const DDS::ParticipantBuiltinTopicData& data,
-  DDS::DomainParticipant_ptr participant,
-  bool remove
-)
+  DDS::DomainParticipant_ptr /*participant*/,
+  bool remove)
 {
   //  struct ParticipantBuiltinTopicData {
   //    BuiltinTopicKey_t key;
@@ -968,23 +945,15 @@ MonitorDataStorage::update<DDS::ParticipantBuiltinTopicData>(
   //  };
 
   // Extract a GUID from the key.
-  OpenDDS::DCPS::Discovery_rch disc =
-    TheServiceParticipant->get_discovery(participant->get_domain_id());
-  OpenDDS::DCPS::DomainParticipantImpl* dpi =
-    dynamic_cast<OpenDDS::DCPS::DomainParticipantImpl*>(participant);
-  OpenDDS::DCPS::RepoId id =
-    disc->bit_key_to_repo_id(dpi,
-                             OpenDDS::DCPS::BUILT_IN_PARTICIPANT_TOPIC,
-                             data.key);
+  const OpenDDS::DCPS::GUID_t id = OpenDDS::DCPS::bit_key_to_guid(data.key);
 
-  OpenDDS::DCPS::GuidConverter converter(id);
   ACE_DEBUG((LM_DEBUG,
     ACE_TEXT("(%P|%t) MonitorDataStorage::update() - ")
     ACE_TEXT("%s Participant Builtin Topic %C, key: ")
     ACE_TEXT("[0x%x, 0x%x, 0x%x].\n"),
     remove? "removing": "processing",
     (id == OpenDDS::DCPS::GUID_UNKNOWN)? "GUID_UNKNOWN":
-    std::string(converter).c_str(),
+    OpenDDS::DCPS::LogGuid(id).c_str(),
     data.key.value[0], data.key.value[1], data.key.value[2]
   ));
 
@@ -1028,9 +997,8 @@ inline
 void
 MonitorDataStorage::update<DDS::TopicBuiltinTopicData>(
   const DDS::TopicBuiltinTopicData& data,
-  DDS::DomainParticipant_ptr participant,
-  bool remove
-)
+  DDS::DomainParticipant_ptr /*participant*/,
+  bool remove)
 {
   //  struct TopicBuiltinTopicData {
   //    BuiltinTopicKey_t key;
@@ -1052,23 +1020,15 @@ MonitorDataStorage::update<DDS::TopicBuiltinTopicData>(
   //  };
 
   // Extract a GUID from the key.
-  OpenDDS::DCPS::Discovery_rch disc =
-    TheServiceParticipant->get_discovery(participant->get_domain_id());
-  OpenDDS::DCPS::DomainParticipantImpl* dpi =
-    dynamic_cast<OpenDDS::DCPS::DomainParticipantImpl*>(participant);
-  OpenDDS::DCPS::RepoId id =
-    disc->bit_key_to_repo_id(dpi,
-                             OpenDDS::DCPS::BUILT_IN_TOPIC_TOPIC,
-                             data.key);
+  const OpenDDS::DCPS::GUID_t id = OpenDDS::DCPS::bit_key_to_guid(data.key);
 
-  OpenDDS::DCPS::GuidConverter converter( id);
   ACE_DEBUG((LM_DEBUG,
     ACE_TEXT("(%P|%t) MonitorDataStorage::update() - ")
     ACE_TEXT("%s Topic Builtin Topic %C, key: ")
     ACE_TEXT("[0x%x, 0x%x, 0x%x].\n"),
     remove? "removing": "processing",
     (id == OpenDDS::DCPS::GUID_UNKNOWN)? "GUID_UNKNOWN":
-    std::string(converter).c_str(),
+    OpenDDS::DCPS::LogGuid(id).c_str(),
     data.key.value[0], data.key.value[1], data.key.value[2]
   ));
 
@@ -1118,9 +1078,8 @@ inline
 void
 MonitorDataStorage::update<DDS::PublicationBuiltinTopicData>(
   const DDS::PublicationBuiltinTopicData& data,
-  DDS::DomainParticipant_ptr participant,
-  bool remove
-)
+  DDS::DomainParticipant_ptr /*participant*/,
+  bool remove)
 {
   //  struct PublicationBuiltinTopicData {
   //    BuiltinTopicKey_t key;
@@ -1145,23 +1104,15 @@ MonitorDataStorage::update<DDS::PublicationBuiltinTopicData>(
   //  };
 
   // Extract a GUID from the key.
-  OpenDDS::DCPS::Discovery_rch disc =
-    TheServiceParticipant->get_discovery(participant->get_domain_id());
-  OpenDDS::DCPS::DomainParticipantImpl* dpi =
-    dynamic_cast<OpenDDS::DCPS::DomainParticipantImpl*>(participant);
-  OpenDDS::DCPS::RepoId id =
-    disc->bit_key_to_repo_id(dpi,
-                             OpenDDS::DCPS::BUILT_IN_PUBLICATION_TOPIC,
-                             data.key);
+  const OpenDDS::DCPS::GUID_t id = OpenDDS::DCPS::bit_key_to_guid(data.key);
 
-  OpenDDS::DCPS::GuidConverter converter( id);
   ACE_DEBUG((LM_DEBUG,
     ACE_TEXT("(%P|%t) MonitorDataStorage::update() - ")
     ACE_TEXT("%s Publication Builtin Topic %C, key: ")
     ACE_TEXT("[0x%x, 0x%x, 0x%x].\n"),
     remove? "removing": "processing",
     (id == OpenDDS::DCPS::GUID_UNKNOWN)? "GUID_UNKNOWN":
-    std::string(converter).c_str(),
+    OpenDDS::DCPS::LogGuid(id).c_str(),
     data.key.value[0], data.key.value[1], data.key.value[2]
   ));
 
@@ -1211,9 +1162,8 @@ inline
 void
 MonitorDataStorage::update<DDS::SubscriptionBuiltinTopicData>(
   const DDS::SubscriptionBuiltinTopicData& data,
-  DDS::DomainParticipant_ptr participant,
-  bool remove
-)
+  DDS::DomainParticipant_ptr /*participant*/,
+  bool remove)
 {
   //  struct SubscriptionBuiltinTopicData {
   //    BuiltinTopicKey_t key;
@@ -1236,23 +1186,15 @@ MonitorDataStorage::update<DDS::SubscriptionBuiltinTopicData>(
   //  };
 
   // Extract a GUID from the key.
-  OpenDDS::DCPS::Discovery_rch disc =
-    TheServiceParticipant->get_discovery(participant->get_domain_id());
-  OpenDDS::DCPS::DomainParticipantImpl* dpi =
-    dynamic_cast<OpenDDS::DCPS::DomainParticipantImpl*>(participant);
-  OpenDDS::DCPS::RepoId id =
-    disc->bit_key_to_repo_id(dpi,
-                             OpenDDS::DCPS::BUILT_IN_SUBSCRIPTION_TOPIC,
-                             data.key);
+  const OpenDDS::DCPS::GUID_t id = OpenDDS::DCPS::bit_key_to_guid(data.key);
 
-  OpenDDS::DCPS::GuidConverter converter( id);
   ACE_DEBUG((LM_DEBUG,
     ACE_TEXT("(%P|%t) MonitorDataStorage::update() - ")
     ACE_TEXT("%s Subscription Builtin Topic %C, key: ")
     ACE_TEXT("[0x%x, 0x%x, 0x%x].\n"),
     remove? "removing": "processing",
     (id == OpenDDS::DCPS::GUID_UNKNOWN)? "GUID_UNKNOWN":
-    std::string(converter).c_str(),
+    OpenDDS::DCPS::LogGuid(id).c_str(),
     data.key.value[0], data.key.value[1], data.key.value[2]
   ));
 
@@ -1296,4 +1238,3 @@ MonitorDataStorage::update<DDS::SubscriptionBuiltinTopicData>(
     //this->model_->updated( node, 1, (*node)[ node->size()-1], 1);
   }
 }
-

@@ -23,20 +23,10 @@ public class TestPublisher {
       return false;
     }
 
-    public static boolean checkWaitForAcks(String[] args) {
-      for (int i = 0; i < args.length; ++i) {
-        if (args[i].equals("-w")) {
-          return true;
-        }
-      }
-      return false;
-    }
-
     public static void main(String[] args) {
 
         System.out.println("Start Publisher");
         boolean reliable = checkReliable(args);
-        boolean waitForAcks = checkWaitForAcks(args);
 
         DomainParticipantFactory dpf =
             TheParticipantFactory.WithArgs(new StringSeqHolder(args));
@@ -106,6 +96,8 @@ public class TestPublisher {
         dw_qos.ownership.kind = OwnershipQosPolicyKind.from_int(0);
         dw_qos.ownership_strength = new OwnershipStrengthQosPolicy();
         dw_qos.writer_data_lifecycle = new WriterDataLifecycleQosPolicy();
+        dw_qos.representation = new DataRepresentationQosPolicy();
+        dw_qos.representation.value = new short[0];
 
         DataWriterQosHolder qosh = new DataWriterQosHolder(dw_qos);
         pub.get_default_datawriter_qos(qosh);
@@ -177,19 +169,14 @@ public class TestPublisher {
             }
         }
 
-        if (waitForAcks) {
-          System.out.println("Publisher waiting for acks");
-
-          // Wait for acknowledgements
-          Duration_t forever = new Duration_t(DURATION_INFINITE_SEC.value,
-                                              DURATION_INFINITE_NSEC.value);
-          dw.wait_for_acknowledgments(forever);
-        } else {
+        while (matched.value.current_count != 0) {
+          final int result = mdw.get_publication_matched_status(matched);
           try {
-            Thread.sleep(1000);
+            Thread.sleep(100);
           } catch(InterruptedException ie) {
           }
         }
+
         System.out.println("Stop Publisher");
 
         // Clean up

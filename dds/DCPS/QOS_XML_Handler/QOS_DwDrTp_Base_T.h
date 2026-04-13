@@ -14,8 +14,8 @@
  * XML representatives.
  *
  */
-#ifndef QOS_DWDRTP_BASE_T_H_
-#define QOS_DWDRTP_BASE_T_H_
+#ifndef OPENDDS_DCPS_QOS_XML_HANDLER_QOS_DWDRTP_BASE_T_H
+#define OPENDDS_DCPS_QOS_XML_HANDLER_QOS_DWDRTP_BASE_T_H
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -23,14 +23,14 @@ template <typename XML_QOS_TYPE, typename DDS_QOS_TYPE>
 class QOS_DwDrTp_Base_T
 {
 public:
-  QOS_DwDrTp_Base_T (void);
-  ~QOS_DwDrTp_Base_T (void);
+  QOS_DwDrTp_Base_T ();
+  ~QOS_DwDrTp_Base_T ();
 
   void read_qos (DDS_QOS_TYPE&, const XML_QOS_TYPE);
 };
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
 
-#include "dds/DCPS/QOS_XML_Handler/QOS_DwDrTp_Base_T.cpp"
+#include "QOS_DwDrTp_Base_T.cpp"
 
 #endif /* QOS_DWDRTP_BASE_T_H_ */

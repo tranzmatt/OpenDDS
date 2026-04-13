@@ -59,14 +59,14 @@ public:
     const ::DDS::SubscriptionMatchedStatus&)
   {
     ACE_DEBUG((LM_DEBUG,
-      ACE_TEXT("(%P|%t) DataReaderListenerImpl::on_subscription_matched \n")));
+      ACE_TEXT("(%P|%t) DataReaderListenerImpl::on_subscription_matched\n")));
   }
 
   virtual void on_sample_rejected(::DDS::DataReader_ptr,
     const DDS::SampleRejectedStatus&)
   {
     ACE_DEBUG((LM_DEBUG,
-      ACE_TEXT("(%P|%t) DataReaderListenerImpl::on_sample_rejected \n")));
+      ACE_TEXT("(%P|%t) DataReaderListenerImpl::on_sample_rejected\n")));
   }
 
   virtual void on_data_available(::DDS::DataReader_ptr r) { read(r); }
@@ -75,34 +75,34 @@ public:
     const DDS::SampleLostStatus&)
   {
     ACE_DEBUG((LM_DEBUG,
-      ACE_TEXT("(%P|%t) DataReaderListenerImpl::on_subscription_disconnected \n")));
+      ACE_TEXT("(%P|%t) DataReaderListenerImpl::on_subscription_disconnected\n")));
   }
 
   virtual void on_subscription_disconnected(::DDS::DataReader_ptr,
     const ::OpenDDS::DCPS::SubscriptionDisconnectedStatus&)
   {
     ACE_DEBUG((LM_DEBUG,
-      ACE_TEXT("(%P|%t) DataReaderListenerImpl::on_subscription_disconnected \n")));
+      ACE_TEXT("(%P|%t) DataReaderListenerImpl::on_subscription_disconnected\n")));
   }
 
   virtual void on_subscription_reconnected(::DDS::DataReader_ptr,
     const ::OpenDDS::DCPS::SubscriptionReconnectedStatus&)
   {
     ACE_DEBUG((LM_DEBUG,
-      ACE_TEXT("(%P|%t) DataReaderListenerImpl::on_subscription_reconnected \n")));
+      ACE_TEXT("(%P|%t) DataReaderListenerImpl::on_subscription_reconnected\n")));
   }
 
   virtual void on_subscription_lost(::DDS::DataReader_ptr,
     const ::OpenDDS::DCPS::SubscriptionLostStatus&)
   {
     ACE_DEBUG((LM_DEBUG,
-      ACE_TEXT("(%P|%t) DataReaderListenerImpl::on_subscription_lost \n")));
+      ACE_TEXT("(%P|%t) DataReaderListenerImpl::on_subscription_lost\n")));
   }
 
   virtual void on_budget_exceeded(::DDS::DataReader_ptr,
     const ::OpenDDS::DCPS::BudgetExceededStatus&)
   {
-    ACE_DEBUG ((LM_DEBUG, "(%P|%t) received on_budget_exceeded \n"));
+    ACE_DEBUG ((LM_DEBUG, "(%P|%t) received on_budget_exceeded\n"));
   }
 
   void read(::DDS::DataReader_ptr reader);
@@ -123,7 +123,7 @@ void DataReaderListenerImpl<MessageType>::read(DDS::DataReader_ptr dr)
     TraitsType::DataReaderType::_narrow(dr);
 
   typename TraitsType::MessageSequenceType foo(num_ops_per_thread_);
-  DDS::SampleInfoSeq si(num_ops_per_thread_);
+  DDS::SampleInfoSeq si(static_cast<DDS::UInt32>(num_ops_per_thread_));
 
   const DDS::ReturnCode_t status =
     foo_dr->read(foo, si, num_ops_per_thread_,

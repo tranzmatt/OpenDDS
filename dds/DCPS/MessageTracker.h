@@ -8,10 +8,12 @@
 #ifndef OPENDDS_DCPS_MESSAGETRACKER_H
 #define OPENDDS_DCPS_MESSAGETRACKER_H
 
-#include "dds/DCPS/dcps_export.h"
-#include "dds/DCPS/PoolAllocator.h"
-#include "ace/Thread_Mutex.h"
-#include "ace/Condition_Thread_Mutex.h"
+#include "dcps_export.h"
+#include "PoolAllocator.h"
+#include "TimeTypes.h"
+#include "ConditionVariable.h"
+
+#include <ace/Thread_Mutex.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -44,28 +46,38 @@ namespace DCPS {
     /**
      * Answer if there are any messages that have not been accounted for.
      */
-    bool pending_messages();
+    bool pending_messages() const;
 
     /**
-     * Block until all messages have been account for.
+     * Block until all messages have been accounted for or timeouts out based
+     * on PendingTimeout.
      */
-    void wait_messages_pending(OPENDDS_STRING& caller_message);
+    void wait_messages_pending(const char* caller);
+
+    /**
+     * Block until all messages have been accounted for or the deadline supplied
+     * has passed. Blocks indefinitely if deadline is zero.
+     */
+    void wait_messages_pending(const char* caller, const MonotonicTimePoint& deadline);
 
     /**
      * For testing.
      */
-    int dropped_count();
+    int dropped_count() const;
 
   private:
+    bool pending_messages_i() const;
+
     const OPENDDS_STRING msg_src_;         // Source of tracked messages
     int                  dropped_count_;
     int                  delivered_count_; // Messages transmitted by transport layer
     int                  sent_count_;      // Messages sent to transport layer
 
-    ACE_Thread_Mutex lock_;
+    mutable ACE_Thread_Mutex lock_;
 
     /// All messages have been transported condition variable.
-    ACE_Condition_Thread_Mutex done_condition_;
+    typedef ConditionVariable<ACE_Thread_Mutex> ConditionVariableType;
+    ConditionVariableType done_condition_;
   };
 
 } // namespace DCPS
@@ -74,4 +86,3 @@ namespace DCPS {
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
 
 #endif
-

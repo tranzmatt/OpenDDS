@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_TRANSPORTHEADER_H
-#define OPENDDS_DCPS_TRANSPORTHEADER_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTHEADER_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTHEADER_H
 
 #include "ace/Basic_Types.h"
 #include "ace/CDR_Base.h"
@@ -63,7 +63,7 @@ struct OpenDDS_Dcps_Export TransportHeader {
 
   /// Constants for bit masking the marshaled flags byte.
   /// This needs to match the 'Flags' above.
-  enum { BYTE_ORDER_FLAG, FIRST_FRAGMENT_FLAG, LAST_FRAGMENT_FLAG };
+  enum { TH_BYTE_ORDER_FLAG, FIRST_FRAGMENT_FLAG, LAST_FRAGMENT_FLAG };
 
   /// Reserved for future use (provides padding for preamble).
   ACE_CDR::Octet reserved_;
@@ -82,7 +82,7 @@ struct OpenDDS_Dcps_Export TransportHeader {
   ACE_INT64 source_;
 
   /// Similar to IDL compiler generated methods.
-  static size_t max_marshaled_size();
+  static size_t get_max_serialized_size();
 
   /// Demarshal transport packet from ACE_Message_Block.
   bool init(ACE_Message_Block* buffer);
@@ -93,11 +93,6 @@ struct OpenDDS_Dcps_Export TransportHeader {
   const SequenceNumber& sequence() { return this->sequence_; }
 
   static ACE_UINT32 get_length(const char* marshaled_transport_header);
-
-private:
-  struct no_init_t {};
-  static const no_init_t no_init;
-  explicit TransportHeader(const no_init_t&);
 };
 
 OpenDDS_Dcps_Export

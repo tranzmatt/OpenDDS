@@ -5,12 +5,14 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_MULTICASTSENDSTRATEGY_H
-#define DCPS_MULTICASTSENDSTRATEGY_H
+#ifndef OPENDDS_DCPS_TRANSPORT_MULTICAST_MULTICASTSENDSTRATEGY_H
+#define OPENDDS_DCPS_TRANSPORT_MULTICAST_MULTICASTSENDSTRATEGY_H
 
 #include "Multicast_Export.h"
 
+#include "dds/DCPS/NetworkAddress.h"
 #include "dds/DCPS/transport/framework/TransportSendStrategy.h"
+
 #include "ace/Asynch_IO.h"
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
@@ -37,7 +39,7 @@ protected:
 
   virtual ssize_t send_bytes_i(const iovec iov[], int n);
   ssize_t sync_send(const iovec iov[], int n);
-  ssize_t async_send(const iovec iov[], int n);
+  ssize_t async_send(const iovec iov[], int n, const ACE_INET_Addr& addr);
 
   virtual size_t max_message_size() const
   {
@@ -51,6 +53,8 @@ protected:
 
 private:
   MulticastDataLink* link_;
+  const bool async_send_;
+  const NetworkAddress group_address_;
 
 #if defined (ACE_HAS_WIN32_OVERLAPPED_IO) || defined (ACE_HAS_AIO_CALLS)
   ACE_Asynch_Write_Dgram async_writer_;

@@ -7,23 +7,24 @@
 
 #include "DCPS/DdsDcps_pch.h" //Only the _pch include should start with DCPS/
 #include "TransportControlElement.h"
-#include "dds/DCPS/transport/framework/EntryExit.h"
+#include "EntryExit.h"
 
 #if !defined (__ACE_INLINE__)
 #include "TransportControlElement.inl"
 #endif /* __ACE_INLINE__ */
 
-OpenDDS::DCPS::TransportControlElement::TransportControlElement(
-  Message_Block_Ptr msg_block
-) : TransportQueueElement(1),
-    msg_( msg_block.release())
+OpenDDS::DCPS::TransportControlElement::TransportControlElement(Message_Block_Ptr msg_block,
+                                                                const GUID_t& publication_id)
+  : TransportQueueElement(1)
+  , msg_( msg_block.release())
+  , publication_id_(publication_id)
 {
-  DBG_ENTRY_LVL("TransportControlElement","TransportControlElement",6);
+  DBG_ENTRY_LVL("TransportControlElement", "TransportControlElement", 6);
 }
 
 OpenDDS::DCPS::TransportControlElement::~TransportControlElement()
 {
-  DBG_ENTRY_LVL("TransportControlElement","~TransportControlElement",6);
+  DBG_ENTRY_LVL("TransportControlElement", "~TransportControlElement", 6);
 }
 
 void

@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_TRANSPORT_MONITOR_IMPL_H
-#define OPENDDS_DCPS_TRANSPORT_MONITOR_IMPL_H
+#ifndef OPENDDS_MONITOR_TRANSPORTMONITORIMPL_H
+#define OPENDDS_MONITOR_TRANSPORTMONITORIMPL_H
 
 #include "monitor_export.h"
 #include "dds/DCPS/MonitorFactory.h"
@@ -21,17 +21,17 @@
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace OpenDDS {
-namespace DCPS {
+namespace Monitor {
 
-class TransportMonitorImpl : public Monitor {
+class TransportMonitorImpl : public DCPS::Monitor {
 public:
-  TransportMonitorImpl(TransportImpl* transport,
-                   OpenDDS::DCPS::TransportReportDataWriter_ptr transport_writer);
+  TransportMonitorImpl(DCPS::TransportImpl* transport,
+                       TransportReportDataWriter_ptr transport_writer);
   virtual ~TransportMonitorImpl();
   virtual void report();
 
 private:
-  OpenDDS::DCPS::TransportReportDataWriter_var transport_writer_;
+  TransportReportDataWriter_var transport_writer_;
   std::string hostname_;
   pid_t pid_;
 
@@ -40,8 +40,8 @@ private:
   static TransportReportVec queue_;
 };
 
-} // namespace DCPS
-} // namespace OpenDDS
+}
+}
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
 

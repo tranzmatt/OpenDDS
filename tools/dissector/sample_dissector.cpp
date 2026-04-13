@@ -1,15 +1,13 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-#include "tools/dissector/sample_dissector.h"
-#include "tools/dissector/sample_manager.h"
-#include "tools/dissector/ws_common.h"
+#include "sample_dissector.h"
+#include "sample_manager.h"
+#include "ws_common.h"
 
-#include "dds/DCPS/Serializer.h"
+#include <dds/DCPS/Serializer.h>
 
 #include <ace/Basic_Types.h>
 #include <ace/CDR_Base.h>
@@ -19,19 +17,16 @@
 
 #include <tao/String_Manager_T.h>
 
-#include <cstring>
+#ifndef NO_EXPERT
+#  include <epan/expert.h>
+#endif
 
+#include <cstring>
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
 #include <string>
 #include <vector>
-
-#ifndef NO_EXPERT
-extern "C" {
-#include <epan/expert.h>
-}
-#endif
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -89,10 +84,10 @@ namespace OpenDDS
     }
 
     Wireshark_Bundle::Wireshark_Bundle(
-      char* data, size_t size, bool swap_bytes, Serializer::Alignment align
+      char* data, size_t size, bool swap_bytes, Encoding::Alignment
     ) :
       block(data, size),
-      serializer(&block, swap_bytes, align)
+      serializer(&block, Encoding::KIND_UNALIGNED_CDR, swap_bytes)
     {
       block.wr_ptr(data + size);
       get_size_only = false;
@@ -100,11 +95,7 @@ namespace OpenDDS
 
     Wireshark_Bundle::Wireshark_Bundle(const Wireshark_Bundle& other) :
       block(other.block.rd_ptr(), other.block.size()),
-      serializer(
-        &block,
-        other.serializer.swap_bytes(),
-        other.serializer.alignment()
-      )
+      serializer(&block, other.serializer.encoding())
     {
       block.wr_ptr(other.block.wr_ptr() - other.block.rd_ptr());
 
@@ -250,7 +241,7 @@ namespace OpenDDS
     Field_Context* Sample_Base::create_context(ftenum ft, field_display_e fd) {
       if (field_contexts_.count(get_ns())) {
         throw Sample_Dissector_Error(
-          std::string("Could not create context becuase it already exists for: ") +
+          std::string("Could not create context because it already exists for: ") +
           get_ns()
         );
       }

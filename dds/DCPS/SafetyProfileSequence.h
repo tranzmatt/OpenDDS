@@ -1,10 +1,12 @@
-#ifndef dds_DCPS_SafetyProfileSequence_h
-#define dds_DCPS_SafetyProfileSequence_h
+#ifndef OPENDDS_DCPS_SAFETYPROFILESEQUENCE_H
+#define OPENDDS_DCPS_SAFETYPROFILESEQUENCE_H
 
-#include "dds/DCPS/SafetyProfilePool.h"
-#include "dds/DCPS/PoolAllocationBase.h"
-#include "dds/DCPS/Definitions.h"
-#include "dds/DCPS/Serializer.h"
+#include "SafetyProfilePool.h"
+#include "PoolAllocationBase.h"
+#include "Definitions.h"
+#include "Serializer.h"
+
+#include <dds/Versioned_Namespace.h>
 
 #include <tao/Array_VarOut_T.h> // Array_Traits
 #include <tao/String_Manager_T.h>
@@ -14,6 +16,8 @@
 #include <utility>
 #include <cstddef>
 #include <cstring>
+
+OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace OpenDDS {
 namespace SafetyProfile {
@@ -311,10 +315,8 @@ namespace SafetyProfile {
     // max_size() inherited from AllocPolicy
     bool empty() const { return !length_; }
 
-#ifndef __SUNPRO_CC
   private:
     friend struct AllocPolicy<T, Sequence, Bounds>;
-#endif
     void replace_i(size_type maximum, size_type length,
                    T* data, seq_flag_type release);
 
@@ -356,6 +358,9 @@ namespace SafetyProfile {
   template <typename T>
   inline void DefaultEltPolicy<T>::copy_n(const T* in, seq_size_type n, T* out)
   {
+    if (!(in && out)) {
+      return;
+    }
     std::memcpy(out, in, n * sizeof(T));
   }
 
@@ -526,10 +531,10 @@ namespace SafetyProfile {
   // Members of the Sequence template itself:
 
   template <typename T, typename Bounds, typename Elts>
-  inline Sequence<T, Bounds, Elts>::Sequence(size_type maximum,
+  inline Sequence<T, Bounds, Elts>::Sequence(size_type max,
                                              size_type length,
                                              T* data, seq_flag_type release)
-    : AllocPolicy<T, Sequence, Bounds>(maximum)
+    : AllocPolicy<T, Sequence, Bounds>(max)
     , length_(length)
     , release_(release)
     , buffer_(data)
@@ -575,11 +580,11 @@ namespace SafetyProfile {
   }
 
   template <typename T, typename Bounds, typename Elts>
-  inline void Sequence<T, Bounds, Elts>::replace_i(size_type maximum,
+  inline void Sequence<T, Bounds, Elts>::replace_i(size_type max,
                                                    size_type length, T* data,
                                                    seq_flag_type release)
   {
-    Sequence tmp(maximum, length, data, release);
+    Sequence tmp(max, length, data, release);
     swap(tmp);
   }
 
@@ -607,7 +612,9 @@ namespace SafetyProfile {
     }
 
     Sequence tmp(len, len, allocate(len), true);
-    Elts::move_n(buffer_, length_, tmp.buffer_);
+    if (buffer_) {
+      Elts::move_n(buffer_, length_, tmp.buffer_);
+    }
     swap(tmp);
   }
 
@@ -682,5 +689,7 @@ namespace SafetyProfile {
   }
 }
 }
+
+OPENDDS_END_VERSIONED_NAMESPACE_DECL
 
 #endif /* dds_DCPS_SafetyProfileSequence_h */

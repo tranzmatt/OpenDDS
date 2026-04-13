@@ -5,7 +5,6 @@
  * See: http://www.opendds.org/license.html
  */
 
-#include "Tcp_pch.h"
 #include "TcpSynchResource.h"
 #include "TcpConnection.h"
 #include "TcpSendStrategy.h"
@@ -22,8 +21,8 @@ OpenDDS::DCPS::TcpSynchResource::TcpSynchResource(
   DBG_ENTRY_LVL("TcpSynchResource","TcpSynchResource",6);
 
   if (max_output_pause_period_ms >= 0) {
-    this->timeout_ = new ACE_Time_Value(max_output_pause_period_ms / 1000,
-                                        max_output_pause_period_ms % 1000 * 1000);
+    const ACE_UINT64 milliseconds = static_cast<ACE_UINT64>(max_output_pause_period_ms);
+    timeout_ = new TimeDuration(TimeDuration::from_msec(milliseconds));
   }
 }
 

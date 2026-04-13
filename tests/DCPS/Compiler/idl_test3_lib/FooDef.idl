@@ -1,3 +1,6 @@
+#include "tao/ShortSeq.pidl"
+#include "tao/StringSeq.pidl"
+
 // note the following predefined types often have special cases:
 //    char, octet, boolean, string
 // where as all of the integer and float types are just one case.
@@ -5,6 +8,18 @@
 #include "SharedTypes.idl"
 
 module Xyz {
+  // typedefs and structs for testing ValueWriter
+  typedef short ArrayOfShorts[5];
+  typedef short TwoDimArrayOfShorts2[3][4];
+  typedef short MultiDimArrayOfShorts[2][3][4];
+  typedef string MultiDimArray[2][3][4][5];
+  typedef sequence<short> s1;
+  typedef sequence<string> s2;
+  struct s_vwrite1 { ArrayOfShorts a; };
+  struct s_vwrite2 { TwoDimArrayOfShorts2 a; };
+  struct s_vwrite3 { MultiDimArrayOfShorts a; };
+  struct s_vwrite4 { MultiDimArray a; };
+  struct s_vwrite5 { s1 a; };
 
   // sequences of arrays
   typedef sequence<ArrayOfBoolean,8> SeqOfArrayOfBoolean;
@@ -42,6 +57,31 @@ module Xyz {
   typedef sequence<SeqOfOctet,4>   SeqOfSeqOfOctet;
   typedef sequence<SeqOfLong,4>    SeqOfSeqOfLong;
   typedef sequence<SeqOfAnEnum,4>  SeqOfSeqOfAnEnum;
+
+  // typedefs of typedefs
+  typedef ArrayOfLong TypedefOfArrayOfLong;
+  typedef SeqOfArrayOfLong TypedefOfSeqOfArrayOfLong;
+  typedef sequence<TypedefOfArrayOfLong, 3> SeqOfTypedefOfArrayOfLong;
+  typedef TypedefOfSeqOfArrayOfLong ArrayOfTypedefOfSeqOfArrayOfLong[2];
+
+  @topic
+  struct StructOfTypedefsOfTypedefs {
+    TypedefOfArrayOfLong typedef_of_array_of_long;
+    TypedefOfSeqOfArrayOfLong typedef_of_seq_of_array_of_long;
+    SeqOfTypedefOfArrayOfLong seq_of_typedef_of_array_of_long;
+    ArrayOfTypedefOfSeqOfArrayOfLong array_of_typedef_of_seq_of_array_of_long;
+  };
+
+  union UnionOfTypedefsOfTypedefs switch (int32) {
+  case 0:
+    TypedefOfArrayOfLong typedef_of_array_of_long;
+  case 1:
+    TypedefOfSeqOfArrayOfLong typedef_of_seq_of_array_of_long;
+  case 2:
+    SeqOfTypedefOfArrayOfLong seq_of_typedef_of_array_of_long;
+  default:
+    ArrayOfTypedefOfSeqOfArrayOfLong array_of_typedef_of_seq_of_array_of_long;
+  };
 
   // typedef of a "special" scalar type
   typedef octet OctetTypedef;
@@ -265,7 +305,7 @@ module Xyz {
     AUnion theUnion;
     SeqOfAUnion theSeqOfUnion;
     BigUnion theBigUnion;
-    BigUnionSeq theSeqOfBitUnion;
+    BigUnionSeq theSeqOfBigUnion;
     float x;
     float y;
     wchar theWChar;

@@ -9,12 +9,12 @@
 #include "ace/Atomic_Op_T.h"
 #include "ace/OS_NS_unistd.h"
 
-ACE_Atomic_Op<ACE_SYNCH_MUTEX, CORBA::Long> key(0);
+OpenDDS::DCPS::Atomic<CORBA::Long> key(0);
 
 
 template<class DT, class DW, class DW_var>
 ::DDS::ReturnCode_t write (int writer_id,
-                           ACE_Atomic_Op<ACE_SYNCH_MUTEX, int> & timeout_writes,
+                           OpenDDS::DCPS::Atomic<int> & timeout_writes,
                            ::DDS::DataWriter_ptr writer)
 {
 
@@ -106,7 +106,7 @@ void
 Writer::start ()
 {
   ACE_DEBUG((LM_DEBUG,
-    ACE_TEXT("(%P|%t) Writer::start \n")));
+    ACE_TEXT("(%P|%t) Writer::start\n")));
   // Lanuch num_instances_per_writer threads.
   // Each thread writes one instance which uses the thread id as the
   // key value.
@@ -123,7 +123,7 @@ void
 Writer::end ()
 {
   ACE_DEBUG((LM_DEBUG,
-             ACE_TEXT("(%P|%t) Writer::end \n")));
+             ACE_TEXT("(%P|%t) Writer::end\n")));
   wait ();
 }
 
@@ -174,5 +174,5 @@ Writer::is_finished () const
 int
 Writer::get_timeout_writes () const
 {
-  return timeout_writes_.value ();
+  return timeout_writes_;
 }

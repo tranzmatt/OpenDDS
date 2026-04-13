@@ -41,16 +41,18 @@ class DCPS_IR_Topic;
 class OpenDDS_InfoRepoLib_Export DCPS_IR_Subscription
 : public OpenDDS::DCPS::EnableContainerSupportedUniquePtr<DCPS_IR_Subscription> {
 public:
-  DCPS_IR_Subscription(const OpenDDS::DCPS::RepoId& id,
+  DCPS_IR_Subscription(const OpenDDS::DCPS::GUID_t& id,
                        DCPS_IR_Participant* participant,
                        DCPS_IR_Topic* topic,
                        OpenDDS::DCPS::DataReaderRemote_ptr reader,
                        const DDS::DataReaderQos& qos,
                        const OpenDDS::DCPS::TransportLocatorSeq& info,
+                       ACE_CDR::ULong transportContext,
                        const DDS::SubscriberQos& subscriberQos,
                        const char* filterClassName,
                        const char* filterExpression,
-                       const DDS::StringSeq& exprParams);
+                       const DDS::StringSeq& exprParams,
+                       const DDS::OctetSeq & serializedTypeInfo);
 
   ~DCPS_IR_Subscription();
 
@@ -60,16 +62,6 @@ public:
   /// This method can mark the participant dead
   /// Returns 0 if added, 1 if already exists, -1 other failure
   int add_associated_publication(DCPS_IR_Publication* pub, bool active);
-
-  /// The service participant that contains this Subscription has indicated
-  /// that the assocation to peer "remote" is complete.  This method will
-  /// locate the Publication object for "remote" in order to inform it
-  /// of the completed association.
-  void association_complete(const OpenDDS::DCPS::RepoId& remote);
-
-  /// Invoke the DataWriterRemote::association_complete() callback, passing
-  /// the "remote" parameter (Subscription) to the service participant.
-  void call_association_complete(const OpenDDS::DCPS::RepoId& remote);
 
   /// Remove the associated publication
   /// Removes the publication from the list of associated
@@ -97,14 +89,14 @@ public:
   int remove_associations(CORBA::Boolean notify_lost);
 
   /// Remove any publications whose participant has the id
-  void disassociate_participant(OpenDDS::DCPS::RepoId id,
+  void disassociate_participant(OpenDDS::DCPS::GUID_t id,
                                 bool reassociate = false);
 
   /// Remove any publications whose topic has the id
-  void disassociate_topic(OpenDDS::DCPS::RepoId id);
+  void disassociate_topic(OpenDDS::DCPS::GUID_t id);
 
   /// Remove any publications with id
-  void disassociate_publication(OpenDDS::DCPS::RepoId id,
+  void disassociate_publication(OpenDDS::DCPS::GUID_t id,
                                 bool reassociate = false);
 
   /// Notify the reader of incompatible qos status
@@ -114,9 +106,9 @@ public:
   /// Check that none of the ids given are ones that
   ///  this subscription should ignore.
   /// returns 1 if one of these ids is an ignored id
-  CORBA::Boolean is_publication_ignored(OpenDDS::DCPS::RepoId partId,
-                                        OpenDDS::DCPS::RepoId topicId,
-                                        OpenDDS::DCPS::RepoId pubId);
+  CORBA::Boolean is_publication_ignored(OpenDDS::DCPS::GUID_t partId,
+                                        OpenDDS::DCPS::GUID_t topicId,
+                                        OpenDDS::DCPS::GUID_t pubId);
 
   /// Return pointer to the DataReader qos
   /// Subscription retains ownership
@@ -155,14 +147,15 @@ public:
   bool reevaluate_association(DCPS_IR_Publication* publication);
 
   OpenDDS::DCPS::TransportLocatorSeq get_transportLocatorSeq() const;
+  ACE_CDR::ULong get_transportContext() const { return transportContext_; }
 
   /// Return pointer to the incompatible qos status
   /// Subscription retains ownership
   OpenDDS::DCPS::IncompatibleQosStatus* get_incompatibleQosStatus();
 
-  OpenDDS::DCPS::RepoId get_id();
-  OpenDDS::DCPS::RepoId get_topic_id();
-  OpenDDS::DCPS::RepoId get_participant_id();
+  OpenDDS::DCPS::GUID_t get_id();
+  OpenDDS::DCPS::GUID_t get_topic_id();
+  OpenDDS::DCPS::GUID_t get_participant_id();
 
   DCPS_IR_Topic_Description* get_topic_description();
 
@@ -186,8 +179,11 @@ public:
 
   std::string dump_to_string(const std::string& prefix, int depth) const;
 
+
+  const DDS::OctetSeq& get_serialized_type_info() const;
+
 private:
-  OpenDDS::DCPS::RepoId id_;
+  OpenDDS::DCPS::GUID_t id_;
   DCPS_IR_Participant* participant_;
   DCPS_IR_Topic* topic_;
   DDS::InstanceHandle_t handle_;
@@ -197,11 +193,12 @@ private:
   OpenDDS::DCPS::DataReaderRemote_var reader_;
   DDS::DataReaderQos qos_;
   OpenDDS::DCPS::TransportLocatorSeq info_;
+  ACE_CDR::ULong transportContext_;
   DDS::SubscriberQos subscriberQos_;
   std::string filterClassName_;
   std::string filterExpression_;
   DDS::StringSeq exprParams_;
-
+  DDS::OctetSeq serializedTypeInfo_;
   DCPS_IR_Publication_Set associations_;
   DCPS_IR_Publication_Set defunct_;
 

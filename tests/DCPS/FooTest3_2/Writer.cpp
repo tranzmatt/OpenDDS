@@ -12,7 +12,7 @@
 #include "tests/DCPS/common/TestSupport.h"
 
 const int default_key = 101010;
-ACE_Atomic_Op<ACE_SYNCH_MUTEX, CORBA::Long> key(0);
+OpenDDS::DCPS::Atomic<CORBA::Long> key(0);
 
 Writer::Writer(PubDriver* /*pubdriver*/,
                ::DDS::DataWriter_ptr writer,
@@ -47,7 +47,7 @@ void
 Writer::start ()
 {
   ACE_DEBUG((LM_DEBUG,
-    ACE_TEXT("(%P|%t) Writer::start \n")));
+    ACE_TEXT("(%P|%t) Writer::start\n")));
   if (activate (THR_NEW_LWP | THR_JOINABLE, num_thread_to_write_) == -1)
   {
     ACE_ERROR ((LM_ERROR,
@@ -63,7 +63,7 @@ Writer::end ()
   wait ();
 
   ACE_DEBUG((LM_DEBUG,
-             ACE_TEXT("(%P|%t) Writer::end \n")));
+             ACE_TEXT("(%P|%t) Writer::end\n")));
 }
 
 
@@ -71,7 +71,7 @@ int
 Writer::svc ()
 {
   ACE_DEBUG((LM_DEBUG,
-              ACE_TEXT("(%P|%t) Writer::svc \n")));
+              ACE_TEXT("(%P|%t) Writer::svc\n")));
 
   // Wait for the subscriber to be ready...
   ::DDS::InstanceHandleSeq handles;
@@ -157,7 +157,7 @@ Writer::svc ()
 
     ACE_DEBUG((LM_DEBUG,
       ACE_TEXT("(%P|%t) Writer::svc data_delivered_count=%d data_dropped_count=%d\n"),
-      writer_servant_->data_delivered_count_, writer_servant_->data_dropped_count_));
+      writer_servant_->data_delivered_count_.load(), writer_servant_->data_dropped_count_.load()));
   }
 
   while (true) {
@@ -185,4 +185,3 @@ Writer::data_map ()
 {
   return data_map_;
 }
-

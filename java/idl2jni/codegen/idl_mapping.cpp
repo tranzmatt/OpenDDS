@@ -7,24 +7,30 @@
 
 #include "idl_mapping.h"
 
-#include "utl_identifier.h"
+#include <ast_annotation_member.h>
+#include <utl_identifier.h>
+#include <utl_string.h>
 
 using namespace std;
 
 idl_mapping::~idl_mapping() {}
 
-string idl_mapping::scoped_helper(UTL_ScopedName *sn, const char *sep)
+string idl_mapping::scoped_helper(UTL_ScopedName *sn, const char *sep,
+                                  bool omit_local)
 {
   string sname;
 
   for (; sn; sn = static_cast<UTL_ScopedName *>(sn->tail())) {
+    if (omit_local && !sn->tail())
+      break;
+
+    if (sname != "")
+      sname += sep;
+
     if (sn->head()->escaped())
       sname += "_";
 
     sname += sn->head()->get_string();
-
-    if (sname != "" && sn->tail())
-      sname += sep;
   }
 
   return sname;
@@ -129,4 +135,9 @@ bool composite_mapping::gen_union(UTL_ScopedName *name,
   }
 
   return true;
+}
+
+bool is_hidden_op_in_java(AST_Operation* op)
+{
+  return op->annotations().find("::OpenDDS::internal::@hidden_op_in_java");
 }

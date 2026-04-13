@@ -1,94 +1,89 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
-
-
-#include <dds/DdsDcpsInfrastructureC.h>
-#include <dds/DCPS/Marked_Default_Qos.h>
-#include <dds/DCPS/Service_Participant.h>
-#include <dds/DCPS/SubscriberImpl.h>
-#include <dds/DCPS/WaitSet.h>
-
-#include "dds/DCPS/StaticIncludes.h"
-#ifdef ACE_AS_STATIC_LIBS
-# ifndef OPENDDS_SAFETY_PROFILE
-#include <dds/DCPS/transport/udp/Udp.h>
-#include <dds/DCPS/transport/multicast/Multicast.h>
-#include <dds/DCPS/RTPS/RtpsDiscovery.h>
-#include <dds/DCPS/transport/shmem/Shmem.h>
-#  ifdef OPENDDS_SECURITY
-#  include "dds/DCPS/security/BuiltInPlugins.h"
-#  endif
-# endif
-#include <dds/DCPS/transport/rtps_udp/RtpsUdp.h>
-#endif
-
-#include <dds/DCPS/transport/framework/TransportRegistry.h>
-#include <dds/DCPS/transport/framework/TransportConfig.h>
-#include <dds/DCPS/transport/framework/TransportInst.h>
 
 #include "DataReaderListener.h"
 #include "MessengerTypeSupportImpl.h"
 #include "Args.h"
 
-#ifdef OPENDDS_SECURITY
-const char auth_ca_file[] = "file:../../security/certs/identity/identity_ca_cert.pem";
-const char perm_ca_file[] = "file:../../security/certs/permissions/permissions_ca_cert.pem";
-const char id_cert_file[] = "file:../../security/certs/identity/test_participant_02_cert.pem";
-const char id_key_file[] = "file:../../security/certs/identity/test_participant_02_private_key.pem";
-const char governance_file[] = "file:./governance_signed.p7s";
-const char permissions_file[] = "file:./permissions_2_signed.p7s";
+#include <dds/DdsDcpsInfrastructureC.h>
+#include <dds/OpenDDSConfigWrapper.h>
 
-const char DDSSEC_PROP_IDENTITY_CA[] = "dds.sec.auth.identity_ca";
-const char DDSSEC_PROP_IDENTITY_CERT[] = "dds.sec.auth.identity_certificate";
-const char DDSSEC_PROP_IDENTITY_PRIVKEY[] = "dds.sec.auth.private_key";
-const char DDSSEC_PROP_PERM_CA[] = "dds.sec.access.permissions_ca";
-const char DDSSEC_PROP_PERM_GOV_DOC[] = "dds.sec.access.governance";
-const char DDSSEC_PROP_PERM_DOC[] = "dds.sec.access.permissions";
+#include <dds/DCPS/Marked_Default_Qos.h>
+#include <dds/DCPS/Service_Participant.h>
+#include <dds/DCPS/SubscriberImpl.h>
+#include <dds/DCPS/WaitSet.h>
+
+#if OPENDDS_CONFIG_SECURITY
+#  include <dds/DCPS/security/framework/Properties.h>
+#endif
+#include <dds/DCPS/StaticIncludes.h>
+#if OPENDDS_DO_MANUAL_STATIC_INCLUDES
+#  ifndef OPENDDS_SAFETY_PROFILE
+#    include <dds/DCPS/transport/udp/Udp.h>
+#    include <dds/DCPS/transport/multicast/Multicast.h>
+#    include <dds/DCPS/RTPS/RtpsDiscovery.h>
+#    include <dds/DCPS/transport/shmem/Shmem.h>
+#    if OPENDDS_CONFIG_SECURITY
+#      include <dds/DCPS/security/BuiltInPlugins.h>
+#    endif
+#  endif
+#  include <dds/DCPS/transport/rtps_udp/RtpsUdp.h>
 #endif
 
-bool reliable = false;
-bool wait_for_acks = false;
+#include <cstdlib>
 
-void append(DDS::PropertySeq& props, const char* name, const char* value, bool propagate = false)
+using OpenDDS::DCPS::String;
+
+void append(DDS::PropertySeq& props, const String& name, const String& value, bool propagate = false)
 {
-  const DDS::Property_t prop = {name, value, propagate};
+  const DDS::Property_t prop = {name.c_str(), value.c_str(), propagate};
   const unsigned int len = props.length();
   props.length(len + 1);
   props[len] = prop;
 }
 
-int
-ACE_TMAIN(int argc, ACE_TCHAR *argv[])
+int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
 {
-  int status = 0;
+  int status = EXIT_SUCCESS;
+
   try {
     // Initialize DomainParticipantFactory
     DDS::DomainParticipantFactory_var dpf =
       TheParticipantFactoryWithArgs(argc, argv);
 
-    int error;
-    if ((error = parse_args(argc, argv)) != 0) {
-      return error;
+    if ((status = parse_args(argc, argv)) != EXIT_SUCCESS) {
+      return status;
     }
 
     DDS::DomainParticipantQos part_qos;
     dpf->get_default_participant_qos(part_qos);
 
-    DDS::PropertySeq& props = part_qos.property.value;
-    append(props, "OpenDDS.RtpsRelay.Groups", "Messenger", true);
-
-#if defined(OPENDDS_SECURITY)
+#if OPENDDS_CONFIG_SECURITY
     if (TheServiceParticipant->get_security()) {
-      append(props, DDSSEC_PROP_IDENTITY_CA, auth_ca_file);
-      append(props, DDSSEC_PROP_IDENTITY_CERT, id_cert_file);
-      append(props, DDSSEC_PROP_IDENTITY_PRIVKEY, id_key_file);
-      append(props, DDSSEC_PROP_PERM_CA, perm_ca_file);
-      append(props, DDSSEC_PROP_PERM_GOV_DOC, governance_file);
-      append(props, DDSSEC_PROP_PERM_DOC, permissions_file);
+      // Determine the path to the keys
+      String path_to_tests;
+      const char* const source_root = ACE_OS::getenv("OPENDDS_SOURCE_DIR");
+      if (source_root && source_root[0]) {
+        // Use OPENDDS_SOURCE_DIR in case we are one of the CMake tests
+        path_to_tests = String("file:") + source_root + "/tests/";
+      } else {
+        // Else try to do it relative to the traditional location
+        path_to_tests = "file:../../";
+      }
+
+      const String certs = path_to_tests + "security/certs/";
+      const String identity = certs + "identity/";
+      const String messenger = path_to_tests + "DCPS/Messenger/";
+      using namespace DDS::Security::Properties;
+      DDS::PropertySeq& props = part_qos.property.value;
+      append(props, AuthIdentityCA, identity + "identity_ca_cert.pem");
+      append(props, AuthIdentityCertificate, identity + "test_participant_02_cert.pem");
+      append(props, AuthPrivateKey, identity + "test_participant_02_private_key.pem");
+      append(props, AccessPermissionsCA, certs + "permissions/permissions_ca_cert.pem");
+      append(props, AccessGovernance, messenger + "governance_signed.p7s");
+      append(props, AccessPermissions, messenger + "permissions_2_signed.p7s");
     }
 #endif
 
@@ -98,21 +93,17 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
                               part_qos,
                               DDS::DomainParticipantListener::_nil(),
                               OpenDDS::DCPS::DEFAULT_STATUS_MASK);
-
-    if (CORBA::is_nil(participant.in())) {
-      ACE_ERROR_RETURN((LM_ERROR,
-                        ACE_TEXT("%N:%l main()")
-                        ACE_TEXT(" ERROR: create_participant() failed!\n")), -1);
+    if (!participant) {
+      ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: main(): create_participant() failed!\n"));
+      return EXIT_FAILURE;
     }
 
     // Register Type (Messenger::Message)
     Messenger::MessageTypeSupport_var ts =
       new Messenger::MessageTypeSupportImpl();
-
     if (ts->register_type(participant.in(), "") != DDS::RETCODE_OK) {
-      ACE_ERROR_RETURN((LM_ERROR,
-                        ACE_TEXT("%N:%l main()")
-                        ACE_TEXT(" ERROR: register_type() failed!\n")), -1);
+      ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: main(): register_type() failed!\n"));
+      return EXIT_FAILURE;
     }
 
     // Create Topic (Movie Discussion List)
@@ -123,11 +114,9 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
                                 TOPIC_QOS_DEFAULT,
                                 DDS::TopicListener::_nil(),
                                 OpenDDS::DCPS::DEFAULT_STATUS_MASK);
-
-    if (CORBA::is_nil(topic.in())) {
-      ACE_ERROR_RETURN((LM_ERROR,
-                        ACE_TEXT("%N:%l main()")
-                        ACE_TEXT(" ERROR: create_topic() failed!\n")), -1);
+    if (!topic) {
+      ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: main(): create_topic() failed!\n"));
+      return EXIT_FAILURE;
     }
 
     // Create Subscriber
@@ -135,11 +124,9 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
       participant->create_subscriber(SUBSCRIBER_QOS_DEFAULT,
                                      DDS::SubscriberListener::_nil(),
                                      OpenDDS::DCPS::DEFAULT_STATUS_MASK);
-
-    if (CORBA::is_nil(sub.in())) {
-      ACE_ERROR_RETURN((LM_ERROR,
-                        ACE_TEXT("%N:%l main()")
-                        ACE_TEXT(" ERROR: create_subscriber() failed!\n")), -1);
+    if (!sub) {
+      ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: main(): create_subscriber() failed!\n"));
+      return EXIT_FAILURE;
     }
 
     // Create DataReader
@@ -149,54 +136,45 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
     DDS::DataReaderQos dr_qos;
     sub->get_default_datareader_qos(dr_qos);
     if (DataReaderListenerImpl::is_reliable()) {
-      std::cout << "Reliable DataReader" << std::endl;
+      ACE_DEBUG((LM_DEBUG, "(%P|%t) DEBUG: Reliable DataReader\n"));
       dr_qos.reliability.kind = DDS::RELIABLE_RELIABILITY_QOS;
+      listener_servant->set_expected_reads(40);
+    } else {
+      ACE_DEBUG((LM_DEBUG, "(%P|%t) DEBUG: Unreliable DataReader\n"));
+      listener_servant->set_expected_reads(1);
     }
+
+    DDS::GuardCondition_var gc = new DDS::GuardCondition;
+    DDS::WaitSet_var ws = new DDS::WaitSet;
+    ACE_DEBUG((LM_DEBUG, "(%P|%t) DEBUG: main(): calling attach_condition\n"));
+    DDS::ReturnCode_t ret = ws->attach_condition(gc);
+    if (ret != DDS::RETCODE_OK) {
+      ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: main(): attach_condition failed!\n"));
+      return EXIT_FAILURE;
+    }
+    listener_servant->set_guard_condition(gc);
 
     DDS::DataReader_var reader =
       sub->create_datareader(topic.in(),
                              dr_qos,
                              listener.in(),
                              OpenDDS::DCPS::DEFAULT_STATUS_MASK);
-
-    if (CORBA::is_nil(reader.in())) {
-      ACE_ERROR_RETURN((LM_ERROR,
-                        ACE_TEXT("%N:%l main()")
-                        ACE_TEXT(" ERROR: create_datareader() failed!\n")), -1);
+    if (!reader) {
+      ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: main(): create_datareader() failed!\n"));
+      return EXIT_FAILURE;
     }
 
-    // Block until Publisher completes
-    DDS::StatusCondition_var condition = reader->get_statuscondition();
-    condition->set_enabled_statuses(DDS::SUBSCRIPTION_MATCHED_STATUS);
-
-    DDS::WaitSet_var ws = new DDS::WaitSet;
-    ws->attach_condition(condition);
-
+    // Block until GuardCondition is released
     DDS::Duration_t timeout =
       { DDS::DURATION_INFINITE_SEC, DDS::DURATION_INFINITE_NSEC };
 
     DDS::ConditionSeq conditions;
-    DDS::SubscriptionMatchedStatus matches = { 0, 0, 0, 0, 0 };
+    ret = ws->wait(conditions, timeout);
+    ws->detach_condition(gc);
 
-    while (true) {
-      if (reader->get_subscription_matched_status(matches) != DDS::RETCODE_OK) {
-        ACE_ERROR_RETURN((LM_ERROR,
-                          ACE_TEXT("%N:%l main()")
-                          ACE_TEXT(" ERROR: get_subscription_matched_status() failed!\n")), -1);
-      }
-      if (matches.current_count == 0 && matches.total_count > 0) {
-        break;
-      }
-      if (ws->wait(conditions, timeout) != DDS::RETCODE_OK) {
-        ACE_ERROR_RETURN((LM_ERROR,
-                          ACE_TEXT("%N:%l main()")
-                          ACE_TEXT(" ERROR: wait() failed!\n")), -1);
-      }
+    if (!listener_servant->is_valid()) {
+      status = EXIT_FAILURE;
     }
-
-    status = listener_servant->is_valid() ? 0 : -1;
-
-    ws->detach_condition(condition);
 
     // Clean-up!
     participant->delete_contained_entities();
@@ -205,7 +183,7 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
 
   } catch (const CORBA::Exception& e) {
     e._tao_print_exception("Exception caught in main():");
-    status = -1;
+    status = EXIT_FAILURE;
   }
 
   return status;

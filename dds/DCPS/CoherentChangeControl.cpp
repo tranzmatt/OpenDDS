@@ -10,10 +10,13 @@
 #ifndef OPENDDS_NO_OBJECT_MODEL_PROFILE
 
 #include "CoherentChangeControl.h"
+
 #include "Serializer.h"
 #include "GuidConverter.h"
-#include "dds/DdsDcpsGuidTypeSupportImpl.h"
-#include "dds/DCPS/PoolAllocator.h"
+#include "PoolAllocator.h"
+#include "RestoreOutputStreamState.h"
+
+#include <dds/DdsDcpsGuidTypeSupportImpl.h>
 
 #include <iomanip>
 #include <iostream>
@@ -74,7 +77,7 @@ operator>>(Serializer& serializer, CoherentChangeControl& value)
     }
 
     for (ACE_UINT32 i = 0; i < sz; ++i) {
-      PublicationId writer(GUID_UNKNOWN);
+      GUID_t writer(GUID_UNKNOWN);
       ACE_UINT32 num_sample = 0;
       ACE_INT16 last_sample = 0;
 
@@ -100,20 +103,20 @@ operator>>(Serializer& serializer, CoherentChangeControl& value)
 extern OpenDDS_Dcps_Export
 std::ostream& operator<<(std::ostream& str, const CoherentChangeControl& value)
 {
+  RestoreOutputStreamState stream_state(str);
+
   str << "num_samples: " << std::dec << value.coherent_samples_.num_samples_
       << ", last_sample: " << value.coherent_samples_.last_sample_.getValue()
       << ", ";
   if (value.group_coherent_) {
-    GuidConverter converter(value.publisher_id_);
-    str << "publisher: " << std::dec << OPENDDS_STRING(converter).c_str() << ", ";
+    str << "publisher: " << std::dec << LogGuid(value.publisher_id_).c_str() << ", ";
     str << "group size: " << std::dec << value.group_coherent_samples_.size()
         << ", ";
     GroupCoherentSamples::const_iterator itEnd =
       value.group_coherent_samples_.end();
     for (GroupCoherentSamples::const_iterator it =
            value.group_coherent_samples_.begin(); it != itEnd; ++it) {
-      GuidConverter converter(it->first);
-      str << "writer: " << OPENDDS_STRING(converter).c_str() << ", "
+      str << "writer: " << LogGuid(it->first).c_str() << ", "
           << "num_samples: " << it->second.num_samples_ << ", "
           << "last_sample: " << it->second.last_sample_.getValue()  << std::endl;
     }

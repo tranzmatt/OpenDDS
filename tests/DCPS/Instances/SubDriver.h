@@ -8,12 +8,11 @@
 #include "ace/OS_NS_unistd.h"
 #include <vector>
 
-// Set data reader QOS to use topic QOS
-class SetDataReaderQosUseTopicQos {
+class SetDataReaderQosReliable {
   public:
     void operator()(DDS::DataReaderQos& qos)
     {
-      qos = DATAREADER_QOS_USE_TOPIC_QOS;
+      qos.reliability.kind = DDS::RELIABLE_RELIABILITY_QOS;
     }
 };
 
@@ -35,7 +34,7 @@ public:
     {
       if (OpenDDS::DCPS::DCPS_debug_level > 0) {
         ACE_DEBUG((LM_DEBUG,
-                   ACE_TEXT("(%P|%t) SubDriver::SubDriver \n")));
+                   ACE_TEXT("(%P|%t) SubDriver::SubDriver\n")));
       }
 
     }
@@ -44,7 +43,7 @@ public:
     {
       if (OpenDDS::DCPS::DCPS_debug_level > 0) {
         ACE_DEBUG((LM_DEBUG,
-                   ACE_TEXT("(%P|%t) SubDriver::~SubDriver \n")));
+                   ACE_TEXT("(%P|%t) SubDriver::~SubDriver\n")));
       }
     }
 
@@ -67,7 +66,7 @@ public:
     {
       if (OpenDDS::DCPS::DCPS_debug_level > 0) {
         ACE_DEBUG((LM_DEBUG,
-               ACE_TEXT("(%P|%t) SubDriver::run \n")));
+               ACE_TEXT("(%P|%t) SubDriver::run\n")));
       }
 
       const std::string topic_name("topic_name");
@@ -90,7 +89,7 @@ public:
                    ACE_TEXT("(%P|%t) Sub Creating Reader\n")));
       }
 
-      SetDataReaderQosUseTopicQos data_reader_qos = {};
+      SetDataReaderQosReliable data_reader_qos;
 
       DDS::DataReader_var reader = topic_facade.reader(listener,data_reader_qos);
 

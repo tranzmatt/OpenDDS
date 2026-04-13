@@ -1,6 +1,4 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
@@ -9,13 +7,16 @@
 #define OPENDDS_DCPS_DOMAIN_PARTICIPANT_FACTORY_IMPL_H
 
 #include "Definitions.h"
-#include "dds/DdsDcpsDomainC.h"
-#include "ace/Recursive_Thread_Mutex.h"
-#include "dds/DCPS/LocalObject.h"
-#include "dds/DCPS/PoolAllocator.h"
+#include "LocalObject.h"
+#include "PoolAllocator.h"
+#include "InstanceHandle.h"
 
-#if !defined (ACE_LACKS_PRAGMA_ONCE)
-#pragma once
+#include <dds/DdsDcpsDomainC.h>
+
+#include <ace/Thread_Mutex.h>
+
+#ifndef ACE_LACKS_PRAGMA_ONCE
+#  pragma once
 #endif /* ACE_LACKS_PRAGMA_ONCE */
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
@@ -33,7 +34,7 @@ class DomainParticipantImpl;
 *
 * This class acts as factory of the DomainParticipant.
 *
-* See the DDS specification, OMG formal/04-12-02, for a description of
+* See the DDS specification, OMG formal/2015-04-10, for a description of
 * the interface this class is implementing.
 *
 */
@@ -74,25 +75,28 @@ public:
   virtual DDS::ReturnCode_t get_qos(
     DDS::DomainParticipantFactoryQos & qos);
 
-  /// Expose the participants for reading.
-  const DPMap& participants() const;
+  /// Make a copy of the participants map for reading.
+  DPMap participants() const;
 
-  void cleanup();
+  DDS::ReturnCode_t delete_all_participants();
+
+  size_t participant_count() const;
 
 private:
-
   DDS::DomainParticipantFactoryQos qos_;
 
   /// The default qos value of DomainParticipant.
-  DDS::DomainParticipantQos   default_participant_qos_;
+  DDS::DomainParticipantQos default_participant_qos_;
 
   /// The collection of domain participants.
-  DPMap                       participants_;
+  DPMap participants_;
 
   /// Protect the participant collection.
-  /// Use recursive mutex to allow nested acquisition and
-  /// release of a mutex that occurs in the same thread.
-  ACE_Recursive_Thread_Mutex  participants_protector_;
+  mutable ACE_Recursive_Thread_Mutex participants_protector_;
+
+  /// Instance handle generators for non-repo backed entities
+  /// (i.e. subscribers and publishers).
+  InstanceHandleGenerator participant_handles_;
 };
 
 } // namespace DCPS

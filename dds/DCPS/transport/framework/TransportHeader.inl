@@ -17,13 +17,13 @@ namespace DCPS {
 
 ACE_INLINE
 TransportHeader::TransportHeader()
-  : byte_order_(ACE_CDR_BYTE_ORDER),
-    first_fragment_(false),
-    last_fragment_(false),
-    reserved_(0),
-    length_(0),
-    sequence_(),
-    source_(0)
+  : byte_order_(ACE_CDR_BYTE_ORDER)
+  , first_fragment_(false)
+  , last_fragment_(false)
+  , reserved_(0)
+  , length_(0)
+  , sequence_()
+  , source_(0)
 {
   DBG_ENTRY_LVL("TransportHeader","TransportHeader",6);
 
@@ -31,12 +31,14 @@ TransportHeader::TransportHeader()
 }
 
 ACE_INLINE
-TransportHeader::TransportHeader(const TransportHeader::no_init_t&)
-{
-}
-
-ACE_INLINE
 TransportHeader::TransportHeader(ACE_Message_Block& buffer)
+  : byte_order_(ACE_CDR_BYTE_ORDER)
+  , first_fragment_(false)
+  , last_fragment_(false)
+  , reserved_(0)
+  , length_(0)
+  , sequence_()
+  , source_(0)
 {
   DBG_ENTRY_LVL("TransportHeader","TransportHeader",6);
   this->init(&buffer);
@@ -52,17 +54,16 @@ TransportHeader::operator=(ACE_Message_Block& buffer)
 }
 
 ACE_INLINE
-size_t
-TransportHeader::max_marshaled_size()
+size_t TransportHeader::get_max_serialized_size()
 {
   // Representation takes no extra space for encoding.
-  TransportHeader hdr(no_init);
-  return sizeof(hdr.protocol_) +
+  const TransportHeader* hdr = 0;
+  return sizeof(hdr->protocol_) +
          1 /*flags*/ +
-         sizeof(hdr.reserved_) +
-         sizeof(hdr.length_) +
-         sizeof(hdr.sequence_) +
-         sizeof(hdr.source_);
+         sizeof(hdr->reserved_) +
+         sizeof(hdr->length_) +
+         sizeof(hdr->sequence_) +
+         sizeof(hdr->source_);
 }
 
 ACE_INLINE
@@ -91,7 +92,7 @@ TransportHeader::init(ACE_Message_Block* buffer)
 {
   DBG_ENTRY_LVL("TransportHeader","init",6);
 
-  Serializer reader(buffer);
+  Serializer reader(buffer, Encoding::KIND_UNALIGNED_CDR);
 
   if (!reader.read_octet_array(this->protocol_, sizeof(this->protocol_)))
     return false;
@@ -100,7 +101,7 @@ TransportHeader::init(ACE_Message_Block* buffer)
   if (!(reader >> ACE_InputCDR::to_octet(flags)))
     return false;
 
-  this->byte_order_= flags & (1 << BYTE_ORDER_FLAG);
+  this->byte_order_ = flags & (1 << TH_BYTE_ORDER_FLAG);
   this->first_fragment_ = flags & (1 << FIRST_FRAGMENT_FLAG);
   this->last_fragment_ = flags & (1 << LAST_FRAGMENT_FLAG);
 

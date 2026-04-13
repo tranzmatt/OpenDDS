@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_SCHEDULEOUTPUTHANDER_H
-#define OPENDDS_SCHEDULEOUTPUTHANDER_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_SCHEDULEOUTPUTHANDLER_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_SCHEDULEOUTPUTHANDLER_H
 
 #include <ace/Reactor.h>
 #include <ace/Event_Handler.h>
@@ -29,7 +29,7 @@ class TransportSendStrategy;
  * is queueing data, then the reactor is enabled to process on output
  * events.  Otherwise the output processing callbacks are cancelled.
  */
-class ScheduleOutputHandler : public ACE_Event_Handler, public PoolAllocationBase {
+class ScheduleOutputHandler : public virtual ACE_Event_Handler, public PoolAllocationBase {
   public:
     /// Construct with the reactor and strategy.
     ScheduleOutputHandler( TransportSendStrategy* strategy,

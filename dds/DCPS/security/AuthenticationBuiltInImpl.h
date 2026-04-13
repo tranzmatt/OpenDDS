@@ -7,21 +7,23 @@
 
 
 
-#ifndef DDS_DCPS_AUTHENTICATION_BUILTIN_IMPL_H
-#define DDS_DCPS_AUTHENTICATION_BUILTIN_IMPL_H
+#ifndef OPENDDS_DCPS_SECURITY_AUTHENTICATIONBUILTINIMPL_H
+#define OPENDDS_DCPS_SECURITY_AUTHENTICATIONBUILTINIMPL_H
 
-#include "dds/DCPS/security/DdsSecurity_Export.h"
-#include "dds/DdsSecurityCoreC.h"
-#include "dds/Versioned_Namespace.h"
-#include "dds/DCPS/dcps_export.h"
-#include "dds/DCPS/GuidUtils.h"
-#include "ace/Thread_Mutex.h"
+#include "OpenDDS_Security_Export.h"
+#include "Authentication/LocalAuthCredentialData.h"
+#include "SSL/DiffieHellman.h"
+
+#include <dds/DdsSecurityCoreC.h>
+#include <dds/Versioned_Namespace.h>
+#include <dds/DCPS/dcps_export.h>
+#include <dds/DCPS/GuidUtils.h>
+
+#include <ace/Thread_Mutex.h>
+
 #include <map>
 #include <string>
 #include <memory>
-
-#include "Authentication/LocalAuthCredentialData.h"
-#include "SSL/DiffieHellman.h"
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 #pragma once
@@ -34,6 +36,14 @@ OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 namespace OpenDDS {
 namespace Security {
 
+const char Identity_Status_Token_Class_Id[] = "DDS:Auth:PKI-DH:1.0";
+const char Auth_Peer_Cred_Token_Class_Id[] = "DDS:Auth:PKI-DH:1.0";
+
+const char dds_cert_sn[] = "dds.cert.sn";
+const char dds_cert_algo[] = "dds.cert.algo";
+
+const char dds_ca_sn[] = "dds.ca.sn";
+const char dds_ca_algo[] = "dds.ca.algo";
 
 /**
 * @class AuthenticationBuiltInImpl
@@ -45,10 +55,14 @@ namespace Security {
 * the interface this class is implementing.
 *
 */
-class DdsSecurity_Export  AuthenticationBuiltInImpl
+class OpenDDS_Security_Export AuthenticationBuiltInImpl
   : public virtual DDS::Security::Authentication
 {
 public:
+
+  /// include in PropertyQosPolicy to add optional properties to Handshake tokens
+  static const char* PROPERTY_HANDSHAKE_DEBUG;
+
   AuthenticationBuiltInImpl();
   virtual ~AuthenticationBuiltInImpl();
 
@@ -187,14 +201,16 @@ private:
     DCPS::GUID_t participant_guid;
     LocalAuthCredentialData::shared_ptr credentials;
     RemoteParticipantMap validated_remotes;
+    bool handshake_debug;
 
     LocalParticipantData()
-      : participant_guid(DCPS::GUID_UNKNOWN),
-        credentials(),
-        validated_remotes()
+      : participant_guid(DCPS::GUID_UNKNOWN)
+      , credentials()
+      , validated_remotes()
+      , handshake_debug(false)
     {
-
     }
+    ~LocalParticipantData();
   };
   typedef std::map<DDS::Security::IdentityHandle, LocalParticipantData::shared_ptr> LocalParticipantMap;
   LocalParticipantMap local_participants_;

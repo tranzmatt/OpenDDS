@@ -4,10 +4,13 @@
  */
 
 #include "LocalAuthCredentialData.h"
+
+#include "dds/DCPS/SequenceIterator.h"
+#include "dds/DCPS/debug.h"
 #include "dds/DCPS/security/CommonUtilities.h"
 #include "dds/DCPS/security/TokenReader.h"
-#include "dds/DCPS/debug.h"
-#include "dds/DCPS/SequenceIterator.h"
+#include "dds/DCPS/security/framework/Properties.h"
+
 #include <algorithm>
 #include <cstring>
 #include <cerrno>
@@ -81,10 +84,10 @@ bool LocalAuthCredentialData::load_access_permissions(const DDS::Security::Permi
     return false;
   }
 
-  DCPS::SequenceBackInsertIterator<DDS::OctetSeq> back_inserter(access_permissions_);
-  std::copy(cperm, cperm + std::strlen(cperm), back_inserter);
+  const size_t len = std::strlen(cperm);
+  access_permissions_.length(static_cast<CORBA::ULong>(len + 1));
+  std::memcpy(&access_permissions_[0], cperm, len + 1); // copies the NULL
 
-  *back_inserter = 0u;
   return true;
 }
 
@@ -103,16 +106,16 @@ bool LocalAuthCredentialData::load_credentials(const DDS::PropertySeq& props, DD
                  i, name.c_str(), value.c_str()));
     }
 
-    if (name == "dds.sec.auth.identity_ca") {
+    if (name == DDS::Security::Properties::AuthIdentityCA) {
       ca_cert_.reset(new SSL::Certificate(value));
 
-    } else if (name == "dds.sec.auth.private_key") {
+    } else if (name == DDS::Security::Properties::AuthPrivateKey) {
       pkey_uri = value;
 
-    } else if (name == "dds.sec.auth.identity_certificate") {
+    } else if (name == DDS::Security::Properties::AuthIdentityCertificate) {
       participant_cert_.reset(new SSL::Certificate(value));
 
-    } else if (name == "dds.sec.auth.password") {
+    } else if (name == DDS::Security::Properties::AuthPassword) {
       password = value;
 
     }

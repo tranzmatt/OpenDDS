@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_REPOIDBUILDER_H
-#define DCPS_REPOIDBUILDER_H
+#ifndef OPENDDS_DCPS_REPOIDBUILDER_H
+#define OPENDDS_DCPS_REPOIDBUILDER_H
 
 #include "dds/DdsDcpsInfrastructureC.h"
 #include "dds/DdsDcpsInfoUtilsC.h"
@@ -23,7 +23,7 @@ namespace DCPS {
 class OpenDDS_Dcps_Export RepoIdBuilder : public GuidBuilder {
 public:
   RepoIdBuilder();
-  explicit RepoIdBuilder(RepoId& repoId);
+  explicit RepoIdBuilder(GUID_t& repoId);
 
   ~RepoIdBuilder();
 

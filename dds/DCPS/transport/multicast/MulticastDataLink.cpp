@@ -12,18 +12,18 @@
 #include "MulticastSendStrategy.h"
 #include "MulticastReceiveStrategy.h"
 
-#include "ace/Default_Constants.h"
-#include "ace/Global_Macros.h"
-#include "ace/Log_Msg.h"
-#include "ace/Truncate.h"
-#include "ace/OS_NS_sys_socket.h"
+#include <dds/DCPS/Service_Participant.h>
+#include <dds/DCPS/NetworkResource.h>
+#include <dds/DCPS/GuidConverter.h>
+#include <dds/DCPS/RepoIdConverter.h>
 
-#include "tao/ORB_Core.h"
+#include <tao/ORB_Core.h>
 
-#include "dds/DCPS/Service_Participant.h"
-#include "dds/DCPS/transport/framework/NetworkAddress.h"
-#include "dds/DCPS/GuidConverter.h"
-#include "dds/DCPS/RepoIdConverter.h"
+#include <ace/Default_Constants.h>
+#include <ace/Global_Macros.h>
+#include <ace/Log_Msg.h>
+#include <ace/Truncate.h>
+#include <ace/OS_NS_sys_socket.h>
 
 #ifndef __ACE_INLINE__
 # include "MulticastDataLink.inl"
@@ -34,12 +34,16 @@ OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 namespace OpenDDS {
 namespace DCPS {
 
-MulticastDataLink::MulticastDataLink(MulticastTransport& transport,
-    const MulticastSessionFactory_rch& session_factory,
-    MulticastPeer local_peer,
-    MulticastInst& config,
-    ReactorTask* reactor_task,
-    bool is_active)
+namespace {
+  const Encoding::Kind encoding_kind = Encoding::KIND_UNALIGNED_CDR;
+}
+
+MulticastDataLink::MulticastDataLink(const MulticastTransport_rch& transport,
+                                     const MulticastSessionFactory_rch& session_factory,
+                                     MulticastPeer local_peer,
+                                     const MulticastInst_rch& config,
+                                     const ReactorTask_rch &reactor_task,
+                                     bool is_active)
 : DataLink(transport, 0 /*priority*/, false /*loopback*/, is_active),
   session_factory_(session_factory),
   local_peer_(local_peer),
@@ -49,17 +53,19 @@ MulticastDataLink::MulticastDataLink(MulticastTransport& transport,
 {
   // A send buffer may be bound to the send strategy to ensure a
   // configured number of most-recent datagrams are retained:
-  if (this->session_factory_->requires_send_buffer()) {
-    this->send_buffer_.reset(new SingleSendBuffer(config.nak_depth_,
-                                              config.max_samples_per_packet_));
-    this->send_strategy_->send_buffer(this->send_buffer_.get());
+  if (session_factory_->requires_send_buffer()) {
+    const size_t nak_depth = config ? config->nak_depth() : MulticastInst::DEFAULT_NAK_DEPTH;
+    const size_t default_max_samples = DEFAULT_CONFIG_MAX_SAMPLES_PER_PACKET;
+    const size_t max_samples_per_packet = config ? config->max_samples_per_packet() : default_max_samples;
+    send_buffer_.reset(new SingleSendBuffer(nak_depth, max_samples_per_packet));
+    send_strategy_->send_buffer(send_buffer_.get());
   }
 }
 
 MulticastDataLink::~MulticastDataLink()
 {
-  if (this->send_buffer_) {
-    this->send_strategy_->send_buffer(0);
+  if (send_buffer_) {
+    send_strategy_->send_buffer(0);
   }
 }
 
@@ -67,8 +73,12 @@ MulticastDataLink::~MulticastDataLink()
 bool
 MulticastDataLink::join(const ACE_INET_Addr& group_address)
 {
+  MulticastInst_rch cfg = config();
+  if (!cfg) {
+    return false;
+  }
 
-  const std::string& net_if = this->config().local_address_;
+  const String net_if = cfg->local_address();
 #ifdef ACE_HAS_MAC_OSX
   socket_.opts(ACE_SOCK_Dgram_Mcast::OPT_BINDADDR_NO |
                ACE_SOCK_Dgram_Mcast::DEFOPT_NULLIFACE);
@@ -85,7 +95,7 @@ MulticastDataLink::join(const ACE_INET_Addr& group_address)
 
   ACE_HANDLE handle = this->socket_.get_handle();
 
-  if (!OpenDDS::DCPS::set_socket_multicast_ttl(this->socket_, this->config().ttl_)) {
+  if (!OpenDDS::DCPS::set_socket_multicast_ttl(this->socket_, cfg->ttl())) {
     ACE_ERROR_RETURN((LM_ERROR,
         ACE_TEXT("(%P|%t) ERROR: ")
         ACE_TEXT("MulticastDataLink::join: ")
@@ -93,7 +103,7 @@ MulticastDataLink::join(const ACE_INET_Addr& group_address)
         false);
   }
 
-  int rcv_buffer_size = ACE_Utils::truncate_cast<int>(this->config().rcv_buffer_size_);
+  int rcv_buffer_size = static_cast<int>(cfg->rcv_buffer_size());
   if (rcv_buffer_size != 0
       && ACE_OS::setsockopt(handle, SOL_SOCKET,
           SO_RCVBUF,
@@ -165,28 +175,31 @@ MulticastDataLink::find_or_create_session(MulticastPeer remote_peer)
     return it->second;
   }
 
-  MulticastSession_rch session =
-    this->session_factory_->create(transport().reactor(), transport().reactor_owner(), this, remote_peer);
-  if (session.is_nil()) {
-    ACE_ERROR_RETURN((LM_ERROR,
-        ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("MulticastDataLink::find_or_create_session: ")
-        ACE_TEXT("failed to create session for remote peer: %#08x%08x!\n"),
-        (unsigned int) (remote_peer >> 32),
-        (unsigned int) remote_peer),
-        MulticastSession_rch());
-  }
+  MulticastSession_rch session;
+  MulticastTransport_rch mt = transport();
+  if (mt) {
+    session = session_factory_->create(mt->event_dispatcher(), mt->reactor_task()->get_reactor(), this, remote_peer);
+    if (session.is_nil()) {
+      ACE_ERROR_RETURN((LM_ERROR,
+          ACE_TEXT("(%P|%t) ERROR: ")
+          ACE_TEXT("MulticastDataLink::find_or_create_session: ")
+          ACE_TEXT("failed to create session for remote peer: %#08x%08x!\n"),
+          (unsigned int) (remote_peer >> 32),
+          (unsigned int) remote_peer),
+          MulticastSession_rch());
+    }
 
-  std::pair<MulticastSessionMap::iterator, bool> pair = this->sessions_.insert(
-      MulticastSessionMap::value_type(remote_peer, session));
-  if (pair.first == this->sessions_.end()) {
-    ACE_ERROR_RETURN((LM_ERROR,
-        ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("MulticastDataLink::find_or_create_session: ")
-        ACE_TEXT("failed to insert session for remote peer: %#08x%08x!\n"),
-        (unsigned int) (remote_peer >> 32),
-        (unsigned int) remote_peer),
-        MulticastSession_rch());
+    std::pair<MulticastSessionMap::iterator, bool> pair = this->sessions_.insert(
+        MulticastSessionMap::value_type(remote_peer, session));
+    if (pair.first == this->sessions_.end()) {
+      ACE_ERROR_RETURN((LM_ERROR,
+          ACE_TEXT("(%P|%t) ERROR: ")
+          ACE_TEXT("MulticastDataLink::find_or_create_session: ")
+          ACE_TEXT("failed to insert session for remote peer: %#08x%08x!\n"),
+          (unsigned int) (remote_peer >> 32),
+          (unsigned int) remote_peer),
+          MulticastSession_rch());
+    }
   }
   return session;
 }
@@ -241,6 +254,43 @@ MulticastDataLink::reassemble(ReceivedDataSample& data,
   return false;
 }
 
+int
+MulticastDataLink::make_reservation(const GUID_t& rpi,
+                                    const GUID_t& lsi,
+                                    const TransportReceiveListener_wrch& trl,
+                                    bool reliable)
+{
+  int result = DataLink::make_reservation(rpi, lsi, trl, reliable);
+  if (reliable) {
+    const MulticastPeer remote_peer = (ACE_INT64)RepoIdConverter(rpi).federationId() << 32
+      | RepoIdConverter(rpi).participantId();
+    MulticastSession_rch session = find_session(remote_peer);
+    if (session) {
+      session->add_remote(lsi, rpi);
+    }
+  } else {
+    const MulticastPeer remote_peer = (ACE_INT64)RepoIdConverter(rpi).federationId() << 32
+      | RepoIdConverter(rpi).participantId();
+    MulticastSession_rch session = find_session(remote_peer);
+    if (session) {
+      session->add_remote(lsi);
+    }
+  }
+  return result;
+}
+
+void
+MulticastDataLink::release_reservations_i(const GUID_t& remote_id,
+                                          const GUID_t& local_id)
+{
+  const MulticastPeer remote_peer = (ACE_INT64)RepoIdConverter(remote_id).federationId() << 32
+    | RepoIdConverter(remote_id).participantId();
+  MulticastSession_rch session = find_session(remote_peer);
+  if (session) {
+    session->remove_remote(local_id, remote_id);
+  }
+}
+
 void
 MulticastDataLink::sample_received(ReceivedDataSample& sample)
 {
@@ -249,7 +299,8 @@ MulticastDataLink::sample_received(ReceivedDataSample& sample)
     // Transport control samples are delivered to all sessions
     // regardless of association status:
     {
-      char* const ptr = sample.sample_ ? sample.sample_->rd_ptr() : 0;
+      Message_Block_Ptr payload(sample.data());
+      char* const ptr = payload ? payload->rd_ptr() : 0;
 
       ACE_GUARD(ACE_SYNCH_RECURSIVE_MUTEX,
           guard,
@@ -263,7 +314,7 @@ MulticastDataLink::sample_received(ReceivedDataSample& sample)
         // Depending on the data, we may need to send SYNACK.
 
         guard.release();
-        syn_received_no_session(theader.source_, sample.sample_,
+        syn_received_no_session(theader.source_, payload,
                                 theader.swap_bytes());
 
         guard.acquire();
@@ -273,7 +324,7 @@ MulticastDataLink::sample_received(ReceivedDataSample& sample)
         }
 
         if (ptr) {
-          sample.sample_->rd_ptr(ptr);
+          payload->rd_ptr(ptr);
         }
         return;
       }
@@ -284,12 +335,12 @@ MulticastDataLink::sample_received(ReceivedDataSample& sample)
       for (MulticastSessionMap::iterator it(temp_sessions.begin());
           it != temp_sessions.end(); ++it) {
         it->second->control_received(sample.header_.submessage_id_,
-                                     sample.sample_);
+                                     payload);
         it->second->record_header_received(theader);
 
         // reset read pointer
         if (ptr) {
-          sample.sample_->rd_ptr(ptr);
+          payload->rd_ptr(ptr);
         }
       }
     }
@@ -324,7 +375,7 @@ MulticastDataLink::ready_to_deliver(const ReceivedDataSample& data)
 }
 
 void
-MulticastDataLink::release_remote_i(const RepoId& remote)
+MulticastDataLink::release_remote_i(const GUID_t& remote)
 {
   ACE_GUARD(ACE_SYNCH_RECURSIVE_MUTEX, guard, session_lock_);
   MulticastPeer remote_source = (ACE_INT64)RepoIdConverter(remote).federationId() << 32
@@ -340,7 +391,7 @@ MulticastDataLink::syn_received_no_session(MulticastPeer source,
     const Message_Block_Ptr& data,
     bool swap_bytes)
 {
-  Serializer serializer_read(data.get(), swap_bytes);
+  Serializer serializer_read(data.get(), encoding_kind, swap_bytes);
 
   MulticastPeer local_peer;
   serializer_read >> local_peer;
@@ -349,22 +400,24 @@ MulticastDataLink::syn_received_no_session(MulticastPeer source,
     return;
   }
 
-  VDBG_LVL((LM_DEBUG, "(%P|%t) MulticastDataLink[%C]::syn_received_no_session "
-      "send_synack local %#08x%08x remote %#08x%08x\n",
-      this->config().name().c_str(),
-      (unsigned int) (local_peer >> 32),
-      (unsigned int) local_peer,
-      (unsigned int) (source >> 32),
-      (unsigned int) source), 2);
+  {
+    MulticastInst_rch cfg = config();
+    VDBG_LVL((LM_DEBUG, "(%P|%t) MulticastDataLink[%C]::syn_received_no_session "
+        "send_synack local %#08x%08x remote %#08x%08x\n",
+        cfg ? cfg->name().c_str() : "",
+        (unsigned int) (local_peer >> 32),
+        (unsigned int) local_peer,
+        (unsigned int) (source >> 32),
+        (unsigned int) source), 2);
+  }
 
   Message_Block_Ptr synack_data(new ACE_Message_Block(sizeof(MulticastPeer)));
 
-  Serializer serializer_write(synack_data.get());
+  Serializer serializer_write(synack_data.get(), encoding_kind);
   serializer_write << source;
 
   DataSampleHeader header;
-  Message_Block_Ptr control(
-      create_control(MULTICAST_SYNACK, header, move(synack_data)));
+  Message_Block_Ptr control(create_control(MULTICAST_SYNACK, header, OPENDDS_MOVE_NS::move(synack_data)));
 
   if (control == 0) {
     ACE_ERROR((LM_ERROR,
@@ -374,14 +427,17 @@ MulticastDataLink::syn_received_no_session(MulticastPeer source,
     return;
   }
 
-  const int error = send_control(header, move(control));
+  const int error = send_control(header, OPENDDS_MOVE_NS::move(control));
   if (error != SEND_CONTROL_OK) {
     ACE_ERROR((LM_ERROR, "(%P|%t) MulticastDataLink::syn_received_no_session: "
         "ERROR: send_control failed: %d!\n", error));
     return;
   }
 
-  transport().passive_connection(local_peer, source);
+  MulticastTransport_rch mt= transport();
+  if (mt) {
+    mt->passive_connection(local_peer, source);
+  }
 }
 
 void
@@ -398,6 +454,15 @@ MulticastDataLink::stop_i()
   this->sessions_.clear();
 
   this->socket_.close();
+}
+
+void
+MulticastDataLink::client_stop(const GUID_t& localId)
+{
+  if (send_buffer_) {
+    send_buffer_->retain_all(localId);
+    send_buffer_.reset();
+  }
 }
 
 } // namespace DCPS

@@ -6,9 +6,12 @@
  */
 
 #include "DCPS/DdsDcps_pch.h" //Only the _pch include should start with DCPS/
+
 #include "TransportSendControlElement.h"
 #include "TransportSendListener.h"
-#include "dds/DCPS/transport/framework/EntryExit.h"
+#include "EntryExit.h"
+
+#include <dds/DCPS/DataSampleElement.h>
 
 #if !defined (__ACE_INLINE__)
 #include "TransportSendControlElement.inl"
@@ -21,24 +24,24 @@ namespace DCPS {
 
 
 TransportSendControlElement::TransportSendControlElement(int initial_count,
-                                                         const RepoId& publisher_id,
+                                                         const GUID_t& publisher_id,
                                                          TransportSendListener* listener,
                                                          const DataSampleHeader& header,
                                                          Message_Block_Ptr msg_block)
-  : TransportQueueElement(initial_count),
+  : TransportQueueElement(static_cast<unsigned long>(initial_count)),
     publisher_id_(publisher_id),
     listener_(listener),
     header_(header),
     msg_(msg_block.release()),
     dcps_elem_(0)
 {
-  DBG_ENTRY_LVL("TransportSendControlElement","TransportSendControlElement",6);
+  DBG_ENTRY_LVL("TransportSendControlElement", "TransportSendControlElement", 6);
 }
 
 
 TransportSendControlElement::TransportSendControlElement(int initial_count,
                                                          const DataSampleElement* dcps_elem)
-  : TransportQueueElement(initial_count)
+  : TransportQueueElement(static_cast<unsigned long>(initial_count))
   , publisher_id_(dcps_elem->get_pub_id())
   , listener_(dcps_elem->get_send_listener())
   , header_(dcps_elem->get_header())
@@ -49,13 +52,13 @@ TransportSendControlElement::TransportSendControlElement(int initial_count,
 
 TransportSendControlElement::~TransportSendControlElement()
 {
-  DBG_ENTRY_LVL("TransportSendControlElement","~TransportSendControlElement",6);
+  DBG_ENTRY_LVL("TransportSendControlElement", "~TransportSendControlElement", 6);
 }
 
 bool
 TransportSendControlElement::requires_exclusive_packet() const
 {
-  DBG_ENTRY_LVL("TransportSendControlElement","requires_exclusive_packet",6);
+  DBG_ENTRY_LVL("TransportSendControlElement", "requires_exclusive_packet", 6);
   return true;
 }
 
@@ -91,14 +94,14 @@ TransportSendControlElement::release_element(bool dropped_by_transport)
 {
   ACE_UNUSED_ARG(dropped_by_transport);
 
-  DBG_ENTRY_LVL("TransportSendControlElement","release_element",6);
+  DBG_ENTRY_LVL("TransportSendControlElement", "release_element", 6);
 
   // store off local copies to use after "this" pointer deleted
-  const bool dropped = this->was_dropped();
+  const bool dropped = was_dropped();
 
-  Message_Block_Ptr msg(this->msg_.release());
+  Message_Block_Ptr msg(msg_.release());
 
-  TransportSendListener* const listener = this->listener_;
+  TransportSendListener* const listener = listener_;
   const DataSampleElement* dcps_elem = dcps_elem_;
 
 
@@ -113,33 +116,44 @@ TransportSendControlElement::release_element(bool dropped_by_transport)
   }
 }
 
-RepoId
+GUID_t
 TransportSendControlElement::publication_id() const
 {
-  DBG_ENTRY_LVL("TransportSendControlElement","publication_id",6);
-  return this->publisher_id_;
+  DBG_ENTRY_LVL("TransportSendControlElement", "publication_id", 6);
+  return publisher_id_;
+}
+
+ACE_Message_Block*
+TransportSendControlElement::duplicate_msg() const
+{
+  DBG_ENTRY_LVL("TransportSendControlElement", "duplicate_msg", 6);
+  if (dcps_elem_) {
+    return const_cast<DataSampleElement*>(dcps_elem_)->get_sample()->duplicate();
+  }
+  return msg_->duplicate();
 }
 
 const ACE_Message_Block*
 TransportSendControlElement::msg() const
 {
-  DBG_ENTRY_LVL("TransportSendControlElement","msg",6);
-  if (dcps_elem_)
+  DBG_ENTRY_LVL("TransportSendControlElement", "msg", 6);
+  if (dcps_elem_) {
     return dcps_elem_->get_sample();
-  return this->msg_.get();
+  }
+  return msg_.get();
 }
 
 const ACE_Message_Block*
 TransportSendControlElement::msg_payload() const
 {
   DBG_ENTRY_LVL("TransportSendControlElement", "msg_payload", 6);
-  return this->msg()->cont();
+  return msg()->cont();
 }
 
 bool
-TransportSendControlElement::is_control(RepoId pub_id) const
+TransportSendControlElement::is_control(GUID_t pub_id) const
 {
-  return (pub_id == this->publisher_id_);
+  return (pub_id == publisher_id_);
 }
 
 }

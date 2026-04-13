@@ -1,201 +1,255 @@
 # Distributed under the OpenDDS License. See accompanying LICENSE
 # file or http://www.opendds.org/license.html for details.
 
-macro(_tao_append_lib_dir_to_path dst)
-  if (MSVC)
-    set(${dst} "PATH=")
-    if (DEFINED ENV{PATH})
-      set(${dst} "${${dst}}$ENV{PATH};")
-    endif()
+function(_opendds_compile_idl compiler idl_file)
+  set(no_value_options)
+  set(single_value_options)
+  set(multi_value_options OUTPUT DEPENDS OPTS)
+  cmake_parse_arguments(arg
+    "${no_value_options}" "${single_value_options}" "${multi_value_options}" ${ARGN})
 
+  # Add TAO lib directory to path
+  if(MSVC)
+    set(env_var_name PATH)
   else()
-    set(${dst} "LD_LIBRARY_PATH=")
-    if (DEFINED ENV{LD_LIBRARY_PATH})
-      set(${dst} "${${dst}}$ENV{LD_LIBRARY_PATH}:")
-    endif()
+    set(env_var_name LD_LIBRARY_PATH)
+  endif()
+  set(path_list "$ENV{${env_var_name}}" "${TAO_LIB_DIR}")
+  if(TARGET OpenDDS::Util)
+    list(APPEND path_list "$<TARGET_FILE_DIR:OpenDDS::Util>")
+  endif()
+  _opendds_path_list(path_list ${path_list})
+  if(NOT MSVC)
+    string(REPLACE "\\" "/" path_list "${path_list}")
   endif()
 
-  set(${dst} "${${dst}}${TAO_LIB_DIR}")
-endmacro()
-
-set(TAO_VERSIONING_IDL_FLAGS
-  -Wb,versioning_begin=TAO_BEGIN_VERSIONED_NAMESPACE_DECL
-  -Wb,versioning_end=TAO_END_VERSIONED_NAMESPACE_DECL
-)
-
-if (CORBA_E_MICRO)
-  list(APPEND TAO_CORBA_IDL_FLAGS -DCORBA_E_MICRO -Gce)
-endif()
-
-if (CORBA_E_COMPACT)
-  list(APPEND TAO_CORBA_IDL_FLAGS -DCORBA_E_COMPACT -Gce)
-endif()
-
-if (MINIMUM_CORBA)
-  list(APPEND TAO_CORBA_IDL_FLAGS -DTAO_HAS_MINIMUM_POA -Gmc)
-endif()
-
-if (TAO_NO_IIOP)
-  list(APPEND TAO_CORBA_IDL_FLAGS -DTAO_LACKS_IIOP)
-endif()
-
-if (GEN_OSTREAM)
-  list(APPEND TAO_CORBA_IDL_FLAGS -Gos)
-endif()
-
-if (NOT TAO_HAS_OPTIMIZE_COLLOCATED_INVOCATIONS)
-  list(APPEND TAO_CORBA_IDL_FLAGS -Sp -Sd)
-endif()
-
-function(tao_idl_command name)
-  set(multiValueArgs IDL_FLAGS IDL_FILES WORKING_DIRECTORY)
-  cmake_parse_arguments(_arg "" "" "${multiValueArgs}" ${ARGN})
-
-  set(_arg_IDL_FLAGS ${_arg_IDL_FLAGS})
-
-  if (NOT _arg_IDL_FILES)
-    message(FATAL_ERROR "using tao_idl_command(${name}) without specifying IDL_FILES")
+  # If supported, make this as part of the codegen target.
+  set(extra)
+  if(POLICY CMP0171)
+    cmake_policy(SET CMP0171 NEW)
+    list(APPEND extra CODEGEN)
   endif()
 
-  if (NOT _arg_WORKING_DIRECTORY)
-    set(_working_binary_dir ${CMAKE_CURRENT_BINARY_DIR})
-    set(_working_source_dir ${CMAKE_CURRENT_SOURCE_DIR})
-  elseif (NOT IS_ABSOLUTE "${_arg_WORKING_DIRECTORY}")
-    set(_working_binary_dir ${CMAKE_CURRENT_BINARY_DIR}/${_arg_WORKING_DIRECTORY})
-    set(_working_source_dir ${CMAKE_CURRENT_SOURCE_DIR}/${_arg_WORKING_DIRECTORY})
-  else()
-    set(_working_binary_dir ${_arg_WORKING_DIRECTORY})
-    set(_working_source_dir ${CMAKE_CURRENT_SOURCE_DIR})
+  add_custom_command(
+    OUTPUT ${arg_OUTPUT}
+    MAIN_DEPENDENCY "${idl_file}"
+    DEPENDS ${arg_DEPENDS}
+    ${extra}
+    COMMAND ${CMAKE_COMMAND} -E env
+      "DDS_ROOT=${DDS_ROOT}" "TAO_ROOT=${TAO_INCLUDE_DIR}" "${env_var_name}=${path_list}"
+      "${compiler}" ${arg_OPTS} "${idl_file}"
+  )
+endfunction()
+
+function(_opendds_tao_idl target)
+  set(one_value_args
+    INCLUDE_BASE
+    AUTO_INCLUDES_VAR
+    H_FILES_VAR
+    CPP_FILES_VAR
+  )
+  set(multi_value_args IDL_FLAGS IDL_FILES)
+  cmake_parse_arguments(arg "" "${one_value_args}" "${multi_value_args}" ${ARGN})
+
+  if(NOT arg_IDL_FILES)
+    message(FATAL_ERROR "called _opendds_tao_idl(${target}) without specifying IDL_FILES")
   endif()
 
-  ## convert all include paths to be relative to binary tree instead of to source tree
-  file(RELATIVE_PATH _rel_path_to_source_tree ${_working_binary_dir} ${_working_source_dir})
-  foreach(flag ${_arg_IDL_FLAGS})
-    if ("${flag}" MATCHES "^-I(\\.\\..*)")
-       list(APPEND _converted_flags -I${_rel_path_to_source_tree}/${CMAKE_MATCH_1})
-     else()
-       list(APPEND _converted_flags ${flag})
-       # if the flag is like "-Wb,stub_export_file=filename" then set the varilabe
-       # "idl_cmd_arg-wb-stub_export_file" to filename
-       string(REGEX MATCH "^-Wb,([^=]+)=(.+)" m "${flag}")
-       if (m)
-         set(idl_cmd_arg-wb-${CMAKE_MATCH_1} ${CMAKE_MATCH_2})
-       endif()
+  set(working_binary_dir ${CMAKE_CURRENT_BINARY_DIR})
+  set(working_source_dir ${CMAKE_CURRENT_SOURCE_DIR})
+
+  # convert all include paths to be relative to binary tree instead of to source tree
+  file(RELATIVE_PATH rel_path_to_source_tree ${working_binary_dir} ${working_source_dir})
+  set(remove_next_opt FALSE)
+  set(converted_flags)
+  foreach(flag ${arg_IDL_FLAGS})
+    if("${flag}" MATCHES "^-I(\\.\\..*)")
+      list(APPEND converted_flags "-I${rel_path_to_source_tree}/${CMAKE_MATCH_1}")
+    elseif("${flag}" MATCHES "^-o[SA]?$")
+      # Omit orignal -o* options because of https://github.com/DOCGroup/ACE_TAO/issues/2202
+      set(remove_next_opt TRUE)
+    elseif(remove_next_opt)
+      set(remove_next_opt FALSE)
+    else()
+      list(APPEND converted_flags ${flag})
+      # if the flag is like "-Wb,stub_export_file=filename" then set the variable
+      # "idl_cmd_arg-wb-stub_export_file" to filename
+      string(REGEX MATCH "^-Wb,([^=]+)=(.+)" m "${flag}")
+      if(m)
+        set(idl_cmd_arg-wb-${CMAKE_MATCH_1} ${CMAKE_MATCH_2})
+      endif()
     endif()
   endforeach()
 
-  set(optionArgs -Sch -Sci -Scc -Ssh -SS -GA -GT -GX -Gxhst -Gxhsk)
-  cmake_parse_arguments(_idl_cmd_arg "${optionArgs}" "-o;-oS;-oA" "" ${_arg_IDL_FLAGS})
+  set(option_args -Sch -Sci -Scc -Ssh -SS -GA -GT -GX -Gxhst -Gxhsk)
+  cmake_parse_arguments(idl_cmd_arg "${option_args}" "-o;-oS;-oA" "" ${arg_IDL_FLAGS})
 
-  if ("${_idl_cmd_arg_-o}" STREQUAL "")
-    set(_output_dir "${_working_binary_dir}")
-  else()
-    set(_output_dir "${_working_binary_dir}/${_idl_cmd_arg_-o}")
+  set(feature_flags)
+  if(OPENDDS_TAO_CORBA_E_MICRO)
+    list(APPEND feature_flags -DCORBA_E_MICRO -Gce)
+  endif()
+  if(OPENDDS_TAO_CORBA_E_COMPACT)
+    list(APPEND feature_flags -DCORBA_E_COMPACT -Gce)
+  endif()
+  if(OPENDDS_TAO_MINIMUM_CORBA)
+    list(APPEND feature_flags -DTAO_HAS_MINIMUM_POA -Gmc)
+  endif()
+  if(OPENDDS_TAO_NO_IIOP)
+    list(APPEND feature_flags -DTAO_LACKS_IIOP)
+  endif()
+  if(OPENDDS_TAO_GEN_OSTREAM)
+    list(APPEND feature_flags -Gos)
+  endif()
+  if(NOT OPENDDS_TAO_OPTIMIZE_COLLOCATED_INVOCATIONS)
+    list(APPEND feature_flags -Sp -Sd)
   endif()
 
-  if ("${_idl_cmd_arg_-oS}" STREQUAL "")
-    set(_skel_output_dir ${_output_dir})
-  else()
-    set(_skel_output_dir "${_working_binary_dir}/${_idl_cmd_arg_-oS}")
+  set(auto_includes)
+  if(arg_INCLUDE_BASE)
+    list(APPEND converted_flags "-I${arg_INCLUDE_BASE}")
   endif()
 
-  if ("${_idl_cmd_arg_-oA}" STREQUAL "")
-    set(_anyop_output_dir ${_output_dir})
-  else()
-    set(_anyop_output_dir "${_working_binary_dir}/${_idl_cmd_arg_-oA}")
-  endif()
-
-  foreach(idl_file ${_arg_IDL_FILES})
-
-    get_filename_component(idl_file_base ${idl_file} NAME_WE)
-    set(_STUB_HEADER_FILES)
-    set(_SKEL_HEADER_FILES)
-
-    if (NOT _idl_cmd_arg_-Sch)
-      set(_STUB_HEADER_FILES "${_output_dir}/${idl_file_base}C.h")
+  set(all_h_files)
+  set(all_cpp_files)
+  foreach(idl_file ${arg_IDL_FILES})
+    set(added_output_args)
+    _opendds_get_generated_output(${target} "${idl_file}"
+      INCLUDE_BASE "${arg_INCLUDE_BASE}" O_OPT "${idl_cmd_arg_-o}" MKDIR
+      PREFIX_PATH_VAR output_prefix DIR_PATH_VAR output_dir)
+    list(APPEND auto_includes "${output_dir}")
+    list(APPEND added_output_args "-o" "${output_dir}")
+    if(idl_cmd_arg_-oS)
+      _opendds_get_generated_output(${target} "${idl_file}"
+        INCLUDE_BASE "${arg_INCLUDE_BASE}" O_OPT "${idl_cmd_arg_-oS}" MKDIR
+        PREFIX_PATH_VAR skel_output_prefix DIR_PATH_VAR skel_output_dir)
+      list(APPEND auto_includes "${skel_output_dir}")
+      list(APPEND added_output_args "-oS" "${skel_output_dir}")
+    else()
+      set(skel_output_prefix "${output_prefix}")
+    endif()
+    if(idl_cmd_arg_-oA)
+      _opendds_get_generated_output(${target} "${idl_file}"
+      INCLUDE_BASE "${arg_INCLUDE_BASE}" O_OPT "${idl_cmd_arg_-oA}" MKDIR
+        PREFIX_PATH_VAR anyop_output_prefix DIR_PATH_VAR anyop_output_dir)
+      list(APPEND auto_includes "${anyop_output_dir}")
+      list(APPEND added_output_args "-oA" "${anyop_output_dir}")
+    else()
+      set(anyop_output_prefix "${output_prefix}")
     endif()
 
-    if (NOT _idl_cmd_arg_-Sci)
-      list(APPEND _STUB_HEADER_FILES "${_output_dir}/${idl_file_base}C.inl")
+    unset(stub_header_files)
+    unset(skel_header_files)
+    if(NOT idl_cmd_arg_-Sch)
+      set(stub_header_files "${output_prefix}C.h")
     endif()
 
-    if (NOT _idl_cmd_arg_-Scc)
-      set(_STUB_CPP_FILES "${_output_dir}/${idl_file_base}C.cpp")
+    if(NOT idl_cmd_arg_-Sci)
+      list(APPEND stub_header_files "${output_prefix}C.inl")
     endif()
 
-    if (NOT _idl_cmd_arg_-Ssh)
-      set(_SKEL_HEADER_FILES "${_skel_output_dir}/${idl_file_base}S.h")
+    if(NOT idl_cmd_arg_-Scc)
+      set(stub_cpp_files "${output_prefix}C.cpp")
     endif()
 
-    if (NOT _idl_cmd_arg_-SS)
-      set(_SKEL_CPP_FILES "${_skel_output_dir}/${idl_file_base}S.cpp")
+    if(NOT idl_cmd_arg_-Ssh)
+      set(skel_header_files "${skel_output_prefix}S.h")
     endif()
 
-    if (_idl_cmd_arg_-GA)
-      set(_ANYOP_HEADER_FILES "${_anyop_output_dir}/${idl_file_base}A.h")
-      set(_ANYOP_CPP_FILES "${_anyop_output_dir}/${idl_file_base}A.cpp")
-    elseif (_idl_cmd_arg_-GX)
-      set(_ANYOP_HEADER_FILES "${_anyop_output_dir}/${idl_file_base}A.h")
+    if(NOT idl_cmd_arg_-SS)
+      set(skel_cpp_files "${skel_output_prefix}S.cpp")
     endif()
 
-    if (_idl_cmd_arg_-GT)
-      list(APPEND ${idl_file_base}_SKEL_HEADER_FILES
-        "${_skel_output_dir}/${idl_file_base}S_T.h"
-        "${_skel_output_dir}/${idl_file_base}S_T.cpp")
+    if(idl_cmd_arg_-GA)
+      set(anyop_header_files "${anyop_output_prefix}A.h")
+      set(anyop_cpp_files "${anyop_output_prefix}A.cpp")
+    elseif(idl_cmd_arg_-GX)
+      set(anyop_header_files "${anyop_output_prefix}A.h")
     endif()
 
-    if (_idl_cmd_arg_-Gxhst)
-      list(APPEND _STUB_HEADER_FILES ${CMAKE_CURRENT_BINARY_DIR}/${idl_cmd_arg-wb-stub_export_file})
+    if(idl_cmd_arg_-GT)
+      list(APPEND skel_header_files
+        "${skel_output_prefix}S_T.h"
+        "${skel_output_prefix}S_T.cpp")
     endif()
 
-    if (_idl_cmd_arg_-Gxhsk)
-      list(APPEND _SKEL_HEADER_FILES ${CMAKE_CURRENT_BINARY_DIR}/${idl_cmd_arg-wb-skel_export_file})
+    if(idl_cmd_arg_-Gxhst AND DEFINED idl_cmd_arg-wb-stub_export_file)
+      list(APPEND stub_header_files "${CMAKE_CURRENT_BINARY_DIR}/${idl_cmd_arg-wb-stub_export_file}")
+    endif()
+
+    if(idl_cmd_arg_-Gxhsk AND DEFINED idl_cmd_arg-wb-skel_export_file)
+      list(APPEND skel_header_files "${CMAKE_CURRENT_BINARY_DIR}/${idl_cmd_arg-wb-skel_export_file}")
     endif()
 
     get_filename_component(idl_file_path "${idl_file}" ABSOLUTE)
 
-    set(GPERF_LOCATION $<TARGET_FILE:ace_gperf>)
+    set(gperf_location $<TARGET_FILE:ACE::ace_gperf>)
     if(CMAKE_CONFIGURATION_TYPES)
-      get_target_property(is_gperf_imported ace_gperf IMPORTED)
-      if (is_gperf_imported)
-        set(GPERF_LOCATION $<TARGET_PROPERTY:ace_gperf,LOCATION>)
+      get_target_property(is_gperf_imported ACE::ace_gperf IMPORTED)
+      if(is_gperf_imported)
+        set(gperf_location $<TARGET_PROPERTY:ACE::ace_gperf,LOCATION>)
       endif(is_gperf_imported)
-    endif(CMAKE_CONFIGURATION_TYPES)
+    endif()
 
-    if (BUILD_SHARED_LIB AND TARGET TAO_IDL_BE)
+    if(BUILD_SHARED_LIB AND TARGET TAO_IDL_BE)
       set(tao_idl_shared_libs TAO_IDL_BE TAO_IDL_FE)
     endif()
 
-    set(_OUTPUT_FILES
-      ${_STUB_HEADER_FILES}
-      ${_SKEL_HEADER_FILES}
-      ${_ANYOP_HEADER_FILES}
-      ${_STUB_CPP_FILES}
-      ${_SKEL_CPP_FILES}
-      ${_ANYOP_CPP_FILES})
-
-    _tao_append_lib_dir_to_path(_tao_extra_lib_dirs)
-
-    add_custom_command(
-      OUTPUT ${_OUTPUT_FILES}
-      DEPENDS tao_idl ${tao_idl_shared_libs} ace_gperf
-      MAIN_DEPENDENCY ${idl_file_path}
-      COMMAND ${CMAKE_COMMAND} -E env "DDS_ROOT=${DDS_ROOT}"  "TAO_ROOT=${TAO_INCLUDE_DIR}"
-        "${_tao_extra_lib_dirs}"
-        $<TARGET_FILE:tao_idl> -g ${GPERF_LOCATION} ${TAO_CORBA_IDL_FLAGS} -Sg -Wb,pre_include=ace/pre.h -Wb,post_include=ace/post.h --idl-version 4 --unknown-annotations ignore -I${TAO_INCLUDE_DIR} -I${_working_source_dir} ${_converted_flags} ${idl_file_path}
-      WORKING_DIRECTORY ${_arg_WORKING_DIRECTORY}
+    set(tao_idl "$<TARGET_FILE:TAO::tao_idl>")
+    if(CMAKE_GENERATOR STREQUAL "Ninja" AND TAO_IS_BEING_BUILT)
+      if(CMAKE_VERSION VERSION_LESS 3.24)
+        message(FATAL_ERROR "Using Ninja to build ACE/TAO requires CMake 3.24 or later. "
+         "Please build ACE/TAO separately, use a newer CMake, or a different CMake generator.")
+      else()
+        set(tao_idl "$<PATH:ABSOLUTE_PATH,${tao_idl},\${cmake_ninja_workdir}>")
+        set(gperf_location "$<PATH:ABSOLUTE_PATH,${gperf_location},\${cmake_ninja_workdir}>")
+      endif()
+    endif()
+    set(tao_idl_args
+      -g ${gperf_location} ${feature_flags} -Sg
+      -Wb,pre_include=ace/pre.h -Wb,post_include=ace/post.h
+      --idl-version 4 -as --unknown-annotations ignore
+      -I${TAO_INCLUDE_DIR} -I${working_source_dir}
+      ${converted_flags}
+      ${added_output_args}
     )
-
-    set_property(SOURCE ${idl_file_path} APPEND PROPERTY
-      OPENDDS_CPP_FILES
-        ${_STUB_CPP_FILES}
-        ${_SKEL_CPP_FILES}
-        ${_ANYOP_CPP_FILES})
-
-    set_property(SOURCE ${idl_file_path} APPEND PROPERTY
-      OPENDDS_HEADER_FILES
-        ${_STUB_HEADER_FILES}
-        ${_SKEL_HEADER_FILES}
-        ${_ANYOP_HEADER_FILES})
+    set(h_files
+      ${stub_header_files}
+      ${skel_header_files}
+      ${anyop_header_files}
+    )
+    list(APPEND all_h_files ${h_files})
+    set(cpp_files
+      ${stub_cpp_files}
+      ${skel_cpp_files}
+      ${anyop_cpp_files}
+    )
+    list(APPEND all_cpp_files ${cpp_files})
+    set(generated_files ${h_files} ${cpp_files})
+    if(debug)
+      message(STATUS "tao_idl ${tao_idl_args}")
+      foreach(generated_file ${generated_files})
+        string(REPLACE "${output_dir}/" "" generated_file "${generated_file}")
+        string(REPLACE "${skel_output_dir}/" "" generated_file "${generated_file}")
+        string(REPLACE "${anyop_output_dir}/" "" generated_file "${generated_file}")
+        message(STATUS "${generated_file}")
+      endforeach()
+    endif()
+    _opendds_compile_idl("${tao_idl}" "${idl_file_path}"
+      OUTPUT ${generated_files}
+      OPTS ${tao_idl_args}
+      DEPENDS TAO::tao_idl ${tao_idl_shared_libs} ACE::ace_gperf
+    )
   endforeach()
+
+  if(arg_H_FILES_VAR)
+    set("${arg_H_FILES_VAR}" "${h_files}" PARENT_SCOPE)
+  endif()
+
+  if(arg_CPP_FILES_VAR)
+    set("${arg_CPP_FILES_VAR}" "${cpp_files}" PARENT_SCOPE)
+  endif()
+
+  if(arg_AUTO_INCLUDES_VAR)
+    set("${arg_AUTO_INCLUDES_VAR}" "${auto_includes}" PARENT_SCOPE)
+  endif()
 endfunction()

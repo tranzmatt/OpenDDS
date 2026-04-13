@@ -1,41 +1,39 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
 #include "DcpsInfo_pch.h"
-#include "tao/ORB_Core.h"
-#include "DCPSInfo_i.h"
+
 #include "DCPSInfoRepoServ.h"
+
+#include "DCPSInfo_i.h"
 #include "FederatorConfig.h"
 #include "FederatorManagerImpl.h"
 #include "ShutdownInterface.h"
 #include "PersistenceUpdater.h"
 #include "UpdateManager.h"
 
-#include "dds/DCPS/Service_Participant.h"
-#include "dds/DCPS/InfoRepoDiscovery/InfoRepoDiscovery.h"
-
+#include <dds/DCPS/Service_Participant.h>
+#include <dds/DCPS/DCPS_Utils.h>
+#include <dds/DCPS/InfoRepoDiscovery/InfoRepoDiscovery.h>
 //If we need BIT support, pull in TCP so that static builds will have it.
-#if !defined(DDS_HAS_MINIMUM_BIT)
-#include "dds/DCPS/transport/tcp/Tcp.h"
+#ifndef DDS_HAS_MINIMUM_BIT
+#  include <dds/DCPS/transport/tcp/Tcp.h>
 #endif
 
-#include "tao/IORTable/IORTable.h"
-#include "tao/BiDir_GIOP/BiDirGIOP.h"
-
+#include <tao/ORB_Core.h>
+#include <tao/IORTable/IORTable.h>
+#include <tao/BiDir_GIOP/BiDirGIOP.h>
 #include <orbsvcs/Shutdown_Utilities.h>
-
 #ifdef ACE_AS_STATIC_LIBS
-#include "tao/ImR_Client/ImR_Client.h"
+#  include <tao/ImR_Client/ImR_Client.h>
 #endif
 
-#include "ace/Get_Opt.h"
-#include "ace/Arg_Shifter.h"
-#include "ace/Service_Config.h"
-#include "ace/Argv_Type_Converter.h"
+#include <ace/Get_Opt.h>
+#include <ace/Arg_Shifter.h>
+#include <ace/Service_Config.h>
+#include <ace/Argv_Type_Converter.h>
 
 #include <string>
 #include <sstream>
@@ -51,11 +49,12 @@ InfoRepo::InfoRepo(int argc, ACE_TCHAR *argv[])
 , resurrect_(true)
 , finalized_(false)
 , servant_finalized_(false)
-, federator_(this->federatorConfig_)
 , federatorConfig_(argc, argv)
+, federator_(this->federatorConfig_)
 , lock_()
 , cond_(lock_)
 , shutdown_complete_(false)
+, shutdown_signal_(0)
 , dispatch_cleanup_delay_(30,0)
 {
   try {
@@ -68,7 +67,9 @@ InfoRepo::InfoRepo(int argc, ACE_TCHAR *argv[])
 
 InfoRepo::~InfoRepo()
 {
-  this->finalize();
+  try {
+    this->finalize();
+  } catch (const OpenDDS::Federator::Incomplete&) {}
 }
 
 void
@@ -94,7 +95,13 @@ InfoRepo::finalize()
     // which bypasses InfoRepo::handle_exception()
     this->info_servant_->finalize();
     this->federator_.finalize();
-    TheServiceParticipant->shutdown();
+    info_servant_->cleanup_all_built_in_topics(); // Used by federator_->finalize
+    const DDS::ReturnCode_t shutdown_error = TheServiceParticipant->shutdown();
+    if (shutdown_error) {
+      ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: InfoRepo::finalize: "
+        "TheServiceParticipant->shutdown returned: %C\n",
+        OpenDDS::DCPS::retcode_to_string(shutdown_error)));
+    }
     this->servant_finalized_ = true;
   }
 
@@ -113,14 +120,32 @@ InfoRepo::finalize()
 int
 InfoRepo::handle_exception(ACE_HANDLE /* fd */)
 {
+  if (shutdown_signal_) {
+    ACE_DEBUG((LM_DEBUG,
+             "InfoRepo_Shutdown: shutting down on signal %d\n",
+             shutdown_signal_));
+  }
+
   // these should occur before ORB::shutdown() since they use the ORB/reactor
   this->info_servant_->finalize();
   this->federator_.finalize();
-  TheServiceParticipant->shutdown();
+  info_servant_->cleanup_all_built_in_topics(); // Used by federator_->finalize
+  const DDS::ReturnCode_t shutdown_error = TheServiceParticipant->shutdown();
+  if (shutdown_error) {
+    ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: InfoRepo::handle_exception: "
+      "TheServiceParticipant->shutdown returned: %C\n",
+      OpenDDS::DCPS::retcode_to_string(shutdown_error)));
+  }
   this->servant_finalized_ = true;
 
   this->orb_->shutdown(true);
   return 0;
+}
+
+void
+InfoRepo::set_shutdown_signal(int which_signal)
+{
+  shutdown_signal_ = which_signal;
 }
 
 void
@@ -234,7 +259,7 @@ InfoRepo::init()
 
   bool use_bidir = true;
 
-  for (int i = 0; i < args.argc() - 1; ++i) {
+  for (size_t i = 0; i < static_cast<size_t>(args.argc()) - 1; ++i) {
     if (0 == ACE_OS::strcmp(args[i], ACE_TEXT("-DCPSBidirGIOP"))) {
       use_bidir = ACE_OS::atoi(args[i + 1]);
       break;
@@ -249,9 +274,10 @@ InfoRepo::init()
         ACE_TEXT("-ORBConnectionHandlerCleanup 1\""),
       ACE_TEXT("-ORBSvcConfDirective"),
       ACE_TEXT("static Resource_Factory \"-ORBFlushingStrategy blocking\""),
-      0
     };
-    args.add((ACE_TCHAR**)config, true /*quote arg*/);
+    for (size_t i = 0; i < sizeof(config) / sizeof(config[0]); ++i) {
+      args.add(config[i], true /*quote arg*/);
+    }
   }
 
   int argc = args.argc();
@@ -480,8 +506,6 @@ InfoRepo_Shutdown::InfoRepo_Shutdown(InfoRepo &ir)
 void
 InfoRepo_Shutdown::operator()(int which_signal)
 {
-  ACE_DEBUG((LM_DEBUG,
-             "InfoRepo_Shutdown: shutting down on signal %d\n",
-             which_signal));
-  this->ir_.shutdown();
+  ir_.set_shutdown_signal(which_signal);
+  ir_.shutdown();
 }

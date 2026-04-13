@@ -1,4 +1,4 @@
-#include "dds/DCPS/security/CommonUtilities.h"
+#include "CommonUtilities.h"
 #include "dds/DCPS/SafetyProfileStreams.h"
 
 #include <string>
@@ -57,7 +57,7 @@ int increment_handle(int& next)
   return h;
 }
 
-void set_security_error(DDS::Security::SecurityException& ex,
+bool set_security_error(DDS::Security::SecurityException& ex,
                         int code,
                         int minor_code,
                         const char* message)
@@ -65,9 +65,26 @@ void set_security_error(DDS::Security::SecurityException& ex,
   ex.code = code;
   ex.minor_code = minor_code;
   ex.message = message;
+  return false;
 }
 
-void set_security_error(DDS::Security::SecurityException& ex,
+bool set_security_error(DDS::Security::SecurityException& ex,
+                        int code,
+                        int minor_code,
+                        const char* message_prefix,
+                        unsigned long openssl_error)
+{
+  using DCPS::String;
+  using DCPS::to_dds_string;
+  ex.code = code;
+  ex.minor_code = minor_code;
+  // OpenSSL errors are rendered in hex, matching "openssl errstr"
+  static const bool as_hex = true;
+  ex.message = (message_prefix + String(" OpenSSL error ") + to_dds_string(static_cast<unsigned int>(openssl_error), as_hex)).c_str();
+  return false;
+}
+
+bool set_security_error(DDS::Security::SecurityException& ex,
                         int code,
                         int minor_code,
                         const char* message,
@@ -76,13 +93,13 @@ void set_security_error(DDS::Security::SecurityException& ex,
 {
   std::string full(message);
   const size_t i = full.size();
-  full.resize(i + 25);
-  std::sprintf(&full[i], " %.2x %.2x %.2x %.2x, %.2x %.2x %.2x %.2x",
-               a1[0], a1[1], a1[2], a1[3], a2[0], a2[1], a2[2], a2[3]);
-  set_security_error(ex, code, minor_code, full.c_str());
+  full.resize(i + 26);
+  std::snprintf(&full[i], 26, " %.2x %.2x %.2x %.2x, %.2x %.2x %.2x %.2x",
+                a1[0], a1[1], a1[2], a1[3], a2[0], a2[1], a2[2], a2[3]);
+  return set_security_error(ex, code, minor_code, full.c_str());
 }
 
-OPENDDS_STRING ctk_to_dds_string(const CryptoTransformKind& keyKind)
+const char* ctk_to_dds_string(const CryptoTransformKind& keyKind)
 {
   if (!keyKind[0] && !keyKind[1] && !keyKind[2]) {
     switch (keyKind[3]) {
@@ -98,8 +115,10 @@ OPENDDS_STRING ctk_to_dds_string(const CryptoTransformKind& keyKind)
       return "CRYPTO_TRANSFORMATION_KIND_AES256_GCM";
     }
   }
-  return OPENDDS_STRING("Unknown CryptoTransformKind ") +
-    to_hex_dds_string(keyKind, sizeof(keyKind), ' ');
+  ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: Security::CommonUtilities::ctk_to_dds_string: ")
+    ACE_TEXT("%C is either invalid or not recognized.\n"),
+    to_hex_dds_string(keyKind, sizeof(keyKind), ' ').c_str()));
+  return "Invalid CryptoTransformKind";
 }
 
 OPENDDS_STRING ctki_to_dds_string(const CryptoTransformKeyId& keyId)

@@ -19,8 +19,10 @@ MulticastSendStrategy::MulticastSendStrategy(MulticastDataLink* link)
   : TransportSendStrategy(0, link->impl(),
                           0,  // synch_resource
                           link->transport_priority(),
-                          make_rch<NullSynchStrategy>()),
-    link_(link)
+                          make_rch<NullSynchStrategy>())
+  , link_(link)
+  , async_send_(link->config()->async_send())
+  , group_address_(link->config()->group_address())
 #if defined (ACE_HAS_WIN32_OVERLAPPED_IO) || defined (ACE_HAS_AIO_CALLS)
   , async_init_(false)
 #endif
@@ -34,13 +36,13 @@ void
 MulticastSendStrategy::prepare_header_i()
 {
   // Tag outgoing packets with our peer ID:
-  this->header_.source_ = this->link_->local_peer();
+  set_header_source(link_->local_peer());
 }
 
 ssize_t
 MulticastSendStrategy::send_bytes_i(const iovec iov[], int n)
 {
-  return (this->link_->config().async_send() ? async_send(iov, n) : sync_send(iov, n));
+  return async_send_ ? async_send(iov, n, group_address_.to_addr()) : sync_send(iov, n);
 }
 
 ssize_t
@@ -55,7 +57,9 @@ MulticastSendStrategy::sync_send(const iovec iov[], int n)
     // putting the send strategy in suspended mode.  If reliability
     // is enabled, the data may be resent later in response to a NAK.
     ssize_t b = 0;
-    for (int i = 0; i < n; ++i) b += iov[i].iov_len;
+    for (int i = 0; i < n; ++i) {
+      b += static_cast<ssize_t>(iov[i].iov_len);
+    }
     return b;
   }
 
@@ -63,7 +67,7 @@ MulticastSendStrategy::sync_send(const iovec iov[], int n)
 }
 
 ssize_t
-MulticastSendStrategy::async_send(const iovec iov[], int n)
+MulticastSendStrategy::async_send(const iovec iov[], int n, const ACE_INET_Addr& group_address)
 {
 #if defined (ACE_HAS_WIN32_OVERLAPPED_IO) || defined (ACE_HAS_AIO_CALLS)
   if (!async_init_) {
@@ -88,8 +92,7 @@ MulticastSendStrategy::async_send(const iovec iov[], int n)
   }
 
   size_t bytes_sent = 0;
-  ssize_t result = async_writer_.send(mb, bytes_sent, 0 /*flags*/,
-                                      this->link_->config().group_address_);
+  ssize_t result = async_writer_.send(mb, bytes_sent, 0 /*flags*/, group_address);
 
   if (result < 0) {
     if (mb) mb->release();
@@ -97,10 +100,11 @@ MulticastSendStrategy::async_send(const iovec iov[], int n)
   }
 
   // framework needs to think we sent the entire datagram
-  return total_length;
+  return static_cast<ssize_t>(total_length);
 #else
   ACE_UNUSED_ARG(iov);
   ACE_UNUSED_ARG(n);
+  ACE_UNUSED_ARG(group_address);
   return -1;
 #endif
 }

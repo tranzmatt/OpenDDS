@@ -5,10 +5,10 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_DATAWRITERREMOTE_H
-#define OPENDDS_DCPS_DATAWRITERREMOTE_H
+#ifndef OPENDDS_DCPS_INFOREPODISCOVERY_DATAWRITERREMOTEIMPL_H
+#define OPENDDS_DCPS_INFOREPODISCOVERY_DATAWRITERREMOTEIMPL_H
 
-#include "dds/DCPS/InfoRepoDiscovery/DataWriterRemoteS.h"
+#include "DataWriterRemoteS.h"
 #include "dds/DCPS/Definitions.h"
 #include "dds/DCPS/RcHandle_T.h"
 #include "dds/DCPS/DataWriterCallbacks.h"
@@ -35,18 +35,15 @@ public:
 
   virtual ~DataWriterRemoteImpl();
 
-  virtual void add_association(const RepoId& yourId,
-                               const ReaderAssociation& readers,
+  virtual void add_association(const ReaderAssociation& readers,
                                bool active);
-
-  virtual void association_complete(const RepoId& remote_id);
 
   virtual void remove_associations(const ReaderIdSeq& readers,
                                    CORBA::Boolean callback);
 
   virtual void update_incompatible_qos(const IncompatibleQosStatus& status);
 
-  virtual void update_subscription_params(const RepoId& readerId,
+  virtual void update_subscription_params(const GUID_t& readerId,
                                           const DDS::StringSeq& exprParams);
 
   void detach_parent();

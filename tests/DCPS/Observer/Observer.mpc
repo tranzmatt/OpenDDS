@@ -1,0 +1,10 @@
+project(*pubsub) : dcpsexe, dcps_test, dcps_rtps_udp, dcps_cm {
+  exename = pubsub
+  libpaths += ../common
+  libs     +=  common
+  after    += common
+
+  Source_Files {
+    pubsub.cpp
+  }
+}

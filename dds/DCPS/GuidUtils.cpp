@@ -6,14 +6,20 @@
  */
 
 #include "DCPS/DdsDcps_pch.h" //Only the _pch include should start with DCPS/
-#include "DCPS/SafetyProfileStreams.h"
+
+#include "GuidUtils.h"
+#include "Util.h"
+#include "GuidBuilder.h"
+#include "SafetyProfileStreams.h"
+#ifndef OPENDDS_SAFETY_PROFILE
+#  include "RestoreOutputStreamState.h"
+#endif
+
+#include <ace/ACE.h>
+#include <ace/OS_NS_string.h>
 
 #include <cstdlib>
 #include <cstdio>
-#include "ace/ACE.h"
-#include "ace/OS_NS_string.h"
-
-#include "GuidBuilder.h"
 
 namespace {
 
@@ -41,7 +47,7 @@ OPENDDS_STRING
 to_string(const EntityId_t& entityId)
 {
   return to_hex_dds_string(&entityId.entityKey[0], sizeof(EntityKey_t)) +
-    to_dds_string(unsigned(entityId.entityKind), true);
+    to_dds_string(entityId.entityKind, true);
 }
 
 OPENDDS_STRING
@@ -51,10 +57,19 @@ to_string(const GUID_t& guid)
     '.' + to_string(guid.entityId);
 }
 
+void intersect(const GuidSet& a, const GuidSet& b, GuidSet& result)
+{
+  result.clear();
+  intersect_sorted_ranges(a.begin(), a.end(), b.begin(), b.end(),
+                          std::inserter(result, result.end()), GUID_tKeyLessThan());
+}
+
 #ifndef OPENDDS_SAFETY_PROFILE
 std::ostream&
 operator<<(std::ostream& os, const GUID_t& rhs)
 {
+  RestoreOutputStreamState os_state(os);
+
   std::size_t len = sizeof(rhs.guidPrefix);
 
   os << std::hex;

@@ -125,7 +125,7 @@ set_duration_qos_value(DDS::Duration_t& target,
       target.nanosec=DDS::DURATION_INFINITE_NSEC;
       return true;
     }
-    target.nanosec = atoi(value);
+    target.nanosec = static_cast<DDS::UInt32>(atoi(value));
     return true;
   }
   return false;
@@ -165,16 +165,12 @@ set_partition_name_qos(
   if (!std::strcmp(name, "partition.name")) {
     // Value can be a comma-separated list
     const char* start = value;
-    char buffer[128];
-    std::memset(buffer, 0, sizeof(buffer));
     while (const char* next_comma = std::strchr(start, ',')) {
-      // Copy into temp buffer, won't have null
-      std::strncpy(buffer, start, next_comma - start);
-      // Append null
-      buffer[next_comma - start] = '\0';
+      const size_t size = static_cast<size_t>(next_comma - start);
+      const OPENDDS_STRING temp(start, size);
       // Add to QOS
       target.name.length(target.name.length() + 1);
-      target.name[target.name.length() - 1] = static_cast<const char*>(buffer);
+      target.name[target.name.length() - 1] = temp.c_str();
       // Advance pointer
       start = next_comma + 1;
     }

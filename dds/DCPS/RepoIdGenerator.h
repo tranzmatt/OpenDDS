@@ -5,15 +5,15 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef REPOIDGENERATOR_H
-#define REPOIDGENERATOR_H
+#ifndef OPENDDS_DCPS_REPOIDGENERATOR_H
+#define OPENDDS_DCPS_REPOIDGENERATOR_H
 
 #include "tao/Basic_Types.h"
 
 #include "dds/DdsDcpsInfoUtilsC.h"
 #include "dds/DdsDcpsGuidC.h"
 
-#include "dds/DCPS/GuidUtils.h"
+#include "GuidUtils.h"
 
 #include "dcps_export.h"
 
@@ -91,9 +91,9 @@ namespace DCPS {
  */
 class OpenDDS_Dcps_Export RepoIdGenerator {
 public:
-  static const unsigned int KeyBits;
+  static const long KeyBits;
 
-  static const unsigned int KeyMask;
+  static const long KeyMask;
 
   /**
    * @brief construct with at least a FederationId value.
@@ -114,8 +114,8 @@ public:
 
   virtual ~RepoIdGenerator();
 
-  /// Obtain the next RepoId value.
-  RepoId next(bool builtin = false);
+  /// Obtain the next GUID_t value.
+  GUID_t next(bool builtin = false);
 
   /**
    * Set the minimum of the last key (or participant) value used.

@@ -41,13 +41,15 @@ typedef ACE_Unbounded_Set<DCPS_IR_Subscription*> DCPS_IR_Subscription_Set;
 class OpenDDS_InfoRepoLib_Export DCPS_IR_Publication
 : public OpenDDS::DCPS::EnableContainerSupportedUniquePtr<DCPS_IR_Publication> {
 public:
-  DCPS_IR_Publication(const OpenDDS::DCPS::RepoId& id,
+  DCPS_IR_Publication(const OpenDDS::DCPS::GUID_t& id,
                       DCPS_IR_Participant* participant,
                       DCPS_IR_Topic* topic,
                       OpenDDS::DCPS::DataWriterRemote_ptr writer,
                       const DDS::DataWriterQos& qos,
                       const OpenDDS::DCPS::TransportLocatorSeq& info,
-                      const DDS::PublisherQos& publisherQos);
+                      ACE_CDR::ULong transportContext,
+                      const DDS::PublisherQos& publisherQos,
+                      const DDS::OctetSeq & serializedTypeInfo);
 
   ~DCPS_IR_Publication();
 
@@ -57,16 +59,6 @@ public:
   /// This method can mark the participant dead
   /// Returns 0 if added, 1 if already exists, -1 other failure
   int add_associated_subscription(DCPS_IR_Subscription* sub, bool active);
-
-  /// The service participant that contains this Publication has indicated
-  /// that the assocation to peer "remote" is complete.  This method will
-  /// locate the Subscription object for "remote" in order to inform it
-  /// of the completed association.
-  void association_complete(const OpenDDS::DCPS::RepoId& remote);
-
-  /// Invoke the DataWriterRemote::association_complete() callback, passing
-  /// the "remote" parameter (Subscription) to the service participant.
-  void call_association_complete(const OpenDDS::DCPS::RepoId& remote);
 
   /// Remove the associated subscription
   /// Removes the subscription from the list of associated
@@ -94,14 +86,14 @@ public:
   int remove_associations(CORBA::Boolean notify_lost);
 
   /// Remove any subscriptions whose participant has the id
-  void disassociate_participant(OpenDDS::DCPS::RepoId id,
+  void disassociate_participant(OpenDDS::DCPS::GUID_t id,
                                 bool reassociate = false);
 
   /// Remove any subscriptions whose topic has the id
-  void disassociate_topic(OpenDDS::DCPS::RepoId id);
+  void disassociate_topic(OpenDDS::DCPS::GUID_t id);
 
   /// Remove any subscriptions with the id
-  void disassociate_subscription(OpenDDS::DCPS::RepoId id,
+  void disassociate_subscription(OpenDDS::DCPS::GUID_t id,
                                  bool reassociate = false);
 
   /// Notify the writer of incompatible qos status
@@ -111,9 +103,9 @@ public:
   /// Check that none of the ids given are ones that
   ///  this publication should ignore.
   /// returns 1 if one of these ids is an ignored id
-  CORBA::Boolean is_subscription_ignored(OpenDDS::DCPS::RepoId partId,
-                                         OpenDDS::DCPS::RepoId topicId,
-                                         OpenDDS::DCPS::RepoId subId);
+  CORBA::Boolean is_subscription_ignored(OpenDDS::DCPS::GUID_t partId,
+                                         OpenDDS::DCPS::GUID_t topicId,
+                                         OpenDDS::DCPS::GUID_t subId);
 
   /// Return pointer to the DataWriter qos
   /// Publication retains ownership
@@ -136,14 +128,15 @@ public:
   void set_qos(const DDS::PublisherQos& qos);
 
   OpenDDS::DCPS::TransportLocatorSeq get_transportLocatorSeq() const;
+  ACE_CDR::ULong get_transportContext() const { return transportContext_; }
 
   /// Return pointer to the incompatible qos status
   /// Publication retains ownership
   OpenDDS::DCPS::IncompatibleQosStatus* get_incompatibleQosStatus();
 
-  OpenDDS::DCPS::RepoId get_id();
-  OpenDDS::DCPS::RepoId get_topic_id();
-  OpenDDS::DCPS::RepoId get_participant_id();
+  OpenDDS::DCPS::GUID_t get_id();
+  OpenDDS::DCPS::GUID_t get_topic_id();
+  OpenDDS::DCPS::GUID_t get_participant_id();
 
   DCPS_IR_Topic* get_topic();
   DCPS_IR_Topic_Description* get_topic_description();
@@ -173,14 +166,16 @@ public:
   // the new association will be added.
   bool reevaluate_association(DCPS_IR_Subscription* subscription);
 
-  void update_expr_params(OpenDDS::DCPS::RepoId readerId,
+  void update_expr_params(OpenDDS::DCPS::GUID_t readerId,
                           const DDS::StringSeq& params);
 
   std::string dump_to_string(const std::string& prefix, int depth) const;
 
+  const DDS::OctetSeq& get_serialized_type_info() const;
+
 private:
 
-  OpenDDS::DCPS::RepoId id_;
+  OpenDDS::DCPS::GUID_t id_;
   DCPS_IR_Participant* participant_;
   DCPS_IR_Topic* topic_;
   DDS::InstanceHandle_t handle_;
@@ -190,8 +185,9 @@ private:
   OpenDDS::DCPS::DataWriterRemote_var writer_;
   DDS::DataWriterQos qos_;
   OpenDDS::DCPS::TransportLocatorSeq info_;
+  ACE_CDR::ULong transportContext_;
   DDS::PublisherQos publisherQos_;
-
+  DDS::OctetSeq serializedTypeInfo_;
   DCPS_IR_Subscription_Set associations_;
   DCPS_IR_Subscription_Set defunct_;
 

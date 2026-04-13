@@ -8,9 +8,7 @@
 #ifndef OPENDDS_DCPS_RECEIVEDDATAELEMENTLIST_H
 #define OPENDDS_DCPS_RECEIVEDDATAELEMENTLIST_H
 
-#include "ace/Atomic_Op_T.h"
-#include "ace/Thread_Mutex.h"
-
+#include "Atomic.h"
 #include "dcps_export.h"
 #include "DataSampleHeader.h"
 #include "Definitions.h"
@@ -19,7 +17,9 @@
 #include "Time_Helper.h"
 #include "unique_ptr.h"
 
-#include "dds/DdsDcpsInfrastructureC.h"
+#include <dds/DdsDcpsInfrastructureC.h>
+
+#include "ace/Thread_Mutex.h"
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 #pragma once
@@ -36,6 +36,7 @@ public:
     : pub_(header.publication_id_),
       registered_data_(received_data),
       sample_state_(DDS::NOT_READ_SAMPLE_STATE),
+      destination_timestamp_(SystemTimePoint::now().to_idl_struct()),
 #ifndef OPENDDS_NO_OBJECT_MODEL_PROFILE
       coherent_change_(header.coherent_change_),
       group_coherent_(header.group_coherent_),
@@ -51,10 +52,8 @@ public:
       ref_count_(1),
       mx_(mx)
   {
-    this->destination_timestamp_ = time_value_to_time(ACE_OS::gettimeofday());
-
-    this->source_timestamp_.sec = header.source_timestamp_sec_;
-    this->source_timestamp_.nanosec = header.source_timestamp_nanosec_;
+    source_timestamp_.sec = header.source_timestamp_sec_;
+    source_timestamp_.nanosec = header.source_timestamp_nanosec_;
 
     /*
      * In some situations, we will not have data to give to the user and
@@ -69,22 +68,22 @@ public:
 
   void dec_ref()
   {
-    if (0 == --this->ref_count_) {
+    if (0 == --ref_count_) {
       delete this;
     }
   }
 
   void inc_ref()
   {
-    ++this->ref_count_;
+    ++ref_count_;
   }
 
   long ref_count()
   {
-    return this->ref_count_.value();
+    return ref_count_;
   }
 
-  PublicationId pub_;
+  GUID_t pub_;
 
   /**
    * Data sample received, could only be the key fields in case we received
@@ -110,7 +109,7 @@ public:
   bool group_coherent_;
 
   /// Publisher id represent group identifier.
-  RepoId publisher_id_;
+  GUID_t publisher_id_;
 #endif
 
   /// Do we contain valid data
@@ -126,7 +125,7 @@ public:
 
   /// This is needed to know if delete DataReader should fail with
   /// PRECONDITION_NOT_MET because there are outstanding loans.
-  ACE_Atomic_Op<ACE_Thread_Mutex, long> zero_copy_cnt_;
+  Atomic<long> zero_copy_cnt_;
 
   /// The data sample's sequence number
   SequenceNumber sequence_;
@@ -142,7 +141,7 @@ public:
   void operator delete(void* memory, ACE_New_Allocator& pool);
 
 private:
-  ACE_Atomic_Op<ACE_Thread_Mutex, long> ref_count_;
+  Atomic<long> ref_count_;
 protected:
   ACE_Recursive_Thread_Mutex* mx_;
 }; // class ReceivedDataElement
@@ -166,7 +165,7 @@ public:
   ~ReceivedDataElementWithType() {
     ACE_GUARD(ACE_Recursive_Thread_Mutex,
               guard,
-              *this->mx_)
+              *mx_)
     delete static_cast<DataTypeWithAllocator*> (registered_data_);
   }
 };
@@ -189,7 +188,7 @@ public:
 
 class OpenDDS_Dcps_Export ReceivedDataElementList {
 public:
-  explicit ReceivedDataElementList(InstanceState_rch instance_state = InstanceState_rch());
+  explicit ReceivedDataElementList(const DataReaderImpl_rch& reader, const InstanceState_rch& instance_state = InstanceState_rch());
 
   ~ReceivedDataElementList();
 
@@ -197,6 +196,7 @@ public:
 
   // adds a data sample to the end of the list
   void add(ReceivedDataElement* data_sample);
+  void add_by_timestamp(ReceivedDataElement* data_sample);
 
   // returns true if the instance was released
   bool remove(ReceivedDataElement* data_sample);
@@ -204,8 +204,24 @@ public:
   // returns true if the instance was released
   bool remove(ReceivedDataFilter& match, bool eval_all);
 
+  const ReceivedDataElement* peek_tail() { return tail_; }
+
   ReceivedDataElement* remove_head();
   ReceivedDataElement* remove_tail();
+
+  size_t size() const { return size_; }
+
+  bool has_zero_copies() const;
+  bool matches(CORBA::ULong sample_states) const;
+  ReceivedDataElement* get_next_match(CORBA::ULong sample_states, ReceivedDataElement* prev);
+
+  void mark_read(ReceivedDataElement* item);
+#ifndef OPENDDS_NO_OBJECT_MODEL_PROFILE
+  void accept_coherent_change(ReceivedDataElement* item);
+#endif
+
+private:
+  DataReaderImpl_wrch reader_;
 
   /// The first element of the list.
   ReceivedDataElement* head_;
@@ -214,10 +230,20 @@ public:
   ReceivedDataElement* tail_;
 
   /// Number of elements in the list.
-  ssize_t size_;
+  size_t size_;
 
-private:
+  CORBA::ULong read_sample_count_;
+  CORBA::ULong not_read_sample_count_;
+  CORBA::ULong sample_states_;
+
+  void increment_read_count();
+  void decrement_read_count();
+  void increment_not_read_count();
+  void decrement_not_read_count();
   InstanceState_rch instance_state_;
+
+  bool sanity_check();
+  bool sanity_check(ReceivedDataElement* item);
 }; // ReceivedDataElementList
 
 } // namespace DCPS

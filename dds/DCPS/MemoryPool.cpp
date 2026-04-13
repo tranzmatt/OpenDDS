@@ -73,7 +73,7 @@ void
 AllocHeader::set_size(size_t size)
 {
   if (is_free()) {
-    size *= -1;
+    size *= static_cast<size_t>(-1);
   }
   alloc_size_ = (int)size;
 }
@@ -108,7 +108,7 @@ FreeHeader*
 FreeHeader::smaller_free(unsigned char* pool_base) const
 {
   FreeHeader* result = NULL;
-  if (offset_smaller_free_ != std::numeric_limits<size_t>::max()) {
+  if (offset_smaller_free_ != (std::numeric_limits<size_t>::max)()) {
     result = reinterpret_cast<FreeHeader*>(pool_base + offset_smaller_free_);
   }
   return result;
@@ -118,7 +118,7 @@ FreeHeader*
 FreeHeader::larger_free(unsigned char* pool_base) const
 {
   FreeHeader* result = NULL;
-  if (offset_larger_free_ != std::numeric_limits<size_t>::max()) {
+  if (offset_larger_free_ != (std::numeric_limits<size_t>::max)()) {
     result = reinterpret_cast<FreeHeader*>(pool_base + offset_larger_free_);
   }
   return result;
@@ -128,9 +128,9 @@ void
 FreeHeader::set_smaller_free(FreeHeader* next, unsigned char* pool_base)
 {
   if (next) {
-    offset_smaller_free_ = reinterpret_cast<unsigned char*>(next) - pool_base;
+    offset_smaller_free_ = static_cast<size_t>(reinterpret_cast<unsigned char*>(next) - pool_base);
   } else {
-    offset_smaller_free_ = std::numeric_limits<size_t>::max();
+    offset_smaller_free_ = (std::numeric_limits<size_t>::max)();
   }
 }
 
@@ -138,9 +138,9 @@ void
 FreeHeader::set_larger_free(FreeHeader* prev, unsigned char* pool_base)
 {
   if (prev) {
-    offset_larger_free_ = reinterpret_cast<unsigned char*>(prev) - pool_base;
+    offset_larger_free_ = static_cast<size_t>(reinterpret_cast<unsigned char*>(prev) - pool_base);
   } else {
-    offset_larger_free_ = std::numeric_limits<size_t>::max();
+    offset_larger_free_ = (std::numeric_limits<size_t>::max)();
   }
 }
 
@@ -197,9 +197,9 @@ FreeIndex::remove(FreeHeader* free_block, FreeHeader* larger)
 void
 FreeIndex::init(FreeHeader* init_free_block)
 {
-  size_t max = std::numeric_limits<size_t>::max();
+  const size_t max_size = (std::numeric_limits<size_t>::max)();
   for (size_t size = min_index; size <= max_index; size *= 2) {
-    nodes_[size_].set_sizes(size, (size == max_index) ? max  :  size*2);
+    nodes_[size_].set_sizes(size, (size == max_index) ? max_size : size * 2);
     ++size_;
   }
   add(init_free_block);
@@ -415,7 +415,7 @@ MemoryPool::join_free_allocs(FreeHeader* freed)
     // Adjust psize of adjacent
     AllocHeader* next = freed->next_adjacent();
     if (includes(next)) {
-      next->set_prev_size(freed->size());
+      next->set_prev_size(static_cast<int>(freed->size()));
     }
   }
   if (joinable_prev(freed)) {
@@ -427,7 +427,7 @@ MemoryPool::join_free_allocs(FreeHeader* freed)
     // Adjust psize of adjacent
     AllocHeader* next = prev_free->next_adjacent();
     if (includes(next)) {
-      next->set_prev_size(prev_free->size());
+      next->set_prev_size(static_cast<int>(prev_free->size()));
     }
   } else {
     insert_free_alloc(freed);

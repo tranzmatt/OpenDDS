@@ -3,29 +3,29 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_UTILITY_IMPL_H
-#define OPENDDS_UTILITY_IMPL_H
+#ifndef OPENDDS_DCPS_SECURITY_UTILITYIMPL_H
+#define OPENDDS_DCPS_SECURITY_UTILITYIMPL_H
 
-#include "DdsSecurity_Export.h"
-#include "dds/DCPS/security/Utility.h"
+#include "OpenDDS_Security_Export.h"
+#include "framework/Utility.h"
 
-#include "dds/Versioned_Namespace.h"
+#include <dds/Versioned_Namespace.h>
 
-#if !defined (ACE_LACKS_PRAGMA_ONCE)
-#pragma once
-#endif /* ACE_LACKS_PRAGMA_ONCE */
+#ifndef ACE_LACKS_PRAGMA_ONCE
+#  pragma once
+#endif
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace OpenDDS {
 namespace Security {
 
-class DdsSecurity_Export UtilityImpl
+class OpenDDS_Security_Export UtilityImpl
   : public virtual OpenDDS::Security::Utility {
 public:
   virtual ~UtilityImpl();
   virtual void generate_random_bytes(void* ptr, size_t size);
-  virtual void hmac(void* out, void const* in, size_t size, const std::string& password) const;
+  virtual void hmac(void* out, const void* in, size_t size, const std::string& password) const;
 };
 
 } // Security

@@ -1,17 +1,18 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_UTILS_H
-#define DCPS_UTILS_H
+#ifndef OPENDDS_DCPS_DCPS_UTILS_H
+#define OPENDDS_DCPS_DCPS_UTILS_H
 
 #include "dcps_export.h"
-#include "dds/DdsDcpsInfrastructureC.h"
-#include "dds/DdsDcpsPublicationC.h"
-#include "dds/DdsDcpsInfoUtilsC.h"
+
+#include "Serializer.h"
+
+#include <dds/DdsDcpsInfrastructureC.h>
+#include <dds/DdsDcpsPublicationC.h>
+#include <dds/DdsDcpsInfoUtilsC.h>
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 #pragma once
@@ -22,7 +23,15 @@ OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 namespace OpenDDS {
 namespace DCPS {
 
-/// Increments the count of occurances of the incompatible policy
+OpenDDS_Dcps_Export const char* retcode_to_string(DDS::ReturnCode_t value);
+
+OpenDDS_Dcps_Export const char* topicstatus_to_string(TopicStatus value);
+
+OpenDDS_Dcps_Export
+bool
+is_wildcard(const char *str);
+
+/// Increments the count of occurrences of the incompatible policy
 ///  for the status
 OpenDDS_Dcps_Export
 void
@@ -45,15 +54,20 @@ OpenDDS_Dcps_Export
 bool
 compatibleQOS(const DDS::DataWriterQos * writerQos,
               const DDS::DataReaderQos * readerQos,
-              OpenDDS::DCPS::IncompatibleQosStatus* writerStatus,
-              OpenDDS::DCPS::IncompatibleQosStatus* readerStatus);
+              OpenDDS::DCPS::IncompatibleQosStatus* writerStatus = 0,
+              OpenDDS::DCPS::IncompatibleQosStatus* readerStatus = 0);
 
 OpenDDS_Dcps_Export
 bool
 compatibleQOS(const DDS::PublisherQos * pubQos,
               const DDS::SubscriberQos * subQos,
-              OpenDDS::DCPS::IncompatibleQosStatus* writerStatus,
-              OpenDDS::DCPS::IncompatibleQosStatus* readerStatus);
+              OpenDDS::DCPS::IncompatibleQosStatus* writerStatus = 0,
+              OpenDDS::DCPS::IncompatibleQosStatus* readerStatus = 0);
+
+OpenDDS_Dcps_Export
+bool
+matching_partitions(const DDS::PartitionQosPolicy& pub,
+                    const DDS::PartitionQosPolicy& sub);
 
 // Should check the association of the entity QoS ?
 // The changeable QoS that is supported currently and affect the association
@@ -82,8 +96,24 @@ OpenDDS_Dcps_Export
 bool should_check_association_upon_change(const DDS::DomainParticipantQos & qos1,
                                           const DDS::DomainParticipantQos & qos2);
 
-}}
+OpenDDS_Dcps_Export
+bool repr_to_encoding_kind(DDS::DataRepresentationId_t repr, Encoding::Kind& kind);
+
+OpenDDS_Dcps_Export
+DCPS::String repr_to_string(const DDS::DataRepresentationId_t& repr);
+
+OpenDDS_Dcps_Export
+DCPS::String repr_seq_to_string(const DDS::DataRepresentationIdSeq& id_seq, bool is_data_writer = false);
+
+OpenDDS_Dcps_Export
+void set_writer_effective_data_rep_qos(DDS::DataRepresentationIdSeq& qos, bool encapsulated_only);
+
+OpenDDS_Dcps_Export
+void set_reader_effective_data_rep_qos(DDS::DataRepresentationIdSeq& qos);
+
+} // namespace DCPS
+} // namespace OpenDDS
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
 
-#endif /* DCPS_UTILS_H */
+#endif /* OPENDDS_DDS_DCPS_DCPS_UTILS_H */

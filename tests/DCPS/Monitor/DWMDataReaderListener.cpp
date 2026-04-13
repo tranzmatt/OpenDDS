@@ -31,8 +31,8 @@ DWMDataReaderListenerImpl::~DWMDataReaderListenerImpl()
 void DWMDataReaderListenerImpl::on_data_available(DDS::DataReader_ptr reader)
 {
   try {
-    OpenDDS::DCPS::DataWriterReportDataReader_var dwm_dr =
-      OpenDDS::DCPS::DataWriterReportDataReader::_narrow(reader);
+    OpenDDS::Monitor::DataWriterReportDataReader_var dwm_dr =
+      OpenDDS::Monitor::DataWriterReportDataReader::_narrow(reader);
 
     if (CORBA::is_nil(dwm_dr.in())) {
       ACE_ERROR((LM_ERROR,
@@ -41,14 +41,14 @@ void DWMDataReaderListenerImpl::on_data_available(DDS::DataReader_ptr reader)
       ACE_OS::exit(-1);
     }
 
-    OpenDDS::DCPS::DataWriterReport dwr;
+    OpenDDS::Monitor::DataWriterReport dwr;
     DDS::SampleInfo si;
 
-    DDS::ReturnCode_t status = dwm_dr->take_next_sample(dwr, si) ;
+    DDS::ReturnCode_t status = dwm_dr->take_next_sample(dwr, si);
 
     if (status == DDS::RETCODE_OK) {
       cout << "SampleInfo.sample_rank = " << si.sample_rank << endl;
-      cout << "SampleInfo.instance_state = " << si.instance_state << endl;
+      cout << "SampleInfo.instance_state = " << OpenDDS::DCPS::InstanceState::instance_state_string(si.instance_state) << endl;
 
       if (si.valid_data) {
         cout << "DataWriterReport:" << endl

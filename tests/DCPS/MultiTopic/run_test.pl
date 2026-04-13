@@ -4,42 +4,36 @@ eval '(exit $?0)' && eval 'exec perl -S $0 ${1+"$@"}'
 
 # -*- perl -*-
 
+use strict;
+use warnings;
+
 use lib "$ENV{ACE_ROOT}/bin";
 use lib "$ENV{DDS_ROOT}/bin";
 use PerlDDS::Run_Test;
-use strict;
 
-my $is_rtps_disc = 0;
-if ($ARGV[0] eq 'rtps_disc') {
-  $is_rtps_disc = 1;
+my $test = new PerlDDS::TestFramework();
+
+my $dir;
+if ($test->flag('cpp11')) {
+  $dir = 'cpp11';
+}
+elsif ($test->flag('classic')) {
+  $dir = 'classic';
 }
 
-my $DCPSREPO;
+if (!defined($dir)) {
+  die("Requires mapping type");
+}
+
 my $args;
-if ($is_rtps_disc) {
-  $args = '-DCPSConfigFile rtps_disc.ini';
-} else {
-  my $dcpsrepo_ior = 'repo.ior';
-  unlink $dcpsrepo_ior;
-  $DCPSREPO = PerlDDS::create_process("$ENV{DDS_ROOT}/bin/DCPSInfoRepo",
-                                      "-o $dcpsrepo_ior");
-  $DCPSREPO->Spawn();
-  if (PerlACE::waitforfile_timed($dcpsrepo_ior, 30) == -1) {
-    print STDERR "ERROR: waiting for Info Repo IOR file\n";
-    $DCPSREPO->Kill();
-    exit 1;
-  }
+if ($test->flag('rtps_disc')) {
+  $args = ' -DCPSConfigFile rtps_disc.ini';
+}
+else {
+  $test->setup_discovery();
 }
 
-my $TEST = PerlDDS::create_process('MultiTopicTest', $args);
+$test->process('proc', "$dir/MultiTopicTest", $args);
+$test->start_process('proc');
 
-my $result = $TEST->SpawnWaitKill(60);
-if ($result != 0) {
-  print STDERR "ERROR: test returned $result\n";
-}
-
-if ($DCPSREPO) {
-  $DCPSREPO->TerminateWaitKill(5);
-}
-
-exit (($result == 0) ? 0 : 1);
+exit $test->finish(30);

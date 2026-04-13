@@ -1,7 +1,7 @@
 project(OpenDDS_Dcps): core, coverage_optional, \
-        dcps_optional_features, dcps_optional_safety, dds_macros, \
+        dcps_optional_features, opendds_testing_features, dcps_optional_safety, dds_macros, \
         dds_suppress_any_support, dds_taolib, gen_ostream, install, valgrind, \
-        dds_vc_warnings, dds_versioning_idl_defaults, msvc_bigobj {
+        dds_vc_warnings, dds_versioning_idl_defaults, msvc_bigobj, dcps_optional_rapidjson {
   sharedname   = OpenDDS_Dcps
   dynamicflags = OPENDDS_DCPS_BUILD_DLL
   libout       = $(DDS_ROOT)/lib
@@ -25,24 +25,44 @@ project(OpenDDS_Dcps): core, coverage_optional, \
     DdsDcpsSubscriptionExt.idl
     DdsDcpsTopic.idl
     DdsDcpsTypeSupportExt.idl
+    DdsDynamicDataSeq.idl
+  }
+
+  IDL_Files {
+    // valuetypes in DdsDynamicData.idl require -Scdr
+    // -Scdr requires -Sa whether or not the dds_suppress_anys feature is on
+    idlflags += -Scdr -Sa
+    DdsDynamicData.idl
+    DdsDynamicTypeSupport.idl
+  }
+
+  TypeSupport_Files {
+    DdsDynamicDataSeq.idl
   }
 
   Source_Files {
     DCPS
     DCPS/transport/framework
     DCPS/security/framework
+    DCPS/XTypes
   }
 
   Header_Files {
+    OpenDDSConfig.h
+    OpenDDSConfigWrapper.h
+    OpenDDSConfigWrapperC.h
+    OpenDDSConfigWrapperJC.h
+    OpenDDSConfigWrapperS.h
     Version.h
     Versioned_Namespace.h
     DCPS
     DCPS/transport/framework
     DCPS/security/framework
     DCPS/yard
+    DCPS/XTypes
 
     // Although these files only contain comments since
-    // service-side suppression is done,
+    // server-side suppression is done,
     // they are included here so that "make install" will
     // work.
     DdsDcpsS.h
@@ -55,6 +75,11 @@ project(OpenDDS_Dcps): core, coverage_optional, \
     DdsDcpsSubscriptionExtS.h
     DdsDcpsTopicS.h
     DdsDcpsTypeSupportExtS.h
+    DdsDynamicDataS.h
+    DdsDynamicDataSeqS.h
+    DdsDynamicTypeSupportS.h
+    DdsSecurityCoreS.h
+    DdsSecurityParamsS.h
   }
 
   // Should this be removed?
@@ -65,6 +90,7 @@ project(OpenDDS_Dcps): core, coverage_optional, \
     DCPS
     DCPS/transport/framework
     DCPS/security/framework
+    DCPS/XTypes
   }
 
   InstallData_Files {
@@ -72,25 +98,32 @@ project(OpenDDS_Dcps): core, coverage_optional, \
     ../MPC
     ../AUTHORS
     ../README.md
-    ../VERSION
+    ../VERSION.txt
     ../LICENSE
     ../NEWS.md
     ../rules.dds.GNU
   }
 
-  InstallData_Files {
-    gendir = bin
-    ../bin/PerlDDS
+  verbatim (gnuace, top, 1) {
+    cmake_dir_install_dest=$(DESTDIR)$(INSTALL_PREFIX)/share/cmake/OpenDDS
+    cmake_config_install_dest=$(cmake_dir_install_dest)/config.cmake
   }
 
-  verbatim(gnuace, postinstall) {
-"	echo export DDS_ROOT=$(DESTDIR)$(INSTALL_PREFIX)/share/dds> $(DESTDIR)$(INSTALL_PREFIX)/share/dds/dds-devel.sh"
+  verbatim(gnuace, postinstall, 1) {
+"	echo export DDS_ROOT=$(INSTALL_PREFIX)/share/dds> $(DESTDIR)$(INSTALL_PREFIX)/share/dds/dds-devel.sh"
 "	@$(MKDIR) $(DESTDIR)$(INSTALL_PREFIX)/share/dds/dds"
-"	ln -sf $(DESTDIR)$(INSTALL_PREFIX)/include/dds/Version.h $(DESTDIR)$(INSTALL_PREFIX)/share/dds/dds"
+"	ln -sf ../../../include/dds/Version.h $(DESTDIR)$(INSTALL_PREFIX)/share/dds/dds"
 "	cp $(DDS_ROOT)/user_macros.GNU $(DESTDIR)$(INSTALL_PREFIX)/share/dds $(ACE_NUL_STDERR)"
-"	@$(MKDIR) $(DESTDIR)$(INSTALL_PREFIX)/$(INSTALL_LIB)/cmake/OpenDDS"
-"	cp $(DDS_ROOT)/cmake/*.cmake $(DESTDIR)$(INSTALL_PREFIX)/$(INSTALL_LIB)/cmake/OpenDDS"
-"	echo 'set(OPENDDS_USE_PREFIX_PATH ON) # from make install' >> $(DESTDIR)$(INSTALL_PREFIX)/$(INSTALL_LIB)/cmake/OpenDDS/config.cmake"
+"	cp $(DDS_ROOT)/dds/OpenDDSConfigWrapper.idl $(DESTDIR)$(INSTALL_PREFIX)/include/dds $(ACE_NUL_STDERR)"
+"	@$(MKDIR) $(cmake_dir_install_dest)"
+"	cp $(DDS_ROOT)/cmake/*.cmake $(cmake_dir_install_dest)"
+"	cp $(DDS_ROOT)/cmake/test_cxx_std.cpp $(cmake_dir_install_dest)"
+"	cp $(DDS_ROOT)/cmake/export.h.in $(cmake_dir_install_dest)"
+"	echo '' >> $(cmake_config_install_dest)"
+"	echo '# From make install' >> $(cmake_config_install_dest)"
+"	echo 'set(OPENDDS_USE_PREFIX_PATH ON)' >> $(cmake_config_install_dest)"
+"	echo 'set(OPENDDS_RAPIDJSON_USE_PREFIX_PATH ON)' >> $(cmake_config_install_dest)"
+"	echo 'set(OPENDDS_INSTALL_LIB \"$(INSTALL_LIB)\")' >> $(cmake_config_install_dest)"
   }
 
 }
@@ -156,7 +189,7 @@ project(OpenDDS_Dcps): core, coverage_optional, \
 // 3. Safety profile (with builtin topics)
 
 //    The main driver here is control of the language mapping.  In this
-//    configuration, opendds_idl is used with -I (prevent
+//    configuration, opendds_idl is used with -SI (prevent
 //    fileTypeSupport.idl) and -Lspcpp (to generate language mappings and
 //    serialization code).  Message types for builtin topics are in
 //    DdsDcpsCore.idl which means that opendds_idl generates

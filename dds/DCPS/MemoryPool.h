@@ -5,17 +5,18 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_MEMORY_POOL_H
-#define OPENDDS_MEMORY_POOL_H
+#ifndef OPENDDS_DCPS_MEMORYPOOL_H
+#define OPENDDS_DCPS_MEMORYPOOL_H
 
 #include "dcps_export.h"
-
-class MemoryPoolTest;
-class FreeIndexTest;
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace OpenDDS {
+namespace Test {
+  class MemoryPoolTest;
+  class FreeIndexTest;
+}
 namespace DCPS {
 
 /// Header of all allocations - found at beginning of allocation inside pool.
@@ -26,9 +27,9 @@ public:
   AllocHeader();
 
   /** Get alloc size */
-  unsigned int size() const { return is_free() ? -alloc_size_ : alloc_size_; }
+  unsigned int size() const { return static_cast<unsigned int>(is_free() ? -alloc_size_ : alloc_size_); }
   /** Get prev alloc size */
-  unsigned int prev_size() const { return prev_size_; }
+  unsigned int prev_size() const { return static_cast<unsigned int>(prev_size_); }
   /** Is this alloc free */
   bool is_free() const { return alloc_size_ < 0; }
 
@@ -115,8 +116,8 @@ private:
 /// Index of free nodes in memory pool.
 /// Allows for a faster search of free nodes
 class OpenDDS_Dcps_Export FreeIndex {
-  friend class ::MemoryPoolTest;
-  friend class ::FreeIndexTest;
+  friend class Test::MemoryPoolTest;
+  friend class Test::FreeIndexTest;
 public:
   explicit FreeIndex(FreeHeader*& largest_free);
   /** Initialize index with initial free block */
@@ -159,7 +160,7 @@ private:
 // Allocations can be done by checking the index for the needed size, and going
 // to the first free block.
 class OpenDDS_Dcps_Export MemoryPool {
-  friend class ::MemoryPoolTest;
+  friend class Test::MemoryPoolTest;
 public:
   explicit MemoryPool(unsigned int pool_size, size_t granularity = 8);
   ~MemoryPool();

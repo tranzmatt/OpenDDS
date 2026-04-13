@@ -1,25 +1,25 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_SUBSCRIBER_H
-#define OPENDDS_DCPS_SUBSCRIBER_H
+#ifndef OPENDDS_DCPS_SUBSCRIBERIMPL_H
+#define OPENDDS_DCPS_SUBSCRIBERIMPL_H
 
-#include "dds/DCPS/DataReaderCallbacks.h"
-#include "dds/DdsDcpsInfoUtilsC.h"
+#include "DataReaderCallbacks.h"
 #include "EntityImpl.h"
 #include "Definitions.h"
 #include "DataCollector_T.h"
 #include "DataReaderImpl.h"
-#include "ace/Recursive_Thread_Mutex.h"
-#include "dds/DCPS/PoolAllocator.h"
+#include "PoolAllocator.h"
 
-#if !defined (ACE_LACKS_PRAGMA_ONCE)
-#pragma once
-#endif /* ACE_LACKS_PRAGMA_ONCE */
+#include <dds/DdsDcpsInfoUtilsC.h>
+
+#include <ace/Recursive_Thread_Mutex.h>
+
+#ifndef ACE_LACKS_PRAGMA_ONCE
+#  pragma once
+#endif
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -106,11 +106,12 @@ public:
 
   virtual DDS::ReturnCode_t enable();
 
-  /** This method is not defined in the IDL and is defined for
-  *  internal use.
-  *  Check if there is any datareader associated with it.
-  */
-  bool is_clean() const;
+  /**
+   * This method is not defined in the IDL and is defined for
+   * internal use.
+   * Check if there is any datareader associated with it.
+   */
+  bool is_clean(String* leftover_entities = 0) const;
 
   // called by DataReaderImpl::data_received
   void data_received(DataReaderImpl* reader);
@@ -136,18 +137,18 @@ public:
 
   /// @}
 
-  typedef OPENDDS_VECTOR(RepoId) SubscriptionIdVec;
+  typedef OPENDDS_VECTOR(GUID_t) SubscriptionIdVec;
   /// Populates a std::vector with the SubscriptionIds (GUIDs)
   /// of this Subscriber's Data Readers
   void get_subscription_ids(SubscriptionIdVec& subs);
 
 #ifndef OPENDDS_NO_OWNERSHIP_KIND_EXCLUSIVE
-  void update_ownership_strength (const PublicationId& pub_id,
+  void update_ownership_strength (const GUID_t& pub_id,
                                   const CORBA::Long& ownership_strength);
 #endif
 
 #ifndef OPENDDS_NO_OBJECT_MODEL_PROFILE
-  void coherent_change_received(RepoId& publisher_id,
+  void coherent_change_received(const GUID_t& publisher_id,
                                 DataReaderImpl* reader,
                                 Coherent_State& group_state);
 #endif
@@ -172,13 +173,14 @@ private:
   typedef OPENDDS_SET(DataReaderImpl_rch) DataReaderSet;
 
   /// DataReader id to qos map.
-  typedef OPENDDS_MAP_CMP(RepoId, DDS::DataReaderQos, GUID_tKeyLessThan) DrIdToQosMap;
+  typedef OPENDDS_MAP_CMP(GUID_t, DDS::DataReaderQos, GUID_tKeyLessThan) DrIdToQosMap;
 
   DDS::InstanceHandle_t        handle_;
 
   DDS::SubscriberQos           qos_;
   DDS::DataReaderQos           default_datareader_qos_;
 
+  ACE_Thread_Mutex             listener_mutex_;
   DDS::StatusMask              listener_mask_;
   DDS::SubscriberListener_var  listener_;
 
@@ -187,13 +189,14 @@ private:
   DataReaderSet                datareader_set_;
 
 #ifndef OPENDDS_NO_MULTI_TOPIC
-  OPENDDS_MAP(OPENDDS_STRING, DDS::DataReader_var) multitopic_reader_map_;
+  typedef OPENDDS_MAP(String, DDS::DataReader_var) MultitopicReaderMap;
+  MultitopicReaderMap multitopic_reader_map_;
 #endif
 
   WeakRcHandle<DomainParticipantImpl> participant_;
 
   DDS::DomainId_t              domain_id_;
-  RepoId                       dp_id_;
+  GUID_t                       dp_id_;
 
   /// Bound (or initial reservation) of raw latency buffers.
   unsigned int raw_latency_buffer_size_;
@@ -201,11 +204,17 @@ private:
   /// Type of raw latency data buffers.
   DataCollector<double>::OnFull raw_latency_buffer_type_;
 
-  /// this lock protects the data structures in this class.
+  /// This lock protects datareader_set_. Only this lock needs to
+  /// be acquired if only datareader_set_ is accessed.
+  ACE_Recursive_Thread_Mutex dr_set_lock_;
+
+  /// General lock protects the data structures in this class.
+  /// If datareader_set_ is accessed together with other data members,
+  /// acquire dr_set_lock_ in the scope of this lock.
   ACE_Recursive_Thread_Mutex   si_lock_;
 
   /// Monitor object for this entity
-  Monitor* monitor_;
+  unique_ptr<Monitor> monitor_;
 
   int access_depth_;
 };

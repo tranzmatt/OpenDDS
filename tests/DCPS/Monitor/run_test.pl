@@ -34,7 +34,7 @@ unlink $monready_file;
 unlink qw/pub.log sub.log mon.out mon.log DCPSInfoRepo.log/;
 
 my $DCPSREPO = PerlDDS::create_process ("$ENV{DDS_ROOT}/bin/DCPSInfoRepo",
-                                  "-DCPSDebugLevel 6 -ORBDebugLevel 10 -ORBLogFile DCPSInfoRepo.log -o $dcpsrepo_ior ");
+                                  "-NOBITS -DCPSDebugLevel 6 -ORBDebugLevel 10 -ORBLogFile DCPSInfoRepo.log -o $dcpsrepo_ior ");
 
 my $Monitor    = PerlDDS::create_process ("monitor",    " $mon_opts");
 my $Subscriber = PerlDDS::create_process ("subscriber", " $sub_opts");
@@ -70,13 +70,13 @@ $Subscriber->Spawn ();
 
 my $PublisherResult = $Publisher->WaitKill ($test_duration);
 if ($PublisherResult != 0) {
-    print STDERR "ERROR: publisher returned $PublisherResult \n";
+    print STDERR "ERROR: publisher returned $PublisherResult\n";
     $status = 1;
 }
 
 my $SubscriberResult = $Subscriber->WaitKill (15);
 if ($SubscriberResult != 0) {
-    print STDERR "ERROR: subscriber returned $SubscriberResult \n";
+    print STDERR "ERROR: subscriber returned $SubscriberResult\n";
     $status = 1;
 }
 
@@ -97,9 +97,9 @@ unlink $monready_file;
 
 open(MONOUT,"mon.out");
 my @monout=<MONOUT>;close MONOUT;
-my $mon_count = grep /Report/,@monout;
+my $mon_count = grep /Report:/,@monout;
 print STDOUT "mon_count=$mon_count\n";
-if ($mon_count < 145) {
+if ($mon_count < 55) {
     print STDERR "ERROR: Insufficient number of monitor messages seen\n";
     $status = 1;
 }

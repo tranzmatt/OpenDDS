@@ -8,14 +8,14 @@
 #include "ace/Atomic_Op_T.h"
 
 #include "dds/DCPS/Service_Participant.h"
-#include "model/Sync.h"
+#include "tests/Utils/StatusMatching.h"
 
 #include "Foo1DefTypeSupportC.h"
 #include "Foo4DefTypeSupportC.h"
 
 #include "ace/OS_NS_unistd.h"
 
-ACE_Atomic_Op<ACE_SYNCH_MUTEX, CORBA::Long> key(0);
+OpenDDS::DCPS::Atomic<CORBA::Long> key(0);
 
 Writer::Writer(::DDS::DataWriter_ptr writer,
                int num_thread_to_write,
@@ -55,7 +55,7 @@ int Writer::svc()
         !ACE_OS::strcmp(topic_name, MY_TOPIC5) ||
         !ACE_OS::strcmp(topic_name, MY_TOPIC6) ||
         !ACE_OS::strcmp(topic_name, MY_TOPIC7)) {
-      OpenDDS::Model::WriterSync::wait_match(writer_);
+      Utils::wait_match(writer_, 1, Utils::GTE);
 
       ::T1::Foo1 foo;
       foo.x = -1;
@@ -88,7 +88,7 @@ int Writer::svc()
       }
 
     } else if (!ACE_OS::strcmp(topic_name, MY_TOPIC2)) {
-      OpenDDS::Model::WriterSync::wait_match(writer_, 3 /*expected readers*/);
+      Utils::wait_match(writer_, 3 /*expected readers*/, Utils::GTE);
 
       ::T4::Foo4 foo;
       foo.key = ++key;
@@ -147,4 +147,3 @@ void Writer::rsleep(const int wait)
 {
   ACE_OS::sleep(ACE_Time_Value(0, wait / 2));
 }
-

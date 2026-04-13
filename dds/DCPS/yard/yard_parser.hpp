@@ -4,8 +4,8 @@
 // Contains definitions for sample parser management classes
 // to be used with the YARD framework
 
-#ifndef YARD_PARSER_HPP
-#define YARD_PARSER_HPP
+#ifndef OPENDDS_DCPS_YARD_YARD_PARSER_HPP
+#define OPENDDS_DCPS_YARD_YARD_PARSER_HPP
 
 namespace yard
 {
@@ -140,13 +140,13 @@ namespace yard
             Iterator pLast = GetPos();
             while (pLast < mEnd && *pLast != '\n')
                 pLast++;
-            size_t n = pLast - pFirst;
+            size_t n = static_cast<size_t>(pLast - pFirst);
             n = n < 254 ? n : 254;
             strncpy(line, pFirst, n);
             line[n] = '\0';
 
             char marker[256];
-            n = GetPos() - pFirst;
+            n = static_cast<size_t>(GetPos() - pFirst);
             n = n < 254 ? n : 254;
             for (size_t i=0; i < n; ++i)
                 marker[i] = ' ';
@@ -170,4 +170,4 @@ namespace yard
 
  }
 
-#endif
+#endif // OPENDDS_DCPS_YARD_YARD_PARSER_HPP

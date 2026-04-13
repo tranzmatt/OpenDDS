@@ -5,15 +5,13 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_INSTANCEHANDLE_H
-#define DCPS_INSTANCEHANDLE_H
-
-#include "ace/Atomic_Op_T.h"
-#include "ace/Thread_Mutex.h"
-
-#include "dds/DdsDcpsInfrastructureC.h"
+#ifndef OPENDDS_DCPS_INSTANCEHANDLE_H
+#define OPENDDS_DCPS_INSTANCEHANDLE_H
 
 #include "dcps_export.h"
+#include "Atomic.h"
+
+#include <dds/DdsDcpsInfrastructureC.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -31,7 +29,7 @@ public:
   DDS::InstanceHandle_t next();
 
 private:
-  ACE_Atomic_Op<ACE_Thread_Mutex, long> sequence_;
+  Atomic<long> sequence_;
 };
 
 } // namespace DCPS

@@ -6,11 +6,13 @@
  */
 
 #include "DCPS/DdsDcps_pch.h" //Only the _pch include should start with DCPS/
+
 #include "WaitSet.h"
+
 #include "ConditionImpl.h"
 #include "Time_Helper.h"
-
-#include "ace/OS_NS_sys_time.h"
+#include "TimeTypes.h"
+#include "Service_Participant.h"
 
 namespace {
 
@@ -110,23 +112,26 @@ ReturnCode_t WaitSet::get_conditions(ConditionSeq& conds)
 ReturnCode_t WaitSet::wait(ConditionSeq& active_conditions,
                            const Duration_t& timeout)
 {
-  if (waiting_.value()) return RETCODE_PRECONDITION_NOT_MET;
+  using namespace OpenDDS::DCPS;
 
-  if (!OpenDDS::DCPS::non_negative_duration(timeout))
+  if (!non_negative_duration(timeout)) {
     return DDS::RETCODE_BAD_PARAMETER;
+  }
 
-  ACE_Time_Value deadline;
-  ACE_Time_Value* p_deadline = 0;
-
-  if (timeout.sec != DURATION_INFINITE_SEC ||
-      timeout.nanosec != DURATION_INFINITE_NSEC) {
-    deadline = OpenDDS::DCPS::duration_to_absolute_time_value(timeout);
-    p_deadline = &deadline;
+  MonotonicTimePoint deadline;
+  const bool use_deadline = !is_infinite(timeout);
+  if (use_deadline) {
+    deadline = MonotonicTimePoint::now() + TimeDuration(timeout);
   }
 
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, g, lock_,
                    RETCODE_OUT_OF_RESOURCES);
-  waiting_ = 1;
+
+  if (waiting_) {
+    return RETCODE_PRECONDITION_NOT_MET;
+  }
+
+  waiting_ = true;
   signaled_conditions_.clear();
 
   for (ConditionSet::const_iterator iter = attached_conditions_.begin(),
@@ -136,23 +141,29 @@ ReturnCode_t WaitSet::wait(ConditionSeq& active_conditions,
     }
   }
 
-  int error = 0;
-
-  while ((attached_conditions_.empty() || signaled_conditions_.empty())
-         && !error) {
-    if (cond_.wait(p_deadline) == -1) error = errno;
+  CvStatus status = CvStatus_NoTimeout;
+  ThreadStatusManager& thread_status_manager = TheServiceParticipant->get_thread_status_manager();
+  while ((attached_conditions_.empty() || signaled_conditions_.empty()) &&
+      status == CvStatus_NoTimeout) {
+    status = use_deadline ? cond_.wait_until(deadline, thread_status_manager) : cond_.wait(thread_status_manager);
   }
 
   copyInto(active_conditions, signaled_conditions_);
   signaled_conditions_.clear();
-  waiting_ = 0;
+  waiting_ = false;
 
-  switch (error) {
-  case 0:
+  switch (status) {
+  case CvStatus_NoTimeout:
     return RETCODE_OK;
-  case ETIME:
+
+  case CvStatus_Timeout:
     return RETCODE_TIMEOUT;
+
+  case CvStatus_Error:
   default:
+    if (DCPS_debug_level) {
+      ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: WaitSet::wait: wait_until failed\n"));
+    }
     return RETCODE_ERROR;
   }
 }
@@ -164,7 +175,7 @@ void WaitSet::signal(Condition_ptr condition)
 
   if (attached_conditions_.find(condv) != attached_conditions_.end()) {
     signaled_conditions_.insert(condv);
-    cond_.signal();
+    cond_.notify_one();
   }
 }
 

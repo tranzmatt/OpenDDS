@@ -5,17 +5,17 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_MULTICASTSESSIONFACTORY_H
-#define DCPS_MULTICASTSESSIONFACTORY_H
-
-#include "Multicast_Export.h"
+#ifndef OPENDDS_DCPS_TRANSPORT_MULTICAST_MULTICASTSESSIONFACTORY_H
+#define OPENDDS_DCPS_TRANSPORT_MULTICAST_MULTICASTSESSIONFACTORY_H
 
 #include "MulticastTypes.h"
+#include "Multicast_Export.h"
+
+#include "dds/DCPS/RcHandle_T.h"
+#include "dds/DCPS/RcObject.h"
+#include "dds/DCPS/ReactorTask.h"
 
 #include "ace/Synch_Traits.h"
-
-#include "dds/DCPS/RcObject.h"
-#include "dds/DCPS/RcHandle_T.h"
 
 ACE_BEGIN_VERSIONED_NAMESPACE_DECL
 class ACE_Reactor;
@@ -30,15 +30,14 @@ class MulticastDataLink;
 class MulticastSession;
 typedef RcHandle<MulticastSession> MulticastSession_rch;
 
-class OpenDDS_Multicast_Export MulticastSessionFactory
-  : public RcObject {
+class OpenDDS_Multicast_Export MulticastSessionFactory : public RcObject {
 public:
   virtual ~MulticastSessionFactory();
 
   virtual int requires_send_buffer() const = 0;
 
-  virtual MulticastSession_rch create(ACE_Reactor* reactor,
-                                      ACE_thread_t owner,
+  virtual MulticastSession_rch create(RcHandle<EventDispatcher> event_dispatcher,
+                                      ACE_Reactor* reactor,
                                       MulticastDataLink* link,
                                       MulticastPeer remote_peer) = 0;
 };

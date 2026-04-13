@@ -8,15 +8,13 @@
 #ifndef dds_visitor_H
 #define dds_visitor_H
 
-#include "ast_visitor.h"
 #include "be_extern.h"
 #include "dds_generator.h"
 
-#include "tao/Basic_Types.h"
-#include "tao/Version.h"
+#include <ast_visitor.h>
 
-#include <set>
-#include <string>
+#include <tao/Basic_Types.h>
+#include <tao/Version.h>
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 # pragma once
@@ -94,6 +92,8 @@ public:
 
   virtual int visit_sequence(AST_Sequence* node);
 
+  virtual int visit_map(AST_Map* node);
+
   virtual int visit_string(AST_String* node);
 
   virtual int visit_typedef(AST_Typedef* node);
@@ -138,5 +138,17 @@ protected:
   bool java_ts_only_;
   composite_generator gen_target_;
 };
+
+template <typename T>
+void scope2vector(std::vector<T*>& v, UTL_Scope* s, AST_Decl::NodeType nt)
+{
+  UTL_ScopeActiveIterator it(s, UTL_Scope::IK_decls);
+  for (; !it.is_done(); it.next()) {
+    AST_Decl* item = it.item();
+    if (item->node_type() == nt) {
+      v.push_back(dynamic_cast<T*>(item));
+    }
+  }
+}
 
 #endif /* dds_visitor_H */

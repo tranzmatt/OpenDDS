@@ -31,15 +31,16 @@ add_stats (
     )
 {
   data = data / (ACE_hrtime_t) 1000;
-    cout << static_cast<double> (ACE_UINT64_DBLCAST_ADAPTER (data))
-              << endl;
+  cout << static_cast<double>(ACE_UINT64_DBLCAST_ADAPTER(data))
+       << endl;
 
-    stats.average = (stats.count * stats.average + data)/(stats.count + 1);
-    stats.min     = (stats.count == 0 || data < stats.min) ? data : stats.min;
-    stats.max     = (stats.count == 0 || data > stats.max) ? data : stats.max;
-    stats.sum = stats.sum + data;
-    stats.sum2 = stats.sum2 + data * data;
-    stats.count++;
+  const ACE_hrtime_t count_hrtime = static_cast<ACE_hrtime_t>(stats.count);
+  stats.average = (count_hrtime * stats.average + data) / (count_hrtime + 1);
+  stats.min = (stats.count == 0 || data < stats.min) ? data : stats.min;
+  stats.max = (stats.count == 0 || data > stats.max) ? data : stats.max;
+  stats.sum += data;
+  stats.sum2 += data * data;
+  ++stats.count;
 }
 
 static void
@@ -126,7 +127,7 @@ TcpPublisher::connect()
       && errno != ENOTSUP)
   {
     ACE_ERROR((LM_ERROR,
-               "(%P|%t) Publisher failed to set the receive buffer size to %d errno %m \n",
+               "(%P|%t) Publisher failed to set the receive buffer size to %d errno %m\n",
                rcv_size));
   }
 #  endif /* !ACE_LACKS_SOCKET_BUFSIZ */
@@ -192,7 +193,7 @@ void
 TcpPublisher::dump_stats ()
 {
   time_t clock = ACE_OS::time (NULL);
-  cout << "# MY Pub Sub measurements (in us) \n";
+  cout << "# MY Pub Sub measurements (in us)\n";
   cout << "# Executed at:" << ACE_OS::ctime(&clock);
   cout << "#       Roundtrip time [us]\n";
   cout << "Count     mean      min      max   std_dev\n";
@@ -208,4 +209,3 @@ TcpPublisher::dump_stats ()
             << std_dev (round_trip)
             << endl;
 }
-

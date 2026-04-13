@@ -133,10 +133,10 @@ protected:
   DDS::Subscriber_var create_subscriber();
   DDS::DataReader_var create_datareader();
 
-  DDS::DomainParticipant_var&
+  DDS::DomainParticipant_var
   get_participant() { return test_.get_participant(); }
 
-  DDS::Topic_var&
+  DDS::Topic_var
   get_topic() { return test_.get_topic(); }
 };
 
@@ -153,13 +153,6 @@ protected:
   virtual void fini_i();
 };
 
-#if defined (ACE_TEMPLATES_REQUIRE_SOURCE)
 #include "TestFramework_T.cpp"
-#endif
-
-#if defined (ACE_TEMPLATES_REQUIRE_PRAGMA)
-#pragma message("TestFramework_T.cpp template inst")
-#pragma implementation("TestFramework_T.cpp")
-#endif
 
 #endif  /* DCPS_TESTFRAMEWORK_T_H */

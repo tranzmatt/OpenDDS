@@ -60,12 +60,14 @@ public:
 
 private:
   bool done(bool report) const;
-  const Options&       options_;
-  DDS::DataReader_var  reader_;
-  typedef std::set< ::CORBA::Long> Counts;
-  typedef std::map< ::CORBA::Long, Counts> WriterCounts;
-  typedef std::map< ::CORBA::Long, WriterCounts> ParticipantWriters;
-  typedef std::map<std::string, ParticipantWriters> ProcessParticipants;
+
+  mutable ACE_Thread_Mutex mutex_;
+  const Options& options_;
+  DDS::DataReader_var reader_;
+  typedef std::set<int> Counts;
+  typedef std::map<int, Counts> WriterCounts;
+  typedef std::map<int, WriterCounts> ParticipantWriters;
+  typedef std::map<int, ParticipantWriters> ProcessParticipants;
 
   ProcessParticipants processes_;
   std::string id_;

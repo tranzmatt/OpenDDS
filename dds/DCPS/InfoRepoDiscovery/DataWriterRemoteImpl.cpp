@@ -6,7 +6,9 @@
  */
 
 #include "DataWriterRemoteImpl.h"
+
 #include "dds/DCPS/DataWriterCallbacks.h"
+#include "dds/DCPS/debug.h"
 #include "dds/DCPS/GuidConverter.h"
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
@@ -31,33 +33,13 @@ DataWriterRemoteImpl::detach_parent()
 }
 
 void
-DataWriterRemoteImpl::add_association(const RepoId& yourId,
-                                      const ReaderAssociation& reader,
+DataWriterRemoteImpl::add_association(const ReaderAssociation& reader,
                                       bool active)
 {
-  if (DCPS_debug_level) {
-    GuidConverter writer_converter(yourId);
-    GuidConverter reader_converter(reader.readerId);
-    ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) DataWriterRemoteImpl::add_association - ")
-               ACE_TEXT("local %C remote %C\n"),
-               std::string(writer_converter).c_str(),
-               std::string(reader_converter).c_str()));
-  }
-
   // the local copy of parent_ is necessary to prevent race condition
   RcHandle<DataWriterCallbacks> parent = parent_.lock();
   if (parent.in()) {
-    parent->add_association(yourId, reader, active);
-  }
-}
-
-void
-DataWriterRemoteImpl::association_complete(const RepoId& remote_id)
-{
-  // the local copy of parent_ is necessary to prevent race condition
-  RcHandle<DataWriterCallbacks> parent = parent_.lock();
-  if (parent.in()) {
-    parent->association_complete(remote_id);
+    parent->add_association(reader, active);
   }
 }
 
@@ -84,7 +66,7 @@ DataWriterRemoteImpl::update_incompatible_qos(
 }
 
 void
-DataWriterRemoteImpl::update_subscription_params(const RepoId& readerId,
+DataWriterRemoteImpl::update_subscription_params(const GUID_t& readerId,
                                                  const DDS::StringSeq& params)
 {
   // the local copy of parent_ is necessary to prevent race condition

@@ -5,23 +5,26 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_QUEUE_TASK_BASE_T_H
-#define OPENDDS_DCPS_QUEUE_TASK_BASE_T_H
-
-#include /**/ "ace/pre.h"
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_QUEUETASKBASE_T_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_QUEUETASKBASE_T_H
 
 #include "EntryExit.h"
+
+#include <dds/DCPS/PoolAllocator.h>
+#include <dds/DCPS/SafetyProfileStreams.h>
+#include <dds/DCPS/Service_Participant.h>
+#include <dds/DCPS/ConditionVariable.h>
+#include <dds/DCPS/TimeTypes.h>
+#include <dds/DCPS/ThreadStatusManager.h>
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 # pragma once
 #endif /* ACE_LACKS_PRAGMA_ONCE */
 
-#include "ace/Condition_T.h"
-#include "ace/Condition_Thread_Mutex.h"
-#include "ace/Task.h"
-#include "ace/Unbounded_Queue.h"
-#include "ace/INET_Addr.h"
-#include "ace/Synch_Traits.h"
+#include <ace/Task.h>
+#include <ace/Unbounded_Queue.h>
+#include <ace/INET_Addr.h>
+#include <ace/Synch_Traits.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -37,10 +40,11 @@ template <typename T>
 class QueueTaskBase : public ACE_Task_Base {
 public:
   QueueTaskBase()
-  : work_available_(lock_),
-      shutdown_initiated_(false),
-      opened_(false),
-      thr_id_(ACE_OS::NULL_thread) {
+  : work_available_(lock_)
+  , shutdown_initiated_(false)
+  , opened_(false)
+  , thr_id_(ACE_OS::NULL_thread)
+  {
     DBG_ENTRY("QueueTaskBase","QueueTaskBase");
   }
 
@@ -61,7 +65,7 @@ public:
     int result = this->queue_.enqueue_tail(req);
 
     if (result == 0) {
-      this->work_available_.signal();
+      work_available_.notify_one();
 
     } else
       ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: QueueTaskBase::add %p\n",
@@ -105,7 +109,11 @@ public:
   virtual int svc() {
     DBG_ENTRY("QueueTaskBase","svc");
 
-    this->thr_id_ = ACE_OS::thr_self();
+    ThreadStatusManager& thread_status_manager = TheServiceParticipant->get_thread_status_manager();
+
+    ThreadStatusManager::Start s(thread_status_manager, "QueueTaskBase");
+
+    thr_id_ = ACE_OS::thr_self();
 
     // Start the "GetWork-And-PerformWork" loop for the current worker thread.
     while (!this->shutdown_initiated_) {
@@ -113,8 +121,22 @@ public:
       {
         GuardType guard(this->lock_);
 
-        if (this->queue_.is_empty()) {
-          this->work_available_.wait();
+        if (this->queue_.is_empty() && !shutdown_initiated_) {
+          const TimeDuration thread_status_interval = thread_status_manager.thread_status_interval();
+          if (thread_status_interval) {
+            MonotonicTimePoint expire = MonotonicTimePoint::now() + thread_status_interval;
+
+            do {
+              work_available_.wait_until(expire, thread_status_manager);
+
+              MonotonicTimePoint now = MonotonicTimePoint::now();
+              if (now > expire) {
+                expire = now + thread_status_interval;
+              }
+            } while (this->queue_.is_empty() && !shutdown_initiated_);
+          } else {
+            this->work_available_.wait(thread_status_manager);
+          }
         }
 
         if (this->shutdown_initiated_)
@@ -155,13 +177,21 @@ public:
 
       // Set the shutdown flag to true.
       this->shutdown_initiated_ = true;
-      this->work_available_.signal();
+      work_available_.notify_one();
     }
 
-    if (this->opened_ && !ACE_OS::thr_equal(this->thr_id_, ACE_OS::thr_self()))
+    if (this->opened_ && !ACE_OS::thr_equal(this->thr_id_, ACE_OS::thr_self())) {
+      ThreadStatusManager& thread_status_manager = TheServiceParticipant->get_thread_status_manager();
+      ThreadStatusManager::Sleeper sleeper(thread_status_manager);
       this->wait();
+    }
 
     return 0;
+  }
+
+  bool is_shutdown_initiated() const {
+    GuardType guard(lock_);
+    return shutdown_initiated_;
   }
 
   /// The subclass should implement this function to handle the
@@ -170,14 +200,14 @@ public:
 
 private:
 
-  typedef ACE_SYNCH_MUTEX         LockType;
-  typedef ACE_Guard<LockType>     GuardType;
-  typedef ACE_Condition<LockType> ConditionType;
+  typedef ACE_SYNCH_MUTEX LockType;
+  typedef ACE_Guard<LockType> GuardType;
+  typedef ConditionVariable<LockType> ConditionVariableType;
 
-  typedef ACE_Unbounded_Queue<T>  Queue;
+  typedef ACE_Unbounded_Queue<T> Queue;
 
   /// Lock to protect the "state" (all of the data members) of this object.
-  LockType lock_;
+  mutable LockType lock_;
 
   /// The request queue.
   Queue queue_;
@@ -186,7 +216,7 @@ private:
   /// find a request in the queue_ that needs to be executed.
   /// This condition will be signal()'ed each time a request is
   /// added to the queue_, and also when this task is shutdown.
-  ConditionType work_available_;
+  ConditionVariableType work_available_;
 
   /// Flag used to initiate a shutdown request to all worker threads.
   bool shutdown_initiated_;
@@ -202,7 +232,5 @@ private:
 } // namespace OpenDDS
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
-
-#include /**/ "ace/post.h"
 
 #endif /* OPENDDS_DCPS_QUEUE_TASK_BASE_T_H */

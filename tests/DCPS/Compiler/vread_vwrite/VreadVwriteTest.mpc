@@ -1,0 +1,12 @@
+project: dcpsexe, dcps_test, googletest, rapidjson, opendds_uses_cxx11, msvc_bigobj {
+  dcps_ts_flags += -Gxtypes-complete
+  exename = *
+
+  Idl_Files {
+    VreadVwriteTest.idl
+  }
+
+  TypeSupport_Files {
+    VreadVwriteTest.idl
+  }
+}

@@ -5,26 +5,27 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_DATALINK_H
-#define OPENDDS_DCPS_DATALINK_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_DATALINK_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_DATALINK_H
 
-#include "dds/DCPS/dcps_export.h"
-#include "dds/DCPS/Definitions.h"
-#include "dds/DCPS/RcObject.h"
-#include "dds/DCPS/PoolAllocator.h"
-#include "dds/DCPS/RcEventHandler.h"
+#include "QueueTaskBase_T.h"
 #include "ReceiveListenerSetMap.h"
 #include "SendResponseListener.h"
 #include "TransportDefs.h"
+#include "TransportReceiveListener.h"
+#include "TransportSendControlElement.h"
+#include "TransportSendListener.h"
 #include "TransportSendStrategy.h"
 #include "TransportSendStrategy_rch.h"
 #include "TransportStrategy.h"
 #include "TransportStrategy_rch.h"
-#include "TransportSendControlElement.h"
-#include "TransportSendListener.h"
-#include "TransportReceiveListener.h"
-#include "dds/DCPS/transport/framework/QueueTaskBase_T.h"
-#include "dds/DCPS/ReactorInterceptor.h"
+
+#include "dds/DCPS/Definitions.h"
+#include "dds/DCPS/PoolAllocator.h"
+#include "dds/DCPS/RcEventHandler.h"
+#include "dds/DCPS/RcObject.h"
+#include "dds/DCPS/TimeTypes.h"
+#include "dds/DCPS/dcps_export.h"
 
 #include "ace/Event_Handler.h"
 #include "ace/Synch_Traits.h"
@@ -55,7 +56,7 @@ class ThreadPerConnectionSendTask;
 class TransportClient;
 class TransportImpl;
 
-typedef OPENDDS_MAP_CMP(RepoId, DataLinkSet_rch, GUID_tKeyLessThan) DataLinkSetMap;
+typedef OPENDDS_MAP_CMP(GUID_t, DataLinkSet_rch, GUID_tKeyLessThan) DataLinkSetMap;
 
 typedef WeakRcHandle<TransportSendListener> TransportSendListener_wrch;
 
@@ -70,7 +71,7 @@ typedef WeakRcHandle<TransportSendListener> TransportSendListener_wrch;
  *    is enabled.
  */
 class OpenDDS_Dcps_Export DataLink
-: public RcEventHandler {
+: public virtual RcEventHandler {
 
   friend class DataLinkCleanupTask;
 
@@ -87,16 +88,16 @@ public:
   /// created this DataLink.  The ability to specify a priority
   /// for individual links is included for construction so its
   /// value can be available for activating any threads.
-  DataLink(TransportImpl& impl, Priority priority, bool is_loopback, bool is_active);
+  DataLink(const TransportImpl_rch& impl, Priority priority, bool is_loopback, bool is_active);
   virtual ~DataLink();
 
-  //Reactor invokes this after being notified in schedule_stop or cancel_release
+  /// Reactor invokes this after being notified in schedule_stop or cancel_release
   int handle_exception(ACE_HANDLE /* fd */);
 
-  //Allows DataLink::stop to be done on the reactor thread so that
-  //this thread avoids possibly deadlocking trying to access reactor
-  //to stop strategies or schedule timers
-  void schedule_stop(const ACE_Time_Value& schedule_to_stop_at);
+  /// Allows DataLink::stop to be done on the reactor thread so that
+  /// this thread avoids possibly deadlocking trying to access reactor
+  /// to stop strategies or schedule timers
+  void schedule_stop(const MonotonicTimePoint& schedule_to_stop_at);
   /// The stop method is used to stop the DataLink prior to shutdown.
   void stop();
 
@@ -108,35 +109,37 @@ public:
   ///
   /// Return Codes: 0 means successful reservation made.
   ///              -1 means failure.
-  virtual int make_reservation(const RepoId& remote_subscription_id,
-                               const RepoId& local_publication_id,
-                               const TransportSendListener_wrch& send_listener);
+  virtual int make_reservation(const GUID_t& remote_subscription_id,
+                               const GUID_t& local_publication_id,
+                               const TransportSendListener_wrch& send_listener,
+                               bool reliable);
 
   /// Only called by our TransportImpl object.
   ///
   /// Return Codes: 0 means successful reservation made.
   ///              -1 means failure.
-  virtual int make_reservation(const RepoId& remote_publication_id,
-                               const RepoId& local_subscription_id,
-                               const TransportReceiveListener_wrch& receive_listener);
+  virtual int make_reservation(const GUID_t& remote_publication_id,
+                               const GUID_t& local_subscription_id,
+                               const TransportReceiveListener_wrch& receive_listener,
+                               bool reliable);
 
   // ciju: Called by LinkSet with locks held
   /// This will release reservations that were made by one of the
   /// make_reservation() methods.  All we know is that the supplied
-  /// RepoId is considered to be a remote id.  It could be a
+  /// GUID_t is considered to be a remote id.  It could be a
   /// remote subscriber or a remote publisher.
-  void release_reservations(RepoId          remote_id,
-                            RepoId          local_id,
-                            DataLinkSetMap& released_locals);
+  void release_reservations(const GUID_t& remote_id,
+                            const GUID_t& local_id,
+                            DataLinkSetMap* released_locals = 0);
 
   void schedule_delayed_release();
 
-  const ACE_Time_Value& datalink_release_delay() const;
+  const TimeDuration& datalink_release_delay() const;
 
   /// Either send or receive listener for this local_id should be
   /// removed from internal DataLink structures so it no longer
   /// receives events.
-  void remove_listener(const RepoId& local_id);
+  void remove_listener(const GUID_t& local_id);
 
   // ciju: Called by LinkSet with locks held
   /// Called by the TransportClient objects that reference this
@@ -146,7 +149,7 @@ public:
   /// configuration is true or just simply delegate to the send strategy.
   void send_start();
   void send(TransportQueueElement* element);
-  void send_stop(RepoId repoId);
+  void send_stop(GUID_t repoId);
 
   // ciju: Called by LinkSet with locks held
   /// This method is essentially an "undo_send()" method.  It's goal
@@ -155,7 +158,7 @@ public:
   virtual RemoveResult remove_sample(const DataSampleElement* sample);
 
   // ciju: Called by LinkSet with locks held
-  void remove_all_msgs(RepoId pub_id);
+  virtual void remove_all_msgs(const GUID_t& pub_id);
 
   /// This is called by our TransportReceiveStrategy object when it
   /// has received a complete data sample.  This method will cause
@@ -164,7 +167,7 @@ public:
   /// If readerId is not GUID_UNKNOWN, only the TransportReceiveListener
   /// with that ID (if one exists) will receive the data.
   int data_received(ReceivedDataSample& sample,
-                    const RepoId& readerId = GUID_UNKNOWN);
+                    const GUID_t& readerId = GUID_UNKNOWN);
 
   /// Varation of data_received() that allows for excluding a subset of readers
   /// by specifying which readers specifically should receive.
@@ -191,15 +194,17 @@ public:
   // The connection has been broken. No locks are being held.
   // Take a snapshot of current associations which will be removed
   // by DataLinkCleanupTask.
-  bool release_resources();
+  void release_resources();
 
   // Used by to inform the send strategy to clear all unsent samples upon
   // backpressure timed out.
   void terminate_send();
+  void terminate_send_if_suspended();
 
   /// This is called on publisher side to see if this link communicates
-  /// with the provided sub.
-  bool is_target(const RepoId& remote_sub_id);
+  /// with the provided sub or by the subscriber side to see if this link
+  /// communicates with the provided pub
+  bool is_target(const GUID_t& remote_id);
 
   /// This is called by DataLinkCleanupTask thread to remove the associations
   /// based on the snapshot in release_resources().
@@ -243,44 +248,45 @@ public:
   /// subscriptions in "n_subs" and given a set of subscriptions
   /// (the "in" sequence), return the subset of the input set "in" which are
   /// targets of this DataLink (see is_target()).
-  GUIDSeq* target_intersection(const RepoId& pub_id, const GUIDSeq& in, size_t& n_subs);
+  GUIDSeq* target_intersection(const GUID_t& pub_id, const GUIDSeq& in, size_t& n_subs);
 
-  TransportImpl& impl() const;
+  TransportImpl_rch impl() const;
 
   void default_listener(const TransportReceiveListener_wrch& trl);
   TransportReceiveListener_wrch default_listener() const;
 
   typedef WeakRcHandle<TransportClient> TransportClient_wrch;
-  typedef std::pair<TransportClient_wrch, RepoId> OnStartCallback;
+  typedef std::pair<TransportClient_wrch, GUID_t> OnStartCallback;
 
-  void add_pending_on_start(const RepoId& local, const RepoId& remote);
-  bool add_on_start_callback(const TransportClient_wrch& client, const RepoId& remote);
-  void remove_on_start_callback(const TransportClient_wrch& client, const RepoId& remote);
+  bool add_on_start_callback(const TransportClient_wrch& client, const GUID_t& remote);
+  void remove_on_start_callback(const TransportClient_wrch& client, const GUID_t& remote);
   void invoke_on_start_callbacks(bool success);
-  void invoke_on_start_callbacks(const RepoId& local, const RepoId& remote, bool success);
-  void remove_startup_callbacks(const RepoId& local, const RepoId& remote);
+  bool invoke_on_start_callbacks(const GUID_t& local, const GUID_t& remote, bool success);
+  void remove_startup_callbacks(const GUID_t& local, const GUID_t& remote);
 
-  class Interceptor : public ReactorInterceptor {
+  class ImmediateStart : public virtual ReactorTask::Command {
   public:
-    Interceptor(ACE_Reactor* reactor, ACE_thread_t owner) : ReactorInterceptor(reactor, owner) {}
-    bool reactor_is_shut_down() const;
-  };
-
-  class ImmediateStart : public ReactorInterceptor::Command {
-  public:
-    ImmediateStart(RcHandle<DataLink> link, WeakRcHandle<TransportClient> client, const RepoId& remote) : link_(link), client_(client), remote_(remote) {}
-    void execute();
+    ImmediateStart(RcHandle<DataLink> link, WeakRcHandle<TransportClient> client, const GUID_t& remote) : link_(link), client_(client), remote_(remote) {}
+    void execute(ReactorWrapper& reactor_wrapper);
   private:
     RcHandle<DataLink> link_;
     WeakRcHandle<TransportClient> client_;
-    RepoId remote_;
+    GUID_t remote_;
   };
 
   void set_scheduling_release(bool scheduling_release);
 
-  virtual void send_final_acks (const RepoId& readerid);
+  virtual void send_final_acks(const GUID_t& readerid);
 
-  virtual ICE::Endpoint* get_ice_endpoint() const { return 0; }
+  virtual WeakRcHandle<ICE::Endpoint> get_ice_endpoint() const { return WeakRcHandle<ICE::Endpoint>(); }
+
+  virtual SequenceNumber cur_cumulative_ack(const GUID_t& /*writer*/,
+                                            const GUID_t& /*reader*/) const { return SequenceNumber::ZERO(); }
+
+  virtual bool is_leading(const GUID_t& /*writer*/,
+                          const GUID_t& /*reader*/) const { return false; }
+
+  virtual bool uses_end_historic_control_messages() const { return true; }
 
 protected:
 
@@ -322,20 +328,24 @@ protected:
   /// delegate to the send strategy.
   void send_start_i();
   virtual void send_i(TransportQueueElement* element, bool relink = true);
-  void send_stop_i(RepoId repoId);
+  void send_stop_i(GUID_t repoId);
 
-  /// For a given local RepoId (publication or subscription), return the list
-  /// of remote peer RepoIds (subscriptions or publications) that this link
+  /// For a given local GUID_t (publication or subscription), return the list
+  /// of remote peer GUID_ts (subscriptions or publications) that this link
   /// knows about due to make_reservation().
-  GUIDSeq* peer_ids(const RepoId& local_id) const;
+  GUIDSeq* peer_ids(const GUID_t& local_id) const;
+
+  void network_change() const;
+
+  void replay_durable_data(const GUID_t& local_pub_id, const GUID_t& remote_sub_id) const;
 
 private:
 
   /// Helper function to output the enum as a string to help debugging.
   const char* connection_notice_as_str(ConnectionNotice notice);
 
-  TransportSendListener_rch send_listener_for(const RepoId& pub_id) const;
-  TransportReceiveListener_rch recv_listener_for(const RepoId& sub_id) const;
+  TransportSendListener_rch send_listener_for(const GUID_t& pub_id) const;
+  TransportReceiveListener_rch recv_listener_for(const GUID_t& sub_id) const;
 
   /// Save current sub and pub association maps for releasing and create
   /// empty maps for new associations.
@@ -351,12 +361,12 @@ private:
     return element;
   }
 
-  virtual void release_remote_i(const RepoId& /*remote_id*/) {}
-  virtual void release_reservations_i(const RepoId& /*remote_id*/,
-                                      const RepoId& /*local_id*/) {}
+  virtual void release_remote_i(const GUID_t& /*remote_id*/) {}
+  virtual void release_reservations_i(const GUID_t& /*remote_id*/,
+                                      const GUID_t& /*local_id*/) {}
 
   void data_received_i(ReceivedDataSample& sample,
-                       const RepoId& readerId,
+                       const GUID_t& readerId,
                        const RepoIdSet& incl_excl,
                        ReceiveListenerSet::ConstrainReceiveSet constrain);
 
@@ -373,14 +383,14 @@ private:
   /// A boolean indicating if the DataLink has been stopped. This
   /// value is protected by the strategy_lock_.
   bool stopped_;
-  ACE_Time_Value scheduled_to_stop_at_;
+  MonotonicTimePoint scheduled_to_stop_at_;
 
   /// Map publication Id value to TransportSendListener.
-  typedef OPENDDS_MAP_CMP(RepoId, TransportSendListener_wrch, GUID_tKeyLessThan) IdToSendListenerMap;
+  typedef OPENDDS_MAP_CMP(GUID_t, TransportSendListener_wrch, GUID_tKeyLessThan) IdToSendListenerMap;
   IdToSendListenerMap send_listeners_;
 
   /// Map subscription Id value to TransportReceieveListener.
-  typedef OPENDDS_MAP_CMP(RepoId, TransportReceiveListener_wrch, GUID_tKeyLessThan) IdToRecvListenerMap;
+  typedef OPENDDS_MAP_CMP(GUID_t, TransportReceiveListener_wrch, GUID_tKeyLessThan) IdToRecvListenerMap;
   IdToRecvListenerMap recv_listeners_;
 
   /// If default_listener_ is not null and this DataLink receives a sample
@@ -390,14 +400,19 @@ private:
 
   mutable LockType pub_sub_maps_lock_;
 
-  typedef OPENDDS_MAP_CMP(RepoId, ReceiveListenerSet_rch, GUID_tKeyLessThan) AssocByRemote;
+  typedef OPENDDS_MAP_CMP(GUID_t, ReceiveListenerSet_rch, GUID_tKeyLessThan) AssocByRemote;
   AssocByRemote assoc_by_remote_;
 
-  typedef OPENDDS_MAP_CMP(RepoId, RepoIdSet, GUID_tKeyLessThan) AssocByLocal;
+  struct LocalAssociationInfo {
+    bool reliable_;
+    RepoIdSet associated_;
+  };
+
+  typedef OPENDDS_MAP_CMP(GUID_t, LocalAssociationInfo, GUID_tKeyLessThan) AssocByLocal;
   AssocByLocal assoc_by_local_;
 
-  /// A (smart) pointer to the TransportImpl that created this DataLink.
-  TransportImpl& impl_;
+  /// A weak rchandle to the TransportImpl that created this DataLink.
+  WeakRcHandle<TransportImpl> impl_;
 
   /// The id for this DataLink
   ACE_UINT64 id_;
@@ -421,17 +436,19 @@ protected:
 
   /// The transport send strategy object for this DataLink.
   TransportSendStrategy_rch send_strategy_;
+  mutable LockType strategy_lock_;
 
-  LockType strategy_lock_;
-  typedef OPENDDS_MAP_CMP(RepoId, TransportClient_wrch, GUID_tKeyLessThan) RepoToClientMap;
-  typedef OPENDDS_MAP_CMP(RepoId, RepoToClientMap, GUID_tKeyLessThan) OnStartCallbackMap;
+  TransportSendStrategy_rch get_send_strategy();
+
+  typedef OPENDDS_MAP_CMP(GUID_t, TransportClient_wrch, GUID_tKeyLessThan) RepoToClientMap;
+  typedef OPENDDS_MAP_CMP(GUID_t, RepoToClientMap, GUID_tKeyLessThan) OnStartCallbackMap;
   OnStartCallbackMap on_start_callbacks_;
-  typedef OPENDDS_MAP_CMP(RepoId, RepoIdSet, GUID_tKeyLessThan) PendingOnStartsMap;
+  typedef OPENDDS_MAP_CMP(GUID_t, RepoIdSet, GUID_tKeyLessThan) PendingOnStartsMap;
   PendingOnStartsMap pending_on_starts_;
 
   /// Configurable delay in milliseconds that the datalink
   /// should be released after all associations are removed.
-  ACE_Time_Value datalink_release_delay_;
+  TimeDuration datalink_release_delay_;
 
   /// Allocators for data and message blocks used by transport
   /// control samples when send_control is called.
@@ -447,7 +464,8 @@ protected:
   /// Listener for TransportSendControlElements created in send_control
   SendResponseListener send_response_listener_;
 
-  Interceptor interceptor_;
+  static StatisticSeq stats_template();
+  void fill_stats(StatisticSeq& stats, DDS::UInt32& idx) const;
 };
 
 } // namespace DCPS

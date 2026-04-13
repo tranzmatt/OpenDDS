@@ -4,13 +4,16 @@
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
+#ifndef OPENDDS_DCPS_RTPS_GUIDGENERATOR_H
+#define OPENDDS_DCPS_RTPS_GUIDGENERATOR_H
+
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 #pragma once
 #endif /* ACE_LACKS_PRAGMA_ONCE */
 
 #include "dds/DdsDcpsGuidC.h"
 #include "dds/DCPS/PoolAllocator.h"
-#include "dds/DCPS/RTPS/rtps_export.h"
+#include "rtps_export.h"
 
 #include "ace/Basic_Types.h"
 #include "ace/Thread_Mutex.h"
@@ -43,12 +46,15 @@ public:
 
   /// override the MAC address to use a specific network interface
   /// instead of just the first (non-loopback) interface
-  int interfaceName(const char* interface);
+  int interfaceName(const char* nic);
 
   /// populate a GUID container with a unique ID. This will increment
   /// the counter, and use a lock (if compiled with MT ACE) while
   /// doing so.
   void populate(DCPS::GUID_t& container);
+
+  // In a test case, for just examining the counter, pass false. Otherwise exclude the parameter.
+  ACE_UINT16 getCount(bool doIncrement = true);
 
 private:
   enum {NODE_ID_SIZE = 6};
@@ -56,8 +62,6 @@ private:
   /// Borrowed from ACE::UUID_Node, definition of the
   /// MAC address holder type
   typedef unsigned char Node_ID[NODE_ID_SIZE];
-
-  ACE_UINT16 getCount();
 
   Node_ID node_id_;
   pid_t pid_;
@@ -70,3 +74,5 @@ private:
 } // namespace OpenDDS
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
+
+#endif

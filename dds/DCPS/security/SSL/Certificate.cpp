@@ -5,7 +5,6 @@
 
 #include "Certificate.h"
 #include "dds/DCPS/security/CommonUtilities.h"
-#include "dds/DCPS/SequenceIterator.h"
 #include "Err.h"
 #include <algorithm>
 #include <cstring>
@@ -25,7 +24,7 @@ namespace SSL {
 
 Certificate::Certificate(const std::string& uri,
                          const std::string& password)
-  : x_(NULL), original_bytes_(), dsign_algo_("")
+  : x_(0), original_bytes_(), dsign_algo_("")
 {
   DDS::Security::SecurityException ex;
   if (! load(ex, uri, password)) {
@@ -34,18 +33,18 @@ Certificate::Certificate(const std::string& uri,
 }
 
 Certificate::Certificate(const DDS::OctetSeq& src)
-  : x_(NULL), original_bytes_(), dsign_algo_("")
+  : x_(0), original_bytes_(), dsign_algo_("")
 {
   deserialize(src);
 }
 
 Certificate::Certificate()
-  : x_(NULL), original_bytes_(), dsign_algo_("")
+  : x_(0), original_bytes_(), dsign_algo_("")
 {
 }
 
 Certificate::Certificate(const Certificate& other)
-  : x_(NULL), original_bytes_(), dsign_algo_("")
+  : x_(0), original_bytes_(), dsign_algo_("")
 {
   if (0 < other.original_bytes_.length()) {
     deserialize(other.original_bytes_);
@@ -147,7 +146,7 @@ int Certificate::validate(const Certificate& ca, unsigned long int flags) const
     return 1;
   }
 
-  X509_STORE_CTX_init(validation_ctx, certs, x_, NULL);
+  X509_STORE_CTX_init(validation_ctx, certs, x_, 0);
   X509_STORE_CTX_set_flags(validation_ctx, flags);
 
   int result =
@@ -173,7 +172,7 @@ class verify_implementation
 {
 public:
   explicit verify_implementation(EVP_PKEY* pkey)
-    : public_key(pkey), md_ctx(NULL), pkey_ctx(NULL)
+    : public_key(pkey), md_ctx(0), pkey_ctx(0)
   {
   }
 
@@ -195,7 +194,7 @@ public:
 
     EVP_MD_CTX_init(md_ctx);
 
-    if (1 != EVP_DigestVerifyInit(md_ctx, &pkey_ctx, EVP_sha256(), NULL,
+    if (1 != EVP_DigestVerifyInit(md_ctx, &pkey_ctx, EVP_sha256(), 0,
                                   public_key)) {
       OPENDDS_SSL_LOG_ERR("EVP_DigestVerifyInit failed");
       return 1;
@@ -285,7 +284,7 @@ int Certificate::subject_name_to_str(std::string& dst,
       if (buffer) {
         int len = X509_NAME_print_ex(buffer, name, 0, flags);
         if (len > 0) {
-          std::vector<char> tmp(len +
+          std::vector<char> tmp(static_cast<size_t>(len) +
                                 1);  // BIO_gets will add null hence +1
           len = BIO_gets(buffer, &tmp[0], len + 1);
           if (len > 0) {
@@ -320,7 +319,7 @@ int Certificate::subject_name_digest(std::vector<CORBA::Octet>& dst) const
 
   /* Do not free name! */
   X509_NAME* name = X509_get_subject_name(x_);
-  if (NULL == name) {
+  if (0 == name) {
     OPENDDS_SSL_LOG_ERR("X509_get_subject_name failed");
     return 1;
   }
@@ -355,13 +354,21 @@ const char* Certificate::keypair_algo() const
 
 struct cache_dsign_algo_impl
 {
-  cache_dsign_algo_impl() : pkey_(NULL), rsa_(NULL), ec_(NULL) {}
+#ifndef OPENSSL_V_3_0
+  cache_dsign_algo_impl() : pkey_(0), rsa_(0), ec_(0) {}
   ~cache_dsign_algo_impl()
   {
     EVP_PKEY_free(pkey_);
     RSA_free(rsa_);
     EC_KEY_free(ec_);
   }
+#else
+  cache_dsign_algo_impl() : pkey_(0) {}
+  ~cache_dsign_algo_impl()
+  {
+    EVP_PKEY_free(pkey_);
+  }
+#endif
 
   int operator() (X509* cert, std::string& dst)
   {
@@ -378,6 +385,7 @@ struct cache_dsign_algo_impl
       return 1;
     }
 
+#ifndef OPENSSL_V_3_0
     rsa_ = EVP_PKEY_get1_RSA(pkey_);
     if (rsa_) {
       dst = "RSASSA-PSS-SHA256";
@@ -389,6 +397,16 @@ struct cache_dsign_algo_impl
       dst = "ECDSA-SHA256";
       return 0;
     }
+#else
+    const int ptype = EVP_PKEY_id (pkey_);
+    if (ptype == EVP_PKEY_RSA || ptype == EVP_PKEY_RSA_PSS) {
+      dst = "RSASSA-PSS-SHA256";
+      return 0;
+    } else if (ptype == EVP_PKEY_EC) {
+      dst = "ECDSA-SHA256";
+      return 0;
+    }
+#endif
 
     ACE_ERROR((LM_WARNING,
                "(%P|%t) SSL::Certificate::cache_dsign_algo: WARNING, only RSASSA-PSS-SHA256 or "
@@ -399,8 +417,10 @@ struct cache_dsign_algo_impl
 
 private:
   EVP_PKEY* pkey_;
+#ifndef OPENSSL_V_3_0
   RSA* rsa_;
   EC_KEY* ec_;
+#endif
 };
 
 int Certificate::cache_dsign_algo()
@@ -410,39 +430,69 @@ int Certificate::cache_dsign_algo()
 
 void Certificate::load_cert_bytes(const std::string& path)
 {
-  std::ifstream in(path.c_str(), std::ios::binary);
+#ifdef ACE_ANDROID
+  CORBA::Octet *buffer;
 
-  if (!in) {
-    ACE_ERROR((LM_ERROR,
-               "(%P|%t) Certificate::load_cert_bytes:"
-               "WARNING: Failed to load file '%C'; errno: '%C'\n",
-               path.c_str(), strerror(errno)));
-    return;
+  char b[1024];
+  FILE* fp = ACE_OS::fopen(path.c_str(), "rb");
+
+  int n;
+  int i = 0;
+  while (!feof(fp)) {
+    n = ACE_OS::fread(&b, 1, 1024, fp);
+    i += n;
+
+    original_bytes_.length(i + 1); // +1 for null byte at end of cert
+    buffer = original_bytes_.get_buffer();
+    ACE_OS::memcpy(buffer + i - n, b, n);
   }
 
-  DCPS::SequenceBackInsertIterator<DDS::OctetSeq> back_inserter(original_bytes_);
-
-  std::copy((std::istreambuf_iterator<char>(in)),
-            std::istreambuf_iterator<char>(),
-            back_inserter);
+  ACE_OS::fclose(fp);
 
   // To appease the other DDS security implementations which
   // append a null byte at the end of the cert.
-  *back_inserter = 0u;
+  buffer[i + 1] = 0u;
+
+#else
+  std::ifstream in(path.c_str(), std::ios::binary);
+
+  if (!in) {
+    ACE_ERROR((LM_WARNING,
+               "(%P|%t) Certificate::load_cert_bytes:"
+               "WARNING: Failed to load file '%C'; '%m'\n",
+               path.c_str()));
+    return;
+  }
+
+  const std::ifstream::pos_type begin = in.tellg();
+  in.seekg(0, std::ios::end);
+  const std::ifstream::pos_type end = in.tellg();
+  in.seekg(0, std::ios::beg);
+
+  original_bytes_.length(static_cast<CORBA::ULong>(end - begin + 1));
+  in.read(reinterpret_cast<char*>(original_bytes_.get_buffer()), end - begin);
+
+  if (!in) {
+    ACE_ERROR((LM_WARNING,
+               "(%P|%t) Certificate::load_cert_bytes:"
+               "WARNING: Failed to load file '%C'; '%m'\n",
+               path.c_str()));
+    return;
+  }
+
+  // To appease the other DDS security implementations which
+  // append a null byte at the end of the cert.
+  original_bytes_[original_bytes_.length() - 1] = 0u;
+#endif
 }
 
 void Certificate::load_cert_data_bytes(const std::string& data)
 {
-  // The minus 1 is because path contains a comma in element 0 and that
-  // comma is not included in the cert string
-  original_bytes_.length(static_cast<unsigned int>(data.size() - 1));
-  std::memcpy(original_bytes_.get_buffer(), &data[1],
-              original_bytes_.length());
-
-  // To appease the other DDS security implementations which
-  // append a null byte at the end of the cert.
-  original_bytes_.length(original_bytes_.length() + 1);
-  original_bytes_[original_bytes_.length() - 1] = 0;
+  // Start at position 1 because path contains a comma in element 0
+  // and that comma is not included in the cert string
+  // copy the full length to get the terminating null
+  original_bytes_.length(static_cast<unsigned int>(data.size()));
+  std::memcpy(original_bytes_.get_buffer(), data.c_str() + 1, data.size());
 }
 
 X509* Certificate::x509_from_pem(const std::string& path,
@@ -452,15 +502,15 @@ X509* Certificate::x509_from_pem(const std::string& path,
 
   BIO* filebuf = BIO_new_file(path.c_str(), "r");
   if (filebuf) {
-    if (password != "") {
+    if (!password.empty()) {
       result =
-        PEM_read_bio_X509_AUX(filebuf, NULL, NULL, (void*)password.c_str());
+        PEM_read_bio_X509_AUX(filebuf, 0, 0, const_cast<char*>(password.c_str()));
       if (!result) {
         OPENDDS_SSL_LOG_ERR("PEM_read_bio_X509_AUX failed");
       }
 
     } else {
-      result = PEM_read_bio_X509_AUX(filebuf, NULL, NULL, NULL);
+      result = PEM_read_bio_X509_AUX(filebuf, 0, 0, 0);
       if (!result) {
         OPENDDS_SSL_LOG_ERR("PEM_read_bio_X509_AUX failed");
       }
@@ -480,25 +530,25 @@ X509* Certificate::x509_from_pem(const std::string& path,
 X509* Certificate::x509_from_pem(const DDS::OctetSeq& bytes,
                                  const std::string& password)
 {
-  X509* result = NULL;
+  X509* result = 0;
 
   BIO* filebuf = BIO_new(BIO_s_mem());
   do {
     if (filebuf) {
-      if (0 >= BIO_write(filebuf, bytes.get_buffer(), bytes.length())) {
+      if (0 >= BIO_write(filebuf, bytes.get_buffer(), static_cast<int>(bytes.length()))) {
         OPENDDS_SSL_LOG_ERR("BIO_write failed");
         break;
       }
-      if (password != "") {
-        result = PEM_read_bio_X509_AUX(filebuf, NULL, NULL,
-                                       (void*)password.c_str());
+      if (!password.empty()) {
+        result = PEM_read_bio_X509_AUX(filebuf, 0, 0,
+                                       const_cast<char*>(password.c_str()));
         if (!result) {
           OPENDDS_SSL_LOG_ERR("PEM_read_bio_X509_AUX failed");
           break;
         }
 
       } else {
-        result = PEM_read_bio_X509_AUX(filebuf, NULL, NULL, NULL);
+        result = PEM_read_bio_X509_AUX(filebuf, 0, 0, 0);
         if (!result) {
           OPENDDS_SSL_LOG_ERR("PEM_read_bio_X509_AUX failed");
           break;
@@ -521,9 +571,7 @@ X509* Certificate::x509_from_pem(const DDS::OctetSeq& bytes,
 
 int Certificate::serialize(DDS::OctetSeq& dst) const
 {
-  std::copy(DCPS::const_sequence_begin(original_bytes_),
-            DCPS::const_sequence_end(original_bytes_),
-            DCPS::back_inserter(dst));
+  dst = original_bytes_;
 
   if (dst.length() == original_bytes_.length()) {
     return 0;
@@ -563,13 +611,13 @@ struct deserialize_impl
       return 1;
     }
 
-    const int len = BIO_write(buffer_, src_.get_buffer(), src_.length());
+    const int len = BIO_write(buffer_, src_.get_buffer(), static_cast<int>(src_.length()));
     if (len <= 0) {
       OPENDDS_SSL_LOG_ERR("failed to write OctetSeq to BIO");
       return 1;
     }
 
-    dst = PEM_read_bio_X509_AUX(buffer_, NULL, NULL, NULL);
+    dst = PEM_read_bio_X509_AUX(buffer_, 0, 0, 0);
     if (! dst) {
       OPENDDS_SSL_LOG_ERR("failed to read X509 from BIO");
       return 1;

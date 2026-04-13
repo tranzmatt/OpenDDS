@@ -4,9 +4,20 @@
 
 #include "ShapeTypeTypeSupportC.h"
 
-#include <QtGui/QtGui>
+// Tell GCC to ignore implicitly declared copy methods as long as
+// Qt is not compliant.
+#ifdef __GNUC__
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wdeprecated-copy"
+#endif
 
+#include <QtGui/QtGui>
 #include <ui_iShapesForm.h>
+
+#ifdef __GNUC__
+#  pragma GCC diagnostic pop
+#endif
+
 #include <WriterQosDialog.hpp>
 #include <ReaderQosDialog.hpp>
 #include <FilterDialog.hpp>
@@ -20,7 +31,7 @@
 //#include <topic-traits.hpp>
 class ShapesDialog : public QDialog {
   Q_OBJECT
-  public:
+public:
   enum { CIRCLE = 0, SQUARE = 1, TRIANGLE = 2 };
 
   enum {
@@ -35,8 +46,16 @@ class ShapesDialog : public QDialog {
     BLACK   = 8
   };
 
-public:
-  ShapesDialog(DDS::DomainParticipant_var participant, const std::string& partition, int defaultSize);
+  struct QosConfig {
+    QosConfig(const std::string& partition, bool xcdr1)
+      : partition_(partition)
+      , xcdr1_(xcdr1)
+    {}
+    std::string partition_;
+    bool xcdr1_;
+  };
+
+  ShapesDialog(DDS::DomainParticipant_var participant, const QosConfig& config, int defaultSize);
   virtual ~ShapesDialog();
 
 public slots:
@@ -68,4 +87,3 @@ private:
 };
 
 #endif  /* _ISHAPESFORM_HPP */
-

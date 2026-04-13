@@ -1,21 +1,31 @@
-feature(no_opendds_safety_profile) : dcps_ts_defaults, dds_versioning_idl_defaults {
+feature(no_opendds_safety_profile): dds_versioning_idl_defaults {
   idlflags += -Wb,export_macro=OpenDDS_Rtps_Export -Wb,export_include=rtps_export.h -SS
-  dcps_ts_flags += -Wb,export_macro=OpenDDS_Rtps_Export -Wb,export_include=rtps_export.h -SI
+  dcps_ts_flags += -Wb,export_macro=OpenDDS_Rtps_Export -Wb,export_include=rtps_export.h -SI -Sx -Sv -St
 
   IDL_Files {
+    commandflags += -St -Scdr
     RtpsCore.idl
     RtpsSecurity.idl
+    RtpsRpc.idl
+    TypeLookup.idl
   }
 
   TypeSupport_Files {
     RtpsCore.idl
+    RtpsRpc.idl
+    TypeLookup.idl
   }
 }
 
-feature(!no_opendds_safety_profile) : dcps_ts_defaults, dds_versioning_idl_defaults {
-  dcps_ts_flags += -Wb,export_macro=OpenDDS_Rtps_Export -Wb,export_include=rtps_export.h -SI -Lspcpp
+feature(!no_opendds_safety_profile): dds_versioning_idl_defaults {
+  dcps_ts_flags += -Wb,export_macro=OpenDDS_Rtps_Export -Wb,export_include=rtps_export.h -SI -Sx -Sv -Lspcpp
+
+  IDL_Files {
+  }
 
   TypeSupport_Files {
     RtpsCore.idl
+    RtpsRpc.idl
+    TypeLookup.idl
   }
 }

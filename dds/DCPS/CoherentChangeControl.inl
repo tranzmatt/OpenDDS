@@ -39,8 +39,7 @@ CoherentChangeControl::CoherentChangeControl()
 
 
 ACE_INLINE
-size_t
-CoherentChangeControl::max_marshaled_size()
+size_t CoherentChangeControl::get_max_serialized_size()
 {
   size_t sz = sizeof(this->coherent_samples_)
               + sizeof(this->group_coherent_);
@@ -48,7 +47,7 @@ CoherentChangeControl::max_marshaled_size()
     sz += sizeof(this->publisher_id_);
     sz += sizeof (ACE_UINT32);
     sz += this->group_coherent_samples_.size () *
-          (sizeof(PublicationId) + sizeof(this->coherent_samples_));
+          (sizeof(GUID_t) + sizeof(this->coherent_samples_));
   }
 
   return sz;

@@ -6,6 +6,10 @@
  */
 
 #include "UdpLoader.h"
+#include "UdpSendStrategy.h"
+#include "UdpReceiveStrategy.h"
+#include "UdpDataLink.h"
+#include "UdpTransport.h"
 #include "UdpInst.h"
 
 #include "dds/DCPS/transport/framework/TransportRegistry.h"
@@ -24,7 +28,8 @@ class UdpType : public TransportType {
 public:
   const char* name() { return UDP_NAME; }
 
-  TransportInst_rch new_inst(const std::string& name)
+  TransportInst_rch new_inst(const std::string& name,
+                             bool)
   {
     return make_rch<UdpInst>(name);
   }
@@ -38,7 +43,10 @@ UdpLoader::init(int /*argc*/, ACE_TCHAR* /*argv*/[])
   if (initialized) return 0;  // already initialized
 
   TransportRegistry* registry = TheTransportRegistry;
-  registry->register_type(make_rch<UdpType>());
+  if (!registry->register_type(make_rch<UdpType>())) {
+    return 0;
+  }
+
   TransportInst_rch default_inst =
     registry->create_inst(TransportRegistry::DEFAULT_INST_PREFIX +
                           std::string("0300_UDP"), UDP_NAME);

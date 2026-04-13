@@ -10,7 +10,7 @@
 
 #include <sstream>
 
-const long  TEST_DOMAIN   = 911;
+const long  TEST_DOMAIN   = 42;
 const char* TEST_TOPIC    = "foo";
 const char* TEST_TOPIC_TYPE     = "foo";
 const ACE_TCHAR* reader_address_str = ACE_TEXT("localhost:0");
@@ -49,9 +49,9 @@ int ignore ()
       // the USER_DATA to find the Built-In Topic InstanceHandle_t
       // value for an entity (e.g. a DomainParticipant) but this
       // test knows everything and can use the discovery RepoID.
-      ::OpenDDS::DCPS::RepoId part_id = participant_servant->get_id ();
+      ::OpenDDS::DCPS::GUID_t part_id = participant_servant->get_id ();
       //SHH one of these should be the subscriber participant and the other should be the publisher participant.
-      ::OpenDDS::DCPS::RepoId ignore_id = participant_servant->get_id ();
+      ::OpenDDS::DCPS::GUID_t ignore_id = participant_servant->get_id ();
 
       std::stringstream participantBuffer;
 
@@ -64,7 +64,7 @@ int ignore ()
                  ACE_TEXT("(%P|%t) IGNORE_PARTICIPANT,  participant %C ignore participant %C .\n"),
                  participantBuffer.str().c_str(), ignoreBuffer.str().c_str()));
 
-      InstanceHandle_t handle = participant_servant->id_to_handle(ignore_id);
+      InstanceHandle_t handle = participant_servant->await_handle(ignore_id);
 
       ACE_DEBUG((LM_DEBUG,
         ACE_TEXT("(%P|%t) IGNORE_PARTICIPANT, ignored participant %C has handle 0x%x.\n"),
@@ -87,8 +87,8 @@ int ignore ()
 
   case IGNORE_TOPIC:
     {
-      ::OpenDDS::DCPS::RepoId part_id = participant_servant->get_id ();
-      ::OpenDDS::DCPS::RepoId ignore_id = topic_servant->get_id ();
+      ::OpenDDS::DCPS::GUID_t part_id = participant_servant->get_id ();
+      ::OpenDDS::DCPS::GUID_t ignore_id = topic_servant->get_id ();
 
       std::stringstream participantBuffer;
       participantBuffer << ::OpenDDS::DCPS::to_string(part_id);
@@ -100,7 +100,7 @@ int ignore ()
                  ACE_TEXT("(%P|%t) IGNORE_TOPIC, participant %C ignore topic %C .\n"),
                  participantBuffer.str().c_str(), ignoreBuffer.str().c_str()));
 
-      InstanceHandle_t handle = participant_servant->id_to_handle(ignore_id);
+      InstanceHandle_t handle = participant_servant->await_handle(ignore_id);
       ACE_DEBUG((LM_DEBUG,
         ACE_TEXT("(%P|%t) IGNORE_TOPIC,  ignored topic %C has handle 0x%x.\n"),
         ignoreBuffer.str().c_str(),
@@ -121,8 +121,8 @@ int ignore ()
     break;
   case IGNORE_PUBLICATION:
     {
-      ::OpenDDS::DCPS::RepoId part_id = participant_servant->get_id ();
-      ::OpenDDS::DCPS::RepoId ignore_id = datawriter_servant->get_publication_id ();
+      ::OpenDDS::DCPS::GUID_t part_id = participant_servant->get_id ();
+      ::OpenDDS::DCPS::GUID_t ignore_id = datawriter_servant->get_guid();
 
       std::stringstream participantBuffer;
       participantBuffer << ::OpenDDS::DCPS::to_string(part_id);
@@ -134,7 +134,7 @@ int ignore ()
                  ACE_TEXT("(%P|%t) IGNORE_PUBLICATION, participant %C ignore publication %C .\n"),
                  participantBuffer.str().c_str(), ignoreBuffer.str().c_str()));
 
-      InstanceHandle_t handle = participant_servant->id_to_handle(ignore_id);
+      InstanceHandle_t handle = participant_servant->await_handle(ignore_id);
       ACE_DEBUG((LM_DEBUG,
         ACE_TEXT("(%P|%t) IGNORE_PUBLICATION,  ignored topic %C has handle 0x%x.\n"),
         ignoreBuffer.str().c_str(),
@@ -155,8 +155,8 @@ int ignore ()
     break;
   case IGNORE_SUBSCRIPTION:
     {
-      ::OpenDDS::DCPS::RepoId part_id = participant_servant->get_id ();
-      ::OpenDDS::DCPS::RepoId ignore_id = datareader_servant->get_subscription_id ();
+      ::OpenDDS::DCPS::GUID_t part_id = participant_servant->get_id ();
+      ::OpenDDS::DCPS::GUID_t ignore_id = datareader_servant->get_guid ();
 
       std::stringstream participantBuffer;
       participantBuffer << ::OpenDDS::DCPS::to_string(part_id);
@@ -168,7 +168,7 @@ int ignore ()
                  ACE_TEXT("(%P|%t) IGNORE_SUBSCRIPTION, participant %C ignore subscription %C .\n"),
                  participantBuffer.str().c_str(), ignoreBuffer.str().c_str()));
 
-      InstanceHandle_t handle = participant_servant->id_to_handle(ignore_id);
+      InstanceHandle_t handle = participant_servant->await_handle(ignore_id);
       ACE_DEBUG((LM_DEBUG,
         ACE_TEXT("(%P|%t) IGNORE_SUBSCRIPTION,  ignored topic %C has handle 0x%x.\n"),
         ignoreBuffer.str().c_str(),
@@ -244,7 +244,7 @@ int write ()
 int read (int expect_success)
 {
   ACE_DEBUG((LM_DEBUG,
-    ACE_TEXT("(%P|%t) read begins. \n")));
+    ACE_TEXT("(%P|%t) read begins.\n")));
 
   try
   {
@@ -356,4 +356,3 @@ int read (int expect_success)
 
   return 0;
 }
-

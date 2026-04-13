@@ -8,11 +8,8 @@
 #ifndef OPENDDS_DCPS_REPLAYERIMPL_H
 #define OPENDDS_DCPS_REPLAYERIMPL_H
 
-#include "dds/DdsDcpsDomainC.h"
-#include "dds/DdsDcpsTopicC.h"
-#include "dds/DCPS/DataWriterCallbacks.h"
-#include "dds/DCPS/transport/framework/TransportSendListener.h"
-#include "dds/DCPS/transport/framework/TransportClient.h"
+#include "Replayer.h"
+#include "DataWriterCallbacks.h"
 #include "WriteDataContainer.h"
 #include "Definitions.h"
 #include "DataSampleHeader.h"
@@ -21,18 +18,21 @@
 #include "CoherentChangeControl.h"
 #include "GuidUtils.h"
 #include "unique_ptr.h"
-
 #ifndef OPENDDS_NO_CONTENT_SUBSCRIPTION_PROFILE
-#include "FilterEvaluator.h"
+#  include "FilterEvaluator.h"
 #endif
+#include "ConditionVariable.h"
+#include "transport/framework/TransportSendListener.h"
+#include "transport/framework/TransportClient.h"
 
-#include "ace/Event_Handler.h"
-#include "ace/OS_NS_sys_time.h"
-#include "ace/Condition_Recursive_Thread_Mutex.h"
+#include <dds/DdsDcpsDomainC.h>
+#include <dds/DdsDcpsTopicC.h>
+
+#include <ace/Event_Handler.h>
+#include <ace/OS_NS_sys_time.h>
+#include <ace/Recursive_Thread_Mutex.h>
 
 #include <memory>
-
-#include "Replayer.h"
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 #pragma once
@@ -65,7 +65,6 @@ class OpenDDS_Dcps_Export ReplayerImpl : public Replayer,
   public EntityImpl
 {
 public:
-
   ReplayerImpl();
   ~ReplayerImpl();
 
@@ -86,9 +85,7 @@ public:
     OpenDDS::DCPS::DomainParticipantImpl* participant_servant,
     const DDS::PublisherQos&              publisher_qos);
 
-
-  // implement Replayer
-
+  // Implement Replayer
   virtual DDS::ReturnCode_t write (const RawDataSample& sample );
   virtual DDS::ReturnCode_t write_to_reader (DDS::InstanceHandle_t subscription,
                                              const RawDataSample&  sample );
@@ -104,9 +101,10 @@ public:
 
   // Implement TransportClient
   virtual bool check_transport_qos(const TransportInst& inst);
-  virtual const RepoId& get_repo_id() const;
   DDS::DomainId_t domain_id() const { return this->domain_id_; }
   virtual CORBA::Long get_priority_value(const AssociationData& data) const;
+  SequenceNumber get_max_sn() const { return sequence_number_; }
+
 
   // Implement TransportSendListener
   virtual void data_delivered(const DataSampleElement* sample);
@@ -129,33 +127,34 @@ public:
   virtual void retrieve_inline_qos_data(InlineQosData& qos_data) const;
 
   // implement DataWriterCallbacks
-  virtual void add_association(const RepoId&            yourId,
-                               const ReaderAssociation& reader,
-                               bool                     active);
+  virtual void set_publication_id(const GUID_t& guid);
 
-  virtual void association_complete(const RepoId& remote_id);
+  virtual void add_association(const ReaderAssociation& reader,
+                               bool                     active);
 
   virtual void remove_associations(const ReaderIdSeq& readers,
                                    CORBA::Boolean     callback);
 
+  virtual void replay_durable_data_for(const GUID_t&) {}
+
   virtual void update_incompatible_qos(const IncompatibleQosStatus& status);
 
-  virtual void update_subscription_params(const RepoId&         readerId,
+  virtual void update_subscription_params(const GUID_t&         readerId,
                                           const DDS::StringSeq& exprParams);
 
   void remove_all_associations();
 
-  virtual void register_for_reader(const RepoId& participant,
-                                   const RepoId& writerid,
-                                   const RepoId& readerid,
+  virtual void register_for_reader(const GUID_t& participant,
+                                   const GUID_t& writerid,
+                                   const GUID_t& readerid,
                                    const TransportLocatorSeq& locators,
                                    DiscoveryListener* listener);
 
-  virtual void unregister_for_reader(const RepoId& participant,
-                                     const RepoId& writerid,
-                                     const RepoId& readerid);
+  virtual void unregister_for_reader(const GUID_t& participant,
+                                     const GUID_t& writerid,
+                                     const GUID_t& readerid);
 
-  virtual ICE::Endpoint* get_ice_endpoint() { return 0; }
+  virtual DCPS::WeakRcHandle<ICE::Endpoint> get_ice_endpoint() { return DCPS::WeakRcHandle<ICE::Endpoint>(); }
 
   DDS::ReturnCode_t enable();
 
@@ -166,7 +165,6 @@ public:
   virtual DDS::InstanceHandle_t get_instance_handle();
 
 private:
-
   void notify_publication_lost(const DDS::InstanceHandleSeq& handles);
 
   DDS::ReturnCode_t write (const RawDataSample* sample_array, int array_size, DDS::InstanceHandle_t* reader);
@@ -193,6 +191,9 @@ private:
 
   /// The qos policy list of this datawriter.
   DDS::DataWriterQos qos_;
+  /// The qos policy passed in by the user.
+  /// Differs from qos_ because representation has been interpreted.
+  DDS::DataWriterQos passed_qos_;
 
   /// The participant servant which creats the publisher that
   /// creates this datawriter.
@@ -206,17 +207,17 @@ private:
     ~ReaderInfo();
   };
 
-  typedef OPENDDS_MAP_CMP(RepoId, ReaderInfo, GUID_tKeyLessThan) RepoIdToReaderInfoMap;
+  typedef OPENDDS_MAP_CMP(GUID_t, ReaderInfo, GUID_tKeyLessThan) RepoIdToReaderInfoMap;
   RepoIdToReaderInfoMap reader_info_;
 
-  void association_complete_i(const RepoId& remote_id);
+  void association_complete_i(const GUID_t& remote_id);
 
   friend class ::DDS_TEST; // allows tests to get at privates
 
   /// The name of associated topic.
   CORBA::String_var topic_name_;
   /// The associated topic repository id.
-  RepoId topic_id_;
+  GUID_t topic_id_;
   /// The object reference of the associated topic.
   DDS::Topic_var topic_objref_;
   /// The topic servant.
@@ -234,7 +235,7 @@ private:
   DDS::PublisherQos publisher_qos_;
 
   /// The repository id of this datawriter/publication.
-  PublicationId publication_id_;
+  GUID_t publication_id_;
   /// The sequence number unique in DataWriter scope.
   SequenceNumber sequence_number_;
 
@@ -244,7 +245,7 @@ private:
   /// and status changes.
   ACE_Recursive_Thread_Mutex lock_;
 
-  typedef OPENDDS_MAP_CMP(RepoId, DDS::InstanceHandle_t, GUID_tKeyLessThan) RepoIdToHandleMap;
+  typedef OPENDDS_MAP_CMP(GUID_t, DDS::InstanceHandle_t, GUID_tKeyLessThan) RepoIdToHandleMap;
 
   RepoIdToHandleMap id_to_handle_map_;
 
@@ -304,14 +305,12 @@ private:
   /// datawriter.
   bool is_bit_;
 
-  typedef OPENDDS_MAP_CMP(RepoId, SequenceNumber, GUID_tKeyLessThan)
+  typedef OPENDDS_MAP_CMP(GUID_t, SequenceNumber, GUID_tKeyLessThan)
   RepoIdToSequenceMap;
 
   RepoIdToSequenceMap idToSequence_;
 
-  RepoIdSet pending_readers_, assoc_complete_readers_;
-
-  ACE_Condition<ACE_Recursive_Thread_Mutex> empty_condition_;
+  ConditionVariable<ACE_Recursive_Thread_Mutex> empty_condition_;
   int pending_write_count_;
 };
 

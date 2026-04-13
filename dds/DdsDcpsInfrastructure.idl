@@ -5,11 +5,11 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_INFRASTRUCTURE_IDL
-#define OPENDDS_DCPS_INFRASTRUCTURE_IDL
+#ifndef OPENDDS_DDSDCPSINFRASTRUCTURE_IDL
+#define OPENDDS_DDSDCPSINFRASTRUCTURE_IDL
 
-#include "dds/DdsDcpsCore.idl"
-#include "dds/DdsDcpsConditionSeq.idl"
+#include <dds/DdsDcpsCore.idl>
+#include <dds/DdsDcpsConditionSeq.idl>
 
 #define DOMAINID_TYPE_NATIVE long
 #define HANDLE_NIL_NATIVE 0
@@ -314,11 +314,43 @@ module OpenDDS
   // DomainIds used by the implementation will be larger than this constant:
   const ::DDS::DomainId_t MAX_USER_DOMAINID = 0x7fffffff;
 
+  const ::DDS::DomainId_t DOMAIN_UNKNOWN = -1;
+
   module DCPS
   {
     const DDS::StatusMask ALL_STATUS_MASK = 0xffffffff;
     const DDS::StatusMask NO_STATUS_MASK = 0x00000000;
     const DDS::StatusMask DEFAULT_STATUS_MASK = ALL_STATUS_MASK;
+
+    local interface ConfigStore {
+      boolean has(in string key);
+
+      void set_boolean(in string key, in boolean value);
+      boolean get_boolean(in string key, in boolean default_value);
+
+      void set_int32(in string key, in int32 value);
+      int32 get_int32(in string key, in int32 default_value);
+
+      void set_uint32(in string key, in uint32 value);
+      uint32 get_uint32(in string key, in uint32 default_value);
+
+      void set_int64(in string key, in int64 value);
+      int64 get_int64(in string key, in int64 default_value);
+
+      void set_uint64(in string key, in uint64 value);
+      uint64 get_uint64(in string key, in uint64 default_value);
+
+      void set_float64(in string key, in double value);
+      double get_float64(in string key, in double default_value);
+
+      void set_string(in string key, in string value);
+      string get_string(in string key, in string default_value);
+
+      void set_duration(in string key, in DDS::Duration_t value);
+      DDS::Duration_t get_duration(in string key, in DDS::Duration_t default_value);
+
+      void unset(in string key);
+    };
   };
 };
 

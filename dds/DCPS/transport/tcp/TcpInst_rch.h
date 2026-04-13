@@ -5,10 +5,10 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_TCPINST_RCH_H
-#define OPENDDS_TCPINST_RCH_H
+#ifndef OPENDDS_DCPS_TRANSPORT_TCP_TCPINST_RCH_H
+#define OPENDDS_DCPS_TRANSPORT_TCP_TCPINST_RCH_H
 
-#include "dds/DCPS/RcHandle_T.h"
+#include <dds/DCPS/RcHandle_T.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -24,4 +24,4 @@ typedef RcHandle<TcpInst> TcpInst_rch;
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
 
-#endif /* OPENDDS_TCPINST_RCH_H */
+#endif /* OPENDDS_DCPS_TRANSPORT_TCP_TCPINST_RCH_H */

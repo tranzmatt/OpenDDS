@@ -5,12 +5,12 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_TRANSPORT_TYPE_H
-#define OPENDDS_DCPS_TRANSPORT_TYPE_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTTYPE_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTTYPE_H
 
 #include "dds/DCPS/dcps_export.h"
 #include "dds/DCPS/RcObject.h"
-#include "dds/DCPS/transport/framework/TransportInst.h"
+#include "TransportInst.h"
 #include "dds/DCPS/PoolAllocator.h"
 
 #include "ace/Synch_Traits.h"
@@ -34,12 +34,13 @@ typedef RcHandle<TransportInst> TransportInst_rch;
  * to provide the new concrete transport object.
  *
  */
-class OpenDDS_Dcps_Export TransportType : public RcObject {
+class OpenDDS_Dcps_Export TransportType : public virtual RcObject {
 public:
 
   virtual const char* name() = 0;
 
-  virtual TransportInst_rch new_inst(const OPENDDS_STRING& name) = 0;
+  virtual TransportInst_rch new_inst(const OPENDDS_STRING& name,
+                                     bool is_template = false) = 0;
 
 protected:
 

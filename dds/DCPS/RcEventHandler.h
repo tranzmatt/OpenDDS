@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_RCEVENTHANDLER_H
-#define OPENDDS_RCEVENTHANDLER_H
+#ifndef OPENDDS_DCPS_RCEVENTHANDLER_H
+#define OPENDDS_DCPS_RCEVENTHANDLER_H
 
 #include "ace/Event_Handler.h"
 #include "dds/Versioned_Namespace.h"
@@ -20,14 +20,13 @@ namespace DCPS {
 /// Templated Reference counted handle to a pointer.
 /// A non-DDS specific helper class.
 class RcEventHandler
-  : public ACE_Event_Handler
+  : public virtual ACE_Event_Handler
   , public virtual RcObject {
 public:
 
   RcEventHandler()
   {
     this->reference_counting_policy().value(ACE_Event_Handler::Reference_Counting_Policy::ENABLED);
-
   }
 
   ACE_Event_Handler::Reference_Count add_reference()

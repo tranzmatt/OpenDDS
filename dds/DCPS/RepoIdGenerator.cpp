@@ -8,16 +8,16 @@
 #include "DCPS/DdsDcps_pch.h"
 
 #include "RepoIdGenerator.h"
-#include "dds/DCPS/RepoIdBuilder.h"
+#include "RepoIdBuilder.h"
 #include "ace/Log_Msg.h"
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 namespace OpenDDS {
 namespace DCPS {
 
-const unsigned int RepoIdGenerator::KeyBits = 24;
+const long RepoIdGenerator::KeyBits = 24;
 
-const unsigned int RepoIdGenerator::KeyMask = (1 << KeyBits) - 1;
+const long RepoIdGenerator::KeyMask = (1 << KeyBits) - 1;
 
 RepoIdGenerator::RepoIdGenerator(long federation, long participant, EntityKind kind)
   : kind_(kind)
@@ -31,7 +31,7 @@ RepoIdGenerator::~RepoIdGenerator()
 {
 }
 
-RepoId
+GUID_t
 RepoIdGenerator::next(bool builtin)
 {
   // Generate a new key value.
@@ -75,7 +75,7 @@ RepoIdGenerator::next(bool builtin)
     builder.entityKind(kind_, builtin);
   }
 
-  return RepoId(builder);
+  return GUID_t(builder);
 }
 
 void

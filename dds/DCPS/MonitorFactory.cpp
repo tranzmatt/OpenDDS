@@ -86,6 +86,10 @@ MonitorFactory::initialize()
 {
 }
 
+void MonitorFactory::deinitialize()
+{
+}
+
 int
 MonitorFactory::service_initialize()
 {
@@ -107,4 +111,3 @@ ACE_STATIC_SVC_DEFINE (MonitorFactory,
                        ACE_Service_Type::DELETE_THIS |
                          ACE_Service_Type::DELETE_OBJ,
                        0)
-

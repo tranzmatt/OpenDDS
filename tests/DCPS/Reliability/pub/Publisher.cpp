@@ -1,20 +1,21 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
 #include "Boilerplate.h"
-#include <dds/DCPS/Service_Participant.h>
+
 #include <model/Sync.h>
+
+#include <dds/DCPS/Service_Participant.h>
+#include <dds/DCPS/SafetyProfileStreams.h>
+#include <dds/DCPS/StaticIncludes.h>
+#ifdef ACE_AS_STATIC_LIBS
+#  include <dds/DCPS/transport/rtps_udp/RtpsUdp.h>
+#endif
+
 #include <stdexcept>
 #include <iostream>
-
-#include "dds/DCPS/StaticIncludes.h"
-#ifdef ACE_AS_STATIC_LIBS
-#include <dds/DCPS/transport/rtps_udp/RtpsUdp.h>
-#endif
 
 using namespace examples::boilerplate;
 
@@ -28,28 +29,15 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
     // Initialize DomainParticipantFactory, handling command line args
     dpf = TheParticipantFactoryWithArgs(argc, argv);
 
-    bool keep_last_one = false;
-
     // Override message count
     long msg_count = 5000;
     if (argc > 1) {
-      if (!ACE_OS::strcmp(ACE_TEXT("-keep-last-one"), argv[1])) {
-        keep_last_one = true;
-      } else {
         msg_count = ACE_OS::atoi(argv[1]);
-      }
     }
-
     if (msg_count < 0 || msg_count > 5000) {
       ACE_ERROR_RETURN((LM_ERROR,
         ACE_TEXT("ERROR: %N:%l: main() -")
         ACE_TEXT(" specified msg_count outside range!\n")), -1);
-    }
-
-    if (argc > 2) {
-      if (!ACE_OS::strcmp(ACE_TEXT("-keep-last-one"), argv[2])) {
-        keep_last_one = true;
-      }
     }
 
     // Create domain participant
@@ -62,7 +50,7 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
     DDS::Publisher_var publisher = createPublisher(participant);
 
     // Create data writer for the topic
-    DDS::DataWriter_var writer = createDataWriter(publisher, topic, keep_last_one);
+    DDS::DataWriter_var writer = createDataWriter(publisher, topic);
 
     // Safely downcast data writer to type-specific data writer
     Reliability::MessageDataWriter_var msg_writer = narrow(writer);
@@ -74,12 +62,10 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
       // Initialize samples
       Reliability::Message message;
 
-      char number[20];
-
-      for (int i = 0; i<msg_count; ++i) {
+      for (int i = 0; i < msg_count; ++i) {
         // Prepare next sample
-        sprintf(number, "foo %d", i);
-        message.id = CORBA::string_dup(number);
+        const OpenDDS::DCPS::String number = "foo " + OpenDDS::DCPS::to_dds_string(i);
+        message.id = CORBA::string_dup(number.c_str());
         message.name = "foo";
         message.count = (long)i;
         message.expected = msg_count;

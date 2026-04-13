@@ -1,6 +1,4 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
@@ -8,7 +6,12 @@
 #ifndef DATAREADER_LISTENER_IMPL
 #define DATAREADER_LISTENER_IMPL
 
+#include <dds/DCPS/LocalObject.h>
+#include <dds/DCPS/GuardCondition.h>
+
 #include <dds/DdsDcpsSubscriptionC.h>
+
+#include <set>
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 #pragma once
@@ -48,7 +51,8 @@ public:
     DDS::DataReader_ptr reader,
     const DDS::SampleLostStatus& status);
 
-  long num_reads() const {
+  long num_reads() const
+  {
     return num_reads_;
   }
 
@@ -56,14 +60,20 @@ public:
 
   bool is_valid() const;
 
+  void set_expected_reads(size_t expected);
+
+  void set_guard_condition(DDS::GuardCondition_var gc);
+
 private:
-  typedef std::set<CORBA::Long> Counts;
+  typedef std::set<CORBA::ULong> Counts;
 
   DDS::DataReader_var reader_;
-  long                num_reads_;
-  Counts              counts_;
-  bool                valid_;
-  const bool          reliable_;
+  size_t expected_reads_;
+  long num_reads_;
+  Counts counts_;
+  bool valid_;
+  const bool reliable_;
+  DDS::GuardCondition_var gc_;
 };
 
 #endif /* DATAREADER_LISTENER_IMPL  */

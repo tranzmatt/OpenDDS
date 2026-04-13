@@ -70,7 +70,7 @@ Writer::svc ()
 bool
 Writer::start ()
 {
-  ACE_DEBUG ((LM_DEBUG, ACE_TEXT("(%P|%t) Starting Writer \n")));
+  ACE_DEBUG ((LM_DEBUG, ACE_TEXT("(%P|%t) Starting Writer\n")));
 
   // Launch threads.
   if (this->activate (THR_NEW_LWP | THR_JOINABLE,
@@ -96,7 +96,7 @@ Writer::end ()
                 ACE_TEXT ("Error waiting for threads.\n")));
   else
     ACE_DEBUG ((LM_DEBUG,
-                ACE_TEXT ("(%P|%t) Done writing. \n")));
+                ACE_TEXT ("(%P|%t) Done writing.\n")));
 
   return result == 0;
 }
@@ -104,7 +104,7 @@ Writer::end ()
 int
 Writer::get_timeout_writes () const
 {
-  return timeout_writes_.value ();
+  return timeout_writes_;
 }
 
 int

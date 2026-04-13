@@ -5,8 +5,23 @@
  * See: http://www.opendds.org/license.html
  */
 
+// Tell GCC to ignore implicitly declared copy methods as long as
+// Qt is not compliant.
+#ifdef __GNUC__
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wdeprecated-copy"
+#  pragma GCC diagnostic ignored "-Wdeprecated-enum-enum-conversion"
+#  pragma GCC diagnostic ignored "-Wsign-conversion"
+#  pragma GCC diagnostic ignored "-Wtemplate-id-cdtor"
+#endif
+
 #include <QtGui/QtGui>
 #include <QtCore/QDir>
+
+#ifdef __GNUC__
+#  pragma GCC diagnostic pop
+#endif
+
 #include "GvOptions.h"
 
 // Note calls to QObject::toStdString() have been replaced with QObject::toLocal8Bit().constData()
@@ -113,4 +128,3 @@ GvOptionsData::GvOptionsData() : lrLayout_(false)
 
 
 } // End of namespace Monitor
-

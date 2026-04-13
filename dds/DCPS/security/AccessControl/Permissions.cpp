@@ -5,243 +5,311 @@
 
 #include "Permissions.h"
 
-#include "xercesc/parsers/XercesDOMParser.hpp"
-#include "xercesc/dom/DOM.hpp"
-#include "xercesc/sax/HandlerBase.hpp"
-#include "xercesc/framework/MemBufInputSource.hpp"
+#include "XmlUtils.h"
 
-#include "ace/OS_NS_strings.h"
-#include "ace/XML_Utils/XercesString.h"
-
-#include <stdexcept>
+#include <dds/DCPS/security/AccessControlBuiltInImpl.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace OpenDDS {
 namespace Security {
 
-Permissions::Permissions()
-  : perm_data_()
-{
-}
-
-namespace {
-  std::string toString(const XMLCh* in)
-  {
-    char* c = xercesc::XMLString::transcode(in);
-    const std::string s(c);
-    xercesc::XMLString::release(&c);
-    return s;
-  }
-
-  int toInt(const XMLCh* in)
-  {
-    unsigned int i = 0;
-    xercesc::XMLString::textToBin(in, i);
-    return static_cast<int>(i);
-  }
-}
+using OpenDDS::DCPS::security_debug;
 
 int Permissions::load(const SSL::SignedDocument& doc)
 {
   using XML::XStr;
-  static const char* gMemBufId = "gov buffer id";
+  using namespace XmlUtils;
 
-  DCPS::unique_ptr<xercesc::XercesDOMParser> parser(new xercesc::XercesDOMParser());
-  parser->setValidationScheme(xercesc::XercesDOMParser::Val_Always);
-  parser->setDoNamespaces(true);    // optional
-  parser->setCreateCommentNodes(false);
-
-  DCPS::unique_ptr<xercesc::ErrorHandler> errHandler((xercesc::ErrorHandler*) new xercesc::HandlerBase());
-  parser->setErrorHandler(errHandler.get());
-
-  std::string cleaned;
-  doc.get_original_minus_smime(cleaned);
-  xercesc::MemBufInputSource contentbuf((const XMLByte*) cleaned.c_str(),
-                                        cleaned.size(),
-                                        gMemBufId);
-  try {
-    parser->parse(contentbuf);
-
-  } catch (const xercesc::XMLException& toCatch) {
-    char* message = xercesc::XMLString::transcode(toCatch.getMessage());
-    ACE_DEBUG((LM_ERROR, ACE_TEXT(
-        "(%P|%t) AccessControlBuiltInImpl::load_permissions_file: Exception message is %C.\n"), message));
-    xercesc::XMLString::release(&message);
+  const std::string& xml = doc.content();
+  ParserPtr parser;
+  if (!get_parser(parser, doc.filename(), xml)) {
+    if (security_debug.access_error) {
+      ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: {access_error} Permissions::load: "
+        "get_parser failed\n"));
+    }
     return -1;
-
-  } catch (const xercesc::DOMException& toCatch) {
-    char* message = xercesc::XMLString::transcode(toCatch.msg);
-    ACE_DEBUG((LM_ERROR, ACE_TEXT(
-        "(%P|%t) AccessControlBuiltInImpl::load_permissions_file: Exception message is: %C.\n"), message));
-    xercesc::XMLString::release(&message);
-    return -1;
-
-  } catch (...) {
-    ACE_DEBUG((LM_ERROR, ACE_TEXT(
-        "(%P|%t) AccessControlBuiltInImpl::load_permissions_file: Unexpected Permissions XML Parser Exception.\n")));
-    return -1;
-  }
-
-
-  // Successfully parsed the permissions file
-
-  xercesc::DOMDocument* xmlDoc = parser->getDocument();
-
-  xercesc::DOMElement* elementRoot = xmlDoc->getDocumentElement();
-  if (!elementRoot) {
-    throw std::runtime_error("empty XML document");
   }
 
   // Find the validity rules
-  xercesc::DOMNodeList * grantRules = xmlDoc->getElementsByTagName(XStr("grant"));
+  const xercesc::DOMNodeList* const grantRules =
+    parser->getDocument()->getElementsByTagName(XStr(ACE_TEXT("grant")));
 
-  for (XMLSize_t r = 0; r < grantRules->getLength(); ++r) {
-    PermissionGrantRule rule_holder_;
+  for (XMLSize_t r = 0, r_len = grantRules->getLength(); r < r_len; ++r) {
+    Grant_rch grant = DCPS::make_rch<Grant>();
+    const xercesc::DOMNode* const grantRule = grantRules->item(r);
 
     // Pull out the grant name for this grant
-    xercesc::DOMNamedNodeMap * rattrs = grantRules->item(r)->getAttributes();
-    rule_holder_.grant_name = toString(rattrs->item(0)->getTextContent());
+    xercesc::DOMNamedNodeMap* rattrs = grantRule->getAttributes();
+    grant->name = to_string(rattrs->item(0));
 
     // Pull out subject name, validity, and default
-    xercesc::DOMNodeList * grantNodes = grantRules->item(r)->getChildNodes();
+    const xercesc::DOMNodeList* grantNodes = grantRule->getChildNodes();
 
-    bool valid_subject = false;
-    for (XMLSize_t gn = 0; gn < grantNodes->getLength(); gn++) {
-      const XStr g_tag = grantNodes->item(gn)->getNodeName();
+    bool valid_subject = false, valid_default = false;
+    for (XMLSize_t gn = 0, gn_len = grantNodes->getLength(); gn < gn_len; ++gn) {
 
-      if (g_tag == "subject_name") {
-        valid_subject = (rule_holder_.subject.parse(toString(grantNodes->item(gn)->getTextContent())) == 0);
-      } else if (g_tag == "validity") {
-        //Validity_t gn_validity;
-        xercesc::DOMNodeList *validityNodes = grantNodes->item(gn)->getChildNodes();
+      const xercesc::DOMNode* grantNode = grantNodes->item(gn);
 
-        for (XMLSize_t vn = 0; vn < validityNodes->getLength(); vn++) {
-          const XStr v_tag = validityNodes->item(vn)->getNodeName();
+      const XStr g_tag = grantNode->getNodeName();
 
-          if (v_tag == "not_before") {
-            rule_holder_.validity.not_before = toString(
-                      (validityNodes->item(vn)->getTextContent()));
-          } else if (v_tag == "not_after") {
-            rule_holder_.validity.not_after = toString(
-                      (validityNodes->item(vn)->getTextContent()));
+      if (g_tag == ACE_TEXT("subject_name")) {
+        valid_subject = grant->subject.parse(to_string(grantNode)) == 0;
+
+      } else if (g_tag == ACE_TEXT("validity")) {
+        const xercesc::DOMNodeList* validityNodes = grantNode->getChildNodes();
+        for (XMLSize_t vn = 0, vn_len = validityNodes->getLength(); vn < vn_len; ++vn) {
+          const xercesc::DOMNode* validityNode = validityNodes->item(vn);
+          const XStr v_tag = validityNode->getNodeName();
+          if (v_tag == ACE_TEXT("not_before")) {
+            if (!parse_time(validityNode->getTextContent(), grant->validity.not_before)) {
+              if (security_debug.access_error) {
+                ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: {access_error} Permissions::load: "
+                  "invalid datetime in not_before\n"));
+              }
+              return -1;
+            }
+          } else if (v_tag == ACE_TEXT("not_after")) {
+            if (!parse_time(validityNode->getTextContent(), grant->validity.not_after)) {
+              if (security_debug.access_error) {
+                ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: {access_error} Permissions::load: "
+                  "invalid datetime in not_after\n"));
+              }
+              return -1;
+            }
           }
         }
-      } else if (g_tag == "default") {
-        rule_holder_.default_permission = toString(grantNodes->item(gn)->getTextContent());
+
+      } else if (g_tag == ACE_TEXT("default")) {
+        const std::string def = to_string(grantNode);
+        valid_default = true;
+        if (def == "ALLOW") {
+          grant->default_permission = ALLOW;
+        } else if (def == "DENY") {
+          grant->default_permission = DENY;
+        } else {
+          if (security_debug.access_error) {
+            ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: {access_error} Permissions::load: "
+              "<default> must be ALLOW or DENY\n"));
+          }
+          return -1;
+        }
       }
     }
+
+    if (!valid_default) {
+      if (security_debug.access_error) {
+        ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: {access_error} Permissions::load: "
+          "<default> is required\n"));
+      }
+      return -1;
+    }
+
     // Pull out allow/deny rules
-    xercesc::DOMNodeList * adGrantNodes = grantRules->item(r)->getChildNodes();
+    const xercesc::DOMNodeList* adGrantNodes = grantRule->getChildNodes();
 
-    for (XMLSize_t gn = 0; gn < adGrantNodes->getLength(); gn++) {
-      const XStr g_tag = adGrantNodes->item(gn)->getNodeName();
+    for (XMLSize_t gn = 0, gn_len = adGrantNodes->getLength(); gn < gn_len; ++gn) {
 
-      if (g_tag == "allow_rule" || g_tag == "deny_rule") {
-        PermissionTopicRule ptr_holder_;
-        PermissionsPartition pp_holder_;
+      const xercesc::DOMNode* adGrantNode = adGrantNodes->item(gn);
 
-        ptr_holder_.ad_type = (g_tag == "allow_rule") ? ALLOW : DENY;
-        pp_holder_.ad_type = (g_tag == "allow_rule") ? ALLOW : DENY;
+      const XStr g_tag = adGrantNode->getNodeName();
 
-        xercesc::DOMNodeList * adNodeChildren = adGrantNodes->item(gn)->getChildNodes();
+      if (g_tag == ACE_TEXT("allow_rule") || g_tag == ACE_TEXT("deny_rule")) {
+        Rule rule;
 
-        for (XMLSize_t anc = 0; anc < adNodeChildren->getLength(); anc++) {
-          const XStr anc_tag = adNodeChildren->item(anc)->getNodeName();
+        rule.ad_type = (g_tag == ACE_TEXT("allow_rule")) ? ALLOW : DENY;
 
-          if (anc_tag == "domains") {   //domain list
-            xercesc::DOMNodeList * domainIdNodes = adNodeChildren->item(anc)->getChildNodes();
+        const xercesc::DOMNodeList* adNodeChildren = adGrantNode->getChildNodes();
 
-            for (XMLSize_t did = 0; did < domainIdNodes->getLength(); did++) {
-              if ("id" == XStr(domainIdNodes->item(did)->getNodeName())) {
-                ptr_holder_.domain_list.insert(toInt(domainIdNodes->item(did)->getTextContent()));
-                pp_holder_.domain_list.insert(toInt(domainIdNodes->item(did)->getTextContent()));
-              } else if ("id_range" == XStr(domainIdNodes->item(did)->getNodeName())) {
-                int min_value = 0;
-                int max_value = 0;
-                xercesc::DOMNodeList * domRangeIdNodes = domainIdNodes->item(did)->getChildNodes();
+        for (XMLSize_t anc = 0, anc_len = adNodeChildren->getLength(); anc < anc_len; ++anc) {
+          const xercesc::DOMNode* const adNodeChild = adNodeChildren->item(anc);
+          const XStr anc_tag = adNodeChild->getNodeName();
+          if (anc_tag == ACE_TEXT("domains")) {
+            if (!parse_domain_id_set(adNodeChild, rule.domains)) {
+              if (security_debug.access_error) {
+                ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: {access_error} Permissions::load: "
+                  "failed to parse domain set\n"));
+              }
+              return -1;
+            }
 
-                for (XMLSize_t drid = 0; drid < domRangeIdNodes->getLength(); drid++) {
-                  if ("min" == XStr(domRangeIdNodes->item(drid)->getNodeName())) {
-                    min_value = toInt(domRangeIdNodes->item(drid)->getTextContent());
-                  } else if ("max" == XStr(domRangeIdNodes->item(drid)->getNodeName())) {
-                    max_value = toInt(domRangeIdNodes->item(drid)->getTextContent());
+          } else if (anc_tag == ACE_TEXT("publish") || anc_tag == ACE_TEXT("subscribe")) {
+            Action action;
 
-                    if ((min_value == 0) || (min_value > max_value)) {
-                      ACE_DEBUG((LM_ERROR, ACE_TEXT(
-                          "(%P|%t) AccessControlBuiltInImpl::load_permissions_file: Permission XML Domain Range invalid.\n")));
+            action.ps_type = (anc_tag == ACE_TEXT("publish")) ? PUBLISH : SUBSCRIBE;
+            const xercesc::DOMNodeList* topicListNodes = adNodeChild->getChildNodes();
+
+            for (XMLSize_t tln = 0, tln_len = topicListNodes->getLength(); tln < tln_len; ++tln) {
+
+              const xercesc::DOMNode* topicListNode = topicListNodes->item(tln);
+
+              if (ACE_TEXT("topics") == XStr(topicListNode->getNodeName())) {
+                const xercesc::DOMNodeList* topicNodes = topicListNode->getChildNodes();
+
+                for (XMLSize_t tn = 0, tn_len = topicNodes->getLength(); tn < tn_len; ++tn) {
+
+                  const xercesc::DOMNode* topicNode = topicNodes->item(tn);
+
+                  if (ACE_TEXT("topic") == XStr(topicNode->getNodeName())) {
+                    action.topics.push_back(to_string(topicNode));
+                  }
+                }
+
+              } else if (ACE_TEXT("partitions") == XStr(topicListNode->getNodeName())) {
+                const xercesc::DOMNodeList* partitionNodes = topicListNode->getChildNodes();
+
+                for (XMLSize_t pn = 0, pn_len = partitionNodes->getLength(); pn < pn_len; ++pn) {
+
+                  const xercesc::DOMNode* partitionNode = partitionNodes->item(pn);
+
+                  if (ACE_TEXT("partition") == XStr(partitionNode->getNodeName())) {
+                    action.partitions.push_back(to_string(partitionNode));
+                  }
+                }
+              } else if (ACE_TEXT("validity") == XStr(topicListNode->getNodeName())) {
+                const xercesc::DOMNodeList* validityNodes = topicListNode->getChildNodes();
+                for (XMLSize_t vn = 0, vn_len = validityNodes->getLength(); vn < vn_len; ++vn) {
+                  const xercesc::DOMNode* validityNode = validityNodes->item(vn);
+                  const XStr v_tag = validityNode->getNodeName();
+                  if (v_tag == ACE_TEXT("not_before")) {
+                    if (!parse_time(validityNode->getTextContent(), action.validity.not_before)) {
+                      if (security_debug.access_error) {
+                        ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: {access_error} Permissions::load: "
+                                   "invalid datetime in not_before\n"));
+                      }
                       return -1;
                     }
-
-                    for (int i = min_value; i <= max_value; i++) {
-                      ptr_holder_.domain_list.insert(i);
-                      pp_holder_.domain_list.insert(i);
+                  } else if (v_tag == ACE_TEXT("not_after")) {
+                    if (!parse_time(validityNode->getTextContent(), action.validity.not_after)) {
+                      if (security_debug.access_error) {
+                        ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: {access_error} Permissions::load: "
+                                   "invalid datetime in not_after\n"));
+                      }
+                      return -1;
                     }
                   }
                 }
               }
             }
 
-          } else if (anc_tag == "publish" || anc_tag == "subscribe") {   // pub sub nodes
-            PermissionTopicPsRule anc_ps_rule_holder_;
-            PermissionPartitionPs anc_ps_partition_holder_;
-
-            anc_ps_rule_holder_.ps_type = (anc_tag == "publish") ? PUBLISH : SUBSCRIBE;
-            anc_ps_partition_holder_.ps_type = anc_ps_rule_holder_.ps_type;
-            xercesc::DOMNodeList * topicListNodes = adNodeChildren->item(anc)->getChildNodes();
-
-            for (XMLSize_t tln = 0; tln < topicListNodes->getLength(); tln++) {
-              if ("topics" == XStr(topicListNodes->item(tln)->getNodeName())) {
-                xercesc::DOMNodeList * topicNodes = topicListNodes->item(tln)->getChildNodes();
-
-                for (XMLSize_t tn = 0; tn < topicNodes->getLength(); tn++) {
-                  if ("topic" == XStr(topicNodes->item(tn)->getNodeName())) {
-                    anc_ps_rule_holder_.topic_list.push_back(toString(topicNodes->item(tn)->getTextContent()));
-                  }
-                }
-
-              } else if ("partitions" == XStr(topicListNodes->item(tln)->getNodeName())) {
-                xercesc::DOMNodeList * partitionNodes = topicListNodes->item(tln)->getChildNodes();
-
-                for (XMLSize_t pn = 0; pn < partitionNodes->getLength(); pn++) {
-                  if ("partition" == XStr(partitionNodes->item(pn)->getNodeName())) {
-                    anc_ps_partition_holder_.partition_list.push_back(toString(partitionNodes->item(pn)->getTextContent()));
-                  }
-                }
-              }
-            }
-
-            ptr_holder_.topic_ps_rules.push_back(anc_ps_rule_holder_);
-            pp_holder_.partition_ps.push_back(anc_ps_partition_holder_);
+            rule.actions.push_back(action);
           }
         }
 
-        rule_holder_.PermissionTopicRules.push_back(ptr_holder_);
-        rule_holder_.PermissionPartitions.push_back(pp_holder_);
+        grant->rules.push_back(rule);
       }
     }
 
     if (!valid_subject) {
-      ACE_DEBUG((LM_WARNING,
-        ACE_TEXT("(%P|%t) AccessControlBuiltInImpl::load_permissions_file: Unable to parse subject name, ignoring grant.\n")));
-    } else if (contains_subject_name(rule_holder_.subject)) {
-      ACE_DEBUG((LM_WARNING,
-        ACE_TEXT("(%P|%t) AccessControlBuiltInImpl::load_permissions_file: Ignoring grant with duplicate subject name.\n")));
+      if (security_debug.access_warn) {
+        ACE_DEBUG((LM_WARNING, ACE_TEXT("(%P|%t) WARNING: {access_warn} Permissions::load: ")
+          ACE_TEXT("Unable to parse subject name, ignoring grant.\n")));
+      }
+    } else if (find_grant(grant->subject)) {
+      if (security_debug.access_warn) {
+        ACE_DEBUG((LM_WARNING, ACE_TEXT("(%P|%t) WARNING: {access_warn} Permissions::load: ")
+          ACE_TEXT("Ignoring grant with duplicate subject name.\n")));
+      }
     } else {
-      perm_data_.perm_rules.push_back(rule_holder_);
+      grants_.push_back(grant);
     }
   } // grant_rules
 
   return 0;
 }
 
-bool Permissions::contains_subject_name(const SSL::SubjectName& name) const
+bool Permissions::has_grant(const SSL::SubjectName& name) const
 {
-  for (PermissionGrantRules::const_iterator it = perm_data_.perm_rules.begin(); it != perm_data_.perm_rules.end(); ++it) {
-    if (name == it->subject)
+  for (Grants::const_iterator it = grants_.begin(); it != grants_.end(); ++it) {
+    if (name == (*it)->subject) {
       return true;
+    }
   }
   return false;
+}
+
+Permissions::Grant_rch Permissions::find_grant(const SSL::SubjectName& name) const
+{
+  for (Grants::const_iterator it = grants_.begin(); it != grants_.end(); ++it) {
+    if (name == (*it)->subject) {
+      return *it;
+    }
+  }
+  return Grant_rch();
+}
+
+namespace {
+  typedef std::vector<std::string>::const_iterator vsiter_t;
+}
+
+bool Permissions::Action::topic_matches(const char* topic) const
+{
+  for (vsiter_t it = topics.begin(); it != topics.end(); ++it) {
+    if (AccessControlBuiltInImpl::pattern_match(topic, it->c_str())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool Permissions::Action::partitions_match(const DDS::StringSeq& entity_partitions, AllowDeny_t allow_or_deny) const
+{
+  const unsigned int n_entity_names = entity_partitions.length();
+  if (partitions.empty()) {
+    if (allow_or_deny == DENY) {
+      // DDS-Security v1.1 9.4.1.3.2.3.2.4
+      // If there is no <partitions> section ... the deny action would
+      // apply independent of the partition associated with the DDS Endpoint
+      return true;
+    }
+    // DDS-Security v1.1 9.4.1.3.2.3.1.4
+    // If there is no <partitions> Section within an allow rule, then the default "empty string" partition is
+    // assumed. ... This means that the allow rule would only allow a DataWriter to publish on
+    // the "empty string" partition.
+    // DDS v1.4 2.2.3 "PARTITION"
+    // The zero-length sequence is treated as a special value equivalent to a sequence containing a single
+    // element consisting of the empty string.
+    return n_entity_names == 0 || (n_entity_names == 1 && entity_partitions[0].in()[0] == 0);
+  }
+
+  for (unsigned int i = 0; i < n_entity_names; ++i) {
+    bool found = false;
+    for (vsiter_t perm_it = partitions.begin(); !found && perm_it != partitions.end(); ++perm_it) {
+      if (AccessControlBuiltInImpl::pattern_match(entity_partitions[i], perm_it->c_str())) {
+        found = true;
+      }
+    }
+    if (allow_or_deny == ALLOW && !found) {
+      // DDS-Security v1.1 9.4.1.3.2.3.1.4
+      // In order for an action to meet the allowed partitions condition that appears
+      // within an allow rule, the set of the Partitions associated with the DDS entity
+      // ... must be contained in the set of partitions defined by the allowed partitions
+      // condition section.
+      return false; // i'th QoS partition name is not matched by any <partition> in Permissions
+    }
+    if (allow_or_deny == DENY && found) {
+      // DDS-Security v1.1 9.4.1.3.2.3.2.4
+      // In order for an action to be denied it must meet the denied partitions condition.
+      // For this to happen one [or] more of the partition names associated with the DDS Entity
+      // ... must match one [of] the partitions ... listed in the partitions condition section.
+      return true; // i'th QoS partition name matches some <partition> in Permissions
+    }
+  }
+
+  return allow_or_deny == ALLOW;
+}
+
+bool Permissions::Action::valid(time_t now_utc) const
+{
+  if (validity.not_before != 0 && now_utc < validity.not_before) {
+    return false;
+  }
+
+  if (validity.not_after != 0 && now_utc > validity.not_after) {
+    return false;
+  }
+
+  return true;
 }
 
 }

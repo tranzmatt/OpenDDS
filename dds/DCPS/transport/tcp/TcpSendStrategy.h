@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_TCPSENDSTRATEGY_H
-#define OPENDDS_TCPSENDSTRATEGY_H
+#ifndef OPENDDS_DCPS_TRANSPORT_TCP_TCPSENDSTRATEGY_H
+#define OPENDDS_DCPS_TRANSPORT_TCP_TCPSENDSTRATEGY_H
 
 #include "TcpConnection_rch.h"
 #include "TcpDataLink_rch.h"
@@ -40,6 +40,7 @@ public:
 
   /// Enable or disable output processing by the reactor according to mode.
   virtual void schedule_output();
+  virtual void terminate_send_if_suspended();
 
 protected:
 

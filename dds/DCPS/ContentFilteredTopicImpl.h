@@ -10,9 +10,10 @@
 
 #ifndef OPENDDS_NO_CONTENT_FILTERED_TOPIC
 
-#include "dds/DCPS/TopicDescriptionImpl.h"
-#include "dds/DCPS/FilterEvaluator.h"
-#include "dds/DCPS/PoolAllocator.h"
+#include "TopicDescriptionImpl.h"
+#include "FilterEvaluator.h"
+#include "PoolAllocator.h"
+#include "TypeSupportImpl.h"
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 #pragma once
@@ -49,12 +50,12 @@ public:
   bool filter(const Sample& s, bool sample_only_has_key_fields) const
   {
     ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, lock_, false);
-    const MetaStruct& meta = getMetaStruct<Sample>();
     /*
      * Omit the sample from results if the filter references non-key fields
      * and the sample only has key fields.
      */
-    if (sample_only_has_key_fields && filter_eval_.has_non_key_fields(meta)) {
+    TypeSupportImpl* const ts = dynamic_cast<TypeSupportImpl*>(type_support_.in());
+    if (!ts || (sample_only_has_key_fields && filter_eval_.has_non_key_fields(*ts))) {
       return false;
     }
     return filter_eval_.eval(s, expression_parameters_);

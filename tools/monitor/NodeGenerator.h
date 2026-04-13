@@ -9,7 +9,20 @@
 #pragma once
 #endif /* ACE_LACKS_PRAGMA_ONCE */
 
+// Tell GCC to ignore implicitly declared copy methods as long as
+// Qt is not compliant.
+#ifdef __GNUC__
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wdeprecated-copy"
+#  pragma GCC diagnostic ignored "-Wsign-conversion"
+#endif
+
 #include <QtWidgets/QGraphicsScene>
+
+#ifdef __GNUC__
+#  pragma GCC diagnostic pop
+#endif
+
 #include <string>
 
 #include "TreeNode.h"
@@ -65,4 +78,3 @@ private:
 };
 
 }; // namespace Monitor
-

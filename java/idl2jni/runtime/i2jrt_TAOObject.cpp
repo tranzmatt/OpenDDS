@@ -18,6 +18,7 @@ CORBA::Object_ptr recoverTaoObject(JNIEnv *jni, jobject source)
   jclass clazz = jni->FindClass("i2jrt/TAOObject");
   jfieldID fid = jni->GetFieldID(clazz, "_jni_ptr", "J");
   jlong _jni_ptr = jni->GetLongField(source, fid);
+  jni->DeleteLocalRef(clazz);
   return reinterpret_cast<CORBA::Object_ptr>(_jni_ptr);
 }
 
@@ -83,7 +84,7 @@ jint JNICALL Java_i2jrt_TAOObject__1hash(JNIEnv *jni, jobject jThis,
   CORBA::Object_ptr ptr = recoverTaoObject(jni, jThis);
 
   try {
-    return ptr->_hash(i);
+    return static_cast<jint>(ptr->_hash(static_cast<CORBA::ULong>(i)));
 
   } catch (const CORBA::SystemException &se) {
     throw_java_exception(jni, se);
@@ -109,6 +110,8 @@ void JNICALL Java_i2jrt_TAOObject__1release(JNIEnv *jni, jobject jThis)
   jclass clazz = findClass(jni, "i2jrt/TAOObject");
   jfieldID fid = jni->GetFieldID(clazz, "_jni_ptr", "J");
   jlong _jni_ptr = jni->GetLongField(jThis, fid);
+  jni->DeleteLocalRef(clazz);
+
   CORBA::Object_ptr o = reinterpret_cast<CORBA::Object_ptr>(_jni_ptr);
   CORBA::release(o);
   jni->SetLongField(jThis, fid,

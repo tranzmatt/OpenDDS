@@ -8,12 +8,14 @@
 #ifndef OPENDDS_DCPS_SENDSTATEDATASAMPLELIST_H
 #define OPENDDS_DCPS_SENDSTATEDATASAMPLELIST_H
 
-#include "dds/DdsDcpsInfoUtilsC.h"
 #include "PoolAllocator.h"
 #include "Definitions.h"
-#include "transport/framework/TransportDefs.h"
 #include "Dynamic_Cached_Allocator_With_Overflow_T.h"
-#include "ace/config-lite.h"
+
+#include "transport/framework/TransportDefs.h"
+#include "dds/DdsDcpsInfoUtilsC.h"
+
+#include <ace/config-lite.h>
 
 #include <iterator>
 
@@ -38,20 +40,23 @@ const int MAX_READERS_TO_RESEND = 5;
  * @c with the STL generic algorithms.  It is meant for iteration
  * @c over the "send samples" in a @c SendStateDataSampleList.
  */
-class OpenDDS_Dcps_Export SendStateDataSampleListIterator
-  : public std::iterator<std::bidirectional_iterator_tag, DataSampleElement>
-{
+class OpenDDS_Dcps_Export SendStateDataSampleListIterator {
 public:
+  typedef std::bidirectional_iterator_tag iterator_category;
+  typedef DataSampleElement value_type;
+  typedef std::ptrdiff_t difference_type;
+  typedef value_type* pointer;
+  typedef value_type& reference;
 
   /// Default constructor required by ForwardIterator concept
-  SendStateDataSampleListIterator(){}
+  SendStateDataSampleListIterator() {}
 
   /**
    * This constructor is used when constructing an "end" iterator.
    */
   SendStateDataSampleListIterator(DataSampleElement* head,
-                         DataSampleElement* tail,
-                         DataSampleElement* current);
+                                  DataSampleElement* tail,
+                                  DataSampleElement* current);
 
   SendStateDataSampleListIterator& operator++();
   SendStateDataSampleListIterator  operator++(int);
@@ -64,8 +69,8 @@ public:
   bool
   operator==(const SendStateDataSampleListIterator& rhs) const {
     return this->head_ == rhs.head_
-           && this->tail_ == rhs.tail_
-           && this->current_ == rhs.current_;
+      && this->tail_ == rhs.tail_
+      && this->current_ == rhs.current_;
   }
 
   bool
@@ -91,19 +96,20 @@ private:
  * @c with the STL generic algorithms.  It is meant for iteration
  * @c over the "send samples" in a @c SendStateDataSampleList.
  */
-class OpenDDS_Dcps_Export SendStateDataSampleListConstIterator
-  : public std::iterator<std::bidirectional_iterator_tag, DataSampleElement>
-{
+class OpenDDS_Dcps_Export SendStateDataSampleListConstIterator {
 public:
+  typedef std::bidirectional_iterator_tag iterator_category;
+  typedef const DataSampleElement value_type;
+  typedef std::ptrdiff_t difference_type;
   typedef const DataSampleElement* pointer;
   typedef const DataSampleElement& reference;
 
   /// Default constructor required by ForwardIterator concept
-  SendStateDataSampleListConstIterator(){}
+  SendStateDataSampleListConstIterator() {}
 
   SendStateDataSampleListConstIterator(const DataSampleElement* head,
-                                  const DataSampleElement* tail,
-                                  const DataSampleElement* current);
+                                       const DataSampleElement* tail,
+                                       const DataSampleElement* current);
 
   SendStateDataSampleListConstIterator(const SendStateDataSampleListIterator& iterator);
 
@@ -117,8 +123,8 @@ public:
   bool
   operator==(const SendStateDataSampleListConstIterator& rhs) const {
     return this->head_ == rhs.head_
-           && this->tail_ == rhs.tail_
-           && this->current_ == rhs.current_;
+      && this->tail_ == rhs.tail_
+      && this->current_ == rhs.current_;
   }
 
   bool
@@ -153,31 +159,18 @@ class OpenDDS_Dcps_Export SendStateDataSampleList {
                                  SendStateDataSampleList** begin,
                                  SendStateDataSampleList** end);
 
- public:
+public:
 
   /// STL-style bidirectional iterator and const-iterator types.
   typedef SendStateDataSampleListIterator iterator;
   typedef SendStateDataSampleListConstIterator const_iterator;
 
-#if defined __SUNPRO_CC && __SUNPRO_CC <= 0x5130 \
-   && defined _RWSTD_NO_CLASS_PARTIAL_SPEC
-  typedef std::reverse_iterator<iterator, std::bidirectional_iterator_tag,
-                                DataSampleElement, DataSampleElement&,
-                                DataSampleElement*, std::ptrdiff_t>
-    reverse_iterator;
-  typedef std::reverse_iterator<const_iterator, std::bidirectional_iterator_tag,
-                                const DataSampleElement,
-                                const DataSampleElement&,
-                                const DataSampleElement*, std::ptrdiff_t>
-    const_reverse_iterator;
-#else
   typedef std::reverse_iterator<iterator> reverse_iterator;
   typedef std::reverse_iterator<const_iterator> const_reverse_iterator;
-#endif
 
   /// Default constructor clears the list.
   SendStateDataSampleList();
-  ~SendStateDataSampleList(){}
+  ~SendStateDataSampleList() {}
 
   /// Returns a pointer to the SendStateDataSampleList containing a
   /// given DataSampleElement for use in the typical situation where
@@ -226,7 +219,7 @@ class OpenDDS_Dcps_Export SendStateDataSampleList {
   reverse_iterator rend();
   const_reverse_iterator rend() const;
 
- protected:
+protected:
 
   /// The first element of the list.
   DataSampleElement* head_;
@@ -235,7 +228,7 @@ class OpenDDS_Dcps_Export SendStateDataSampleList {
   DataSampleElement* tail_;
 
   /// Number of elements in the list.
-  ssize_t                size_;
+  ssize_t size_;
   //TBD size is never negative so should be size_t but this ripples through
   // the transport code so leave it for now. SHH
 

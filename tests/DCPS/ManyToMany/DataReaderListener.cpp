@@ -79,9 +79,11 @@ void DataReaderListenerImpl::on_data_available(DDS::DataReader_ptr reader)
         if (si.valid_data) {
           const Messenger::Message& message = messages[i];
 
+          ACE_GUARD(ACE_Thread_Mutex, g, mutex_);
+
           // output for console to consume
           std::stringstream ss;
-          ss << "Message: from writer " << message.process_id.in()
+          ss << "Message: from writer " << message.process_id
              << "->" << message.participant_id
              << "->" << message.writer_id
              << " sample_id = " << message.sample_id
@@ -90,12 +92,12 @@ void DataReaderListenerImpl::on_data_available(DDS::DataReader_ptr reader)
           std::cerr << ss.str();
           // also track it in the log file
           ACE_DEBUG((LM_DEBUG,
-                     ACE_TEXT("%T %N:%l: Message: process_id = %C ")
+                     ACE_TEXT("%T %N:%l: Message: process_id = %d ")
                      ACE_TEXT("participant_id = %d ")
                      ACE_TEXT("writer_id = %d ")
                      ACE_TEXT("sample_id = %d ")
                      ACE_TEXT("for reader = %C\n"),
-                     message.process_id.in(),
+                     message.process_id,
                      message.participant_id,
                      message.writer_id,
                      message.sample_id,
@@ -109,9 +111,9 @@ void DataReaderListenerImpl::on_data_available(DDS::DataReader_ptr reader)
               break;
             }
           }
+
           if (!options_.no_validation) {
-            std::string process_id(message.process_id.in());
-            processes_[process_id][message.participant_id][message.writer_id].insert(message.sample_id);
+            processes_[message.process_id][message.participant_id][message.writer_id].insert(message.sample_id);
           }
 
           ++num_samples_;
@@ -197,6 +199,8 @@ void DataReaderListenerImpl::report_errors() const
 
 bool DataReaderListenerImpl::done(bool report) const
 {
+  ACE_GUARD_RETURN(ACE_Thread_Mutex, g, mutex_, false);
+
   bool valid_and_done = true;
   if (expected_num_samples_ > 0) {
     const bool complete = num_samples_ >= expected_num_samples_;

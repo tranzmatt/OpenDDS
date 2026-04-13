@@ -4,16 +4,19 @@
  */
 
 #include "DCPS/DdsDcps_pch.h" //Only the _pch include should start with DCPS/
-#include "ace/Synch.h"
-#include <dds/DCPS/MessageTracker.h>
-#include <dds/DCPS/Service_Participant.h>
-#include "ace/ACE.h"
-#include "ace/Guard_T.h"
-#include "ace/OS_NS_time.h"
+
+#include "MessageTracker.h"
+#include "Service_Participant.h"
+
+#include <ace/Synch.h>
+#include <ace/ACE.h>
+#include <ace/Guard_T.h>
+#include <ace/OS_NS_time.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
-using namespace OpenDDS::DCPS;
+namespace OpenDDS {
+namespace DCPS {
 
 MessageTracker::MessageTracker(const OPENDDS_STRING& msg_src)
 : msg_src_(msg_src)
@@ -25,12 +28,16 @@ MessageTracker::MessageTracker(const OPENDDS_STRING& msg_src)
 }
 
 bool
-MessageTracker::pending_messages()
+MessageTracker::pending_messages() const
 {
-  if (sent_count_ > delivered_count_ + dropped_count_) {
-    return true;
-  }
-  return false;
+  ACE_GUARD_RETURN(ACE_Thread_Mutex, guard, lock_, false);
+  return pending_messages_i();
+}
+
+bool
+MessageTracker::pending_messages_i() const
+{
+  return sent_count_ > delivered_count_ + dropped_count_;
 }
 
 void
@@ -46,8 +53,9 @@ MessageTracker::message_delivered()
   ACE_GUARD(ACE_Thread_Mutex, guard, lock_);
   ++delivered_count_;
 
-  if (!pending_messages())
-    done_condition_.broadcast();
+  if (!pending_messages_i()) {
+    done_condition_.notify_all();
+  }
 }
 
 void
@@ -56,62 +64,75 @@ MessageTracker::message_dropped()
   ACE_GUARD(ACE_Thread_Mutex, guard, lock_);
   ++dropped_count_;
 
-  if (!pending_messages())
-    done_condition_.broadcast();
+  if (!pending_messages_i()) {
+    done_condition_.notify_all();
+  }
 }
 
-void
-MessageTracker::wait_messages_pending(OPENDDS_STRING& caller_message)
+void MessageTracker::wait_messages_pending(const char* caller)
 {
-  ACE_Time_Value pending_timeout =
-    TheServiceParticipant->pending_timeout();
+  const TimeDuration pending_timeout(TheServiceParticipant->pending_timeout());
+  wait_messages_pending(caller, pending_timeout.is_zero() ?
+    MonotonicTimePoint() : MonotonicTimePoint::now() + pending_timeout);
+}
 
-  ACE_Time_Value* pTimeout = 0;
-
-  if (pending_timeout != ACE_Time_Value::zero) {
-    pTimeout = &pending_timeout;
-    pending_timeout += ACE_OS::gettimeofday();
-  }
-
+void MessageTracker::wait_messages_pending(const char* caller, const MonotonicTimePoint& deadline)
+{
+  const bool use_deadline = deadline.is_zero();
   ACE_GUARD(ACE_Thread_Mutex, guard, this->lock_);
-  const bool report = DCPS_debug_level > 0 && pending_messages();
+  const bool report = DCPS_debug_level > 0 && pending_messages_i();
   if (report) {
-    if (pTimeout != 0) {
+    if (use_deadline) {
       ACE_DEBUG((LM_DEBUG,
-                ACE_TEXT("%T (%P|%t) MessageTracker::wait_messages_pending ")
+                ACE_TEXT("(%P|%t) MessageTracker::wait_messages_pending ")
                 ACE_TEXT("from source=%C will wait until %#T.\n"),
-                msg_src_.c_str(), &pending_timeout));
+                msg_src_.c_str(), &deadline.value()));
     } else {
       ACE_DEBUG((LM_DEBUG,
-                ACE_TEXT("%T (%P|%t) MessageTracker::wait_messages_pending ")
-                ACE_TEXT("from source=%C will wait with no timeout.\n")));
+                ACE_TEXT("(%P|%t) MessageTracker::wait_messages_pending ")
+                ACE_TEXT("from source=%C will wait with no timeout.\n"),
+                msg_src_.c_str()));
     }
   }
-  while (true) {
-    if (!pending_messages())
+  bool loop = true;
+  ThreadStatusManager& thread_status_manager = TheServiceParticipant->get_thread_status_manager();
+  while (loop && pending_messages_i()) {
+    switch (done_condition_.wait_until(deadline, thread_status_manager)) {
+    case CvStatus_Timeout:
+      if (DCPS_debug_level && pending_messages_i()) {
+        ACE_DEBUG((LM_DEBUG,
+                   "(%P|%t) MessageTracker::wait_messages_pending: "
+                   "Timed out waiting for messages to be transported (caller: %C)\n",
+                   caller));
+      }
+      loop = false;
       break;
 
-    if (done_condition_.wait(pTimeout) == -1 && pending_messages()) {
-      if (DCPS_debug_level) {
-        ACE_DEBUG((LM_INFO,
-                   ACE_TEXT("(%P|%t) %T MessageTracker::")
-                   ACE_TEXT("wait_messages_pending (Redmine Issue# 1446) %p (caller: %C)\n"),
-                   ACE_TEXT("Timed out waiting for messages to be transported"),
-                   caller_message.c_str()));
-      }
+    case CvStatus_NoTimeout:
       break;
+
+    case CvStatus_Error:
+      if (DCPS_debug_level) {
+        ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: MessageTracker::wait_messages_pending: "
+          "error in wait_until\n"));
+      }
+      loop = false;
+      return;
     }
   }
   if (report) {
-    ACE_DEBUG((LM_DEBUG,
-               "%T (%P|%t) MessageTracker::wait_messages_pending done\n"));
+    ACE_DEBUG((LM_DEBUG, "(%P|%t) MessageTracker::wait_messages_pending %T done\n"));
   }
 }
 
 int
-MessageTracker::dropped_count()
+MessageTracker::dropped_count() const
 {
+  ACE_GUARD_RETURN(ACE_Thread_Mutex, guard, lock_, 0);
   return dropped_count_;
 }
+
+} // namespace DCPS
+} // namespace OpenDDS
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL

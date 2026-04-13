@@ -1,25 +1,18 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-extern "C" {
+#include "ws-wrapper-headers/config.h"
+#include "dissector_export.h"
+#include "packet-opendds.h"
+#include "packet-repo.h"
+#include "packet-datawriter.h"
 
-#include "ws_config.h"
+#include <dds/Version.h>
 
 #include <glib.h>
 #include <gmodule.h>
-
-} // extern "C"
-
-#include <dds/Version.h>
-#include "dissector_export.h"
-
-#include "tools/dissector/packet-opendds.h"
-#include "tools/dissector/packet-repo.h"
-#include "tools/dissector/packet-datawriter.h"
 
 #include <fstream>
 
@@ -30,7 +23,7 @@ extern "C" {
  * to Wireshark changed.
  */
 #if WIRESHARK_VERSION >= WIRESHARK_VERSION_NUMBER(2, 5, 0)
-  extern "C" dissector_Export const gchar plugin_version[] = DDS_VERSION;
+  extern "C" dissector_Export const gchar plugin_version[] = OPENDDS_VERSION;
 
 #  if WIRESHARK_VERSION < WIRESHARK_VERSION_NUMBER(3, 0, 0)
   extern "C" dissector_Export const gchar plugin_release[] = VERSION_RELEASE;
@@ -39,7 +32,7 @@ extern "C" {
   extern "C" dissector_Export const int plugin_want_minor = VERSION_MINOR;
 #  endif
 #else
-  extern "C" dissector_Export const gchar version[] = DDS_VERSION;
+  extern "C" dissector_Export const gchar version[] = OPENDDS_VERSION;
 #endif
 
 extern "C"
@@ -73,7 +66,8 @@ plugin_reg_handoff()
 }
 
 #if WIRESHARK_VERSION >= WIRESHARK_VERSION_NUMBER(2, 5, 0)
-extern "C" dissector_Export void plugin_register() {
+extern "C" dissector_Export void plugin_register()
+{
   static proto_plugin opendds_plugin;
   opendds_plugin.register_protoinfo = register_opendds;
   opendds_plugin.register_handoff = reg_handoff_opendds;

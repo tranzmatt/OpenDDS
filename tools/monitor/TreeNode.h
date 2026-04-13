@@ -8,11 +8,24 @@
 #ifndef TREENODE_H
 #define TREENODE_H
 
+// Tell GCC to ignore implicitly declared copy methods as long as
+// Qt is not compliant.
+#ifdef __GNUC__
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wdeprecated-copy"
+#  pragma GCC diagnostic ignored "-Wsign-conversion"
+#  pragma GCC diagnostic ignored "-Wdeprecated-enum-enum-conversion"
+#endif
+
 #include <QtCore/QList>
 #include <QtCore/QVariant>
 #include <QtCore/QtAlgorithms>
 #include <QtGui/QColor>
 #include <QtWidgets/QCheckBox>
+
+#ifdef __GNUC__
+#  pragma GCC diagnostic pop
+#endif
 
 namespace Monitor {
 
@@ -172,7 +185,6 @@ class TreeNode {
 
     /// display for graphviz / qt
     bool display_;
-
 };
 
 } // End of namespace Monitor
@@ -209,7 +221,6 @@ inline
 Monitor::TreeNode::TreeNode(
   const QList<QVariant>& data,
   TreeNode*              parent
-
 ) : data_( data),
     parent_( parent),
     valueSource_( 0),
@@ -365,8 +376,8 @@ void
 Monitor::TreeNode::sort( int column, Qt::SortOrder order)
 {
   CompareByColumn compare( column, order);
-  qStableSort( this->children_.begin(), this->children_.end(), compare);
-  for( int index = 0; index < this->size(); ++index) {
+  std::stable_sort(this->children_.begin(), this->children_.end(), compare);
+  for (int index = 0; index < this->size(); ++index) {
     (*this)[ index]->sort( column, order);
   }
 }
@@ -501,4 +512,3 @@ bool Monitor::TreeNode::display() const
 }
 
 #endif /* TREENODE_H */
-

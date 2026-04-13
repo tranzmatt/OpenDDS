@@ -5,7 +5,6 @@
  * See: http://www.opendds.org/license.html
  */
 
-#include "Tcp_pch.h"
 #include "TcpConnection.h"
 #include "TcpSendStrategy.h"
 #include "TcpTransport.h"
@@ -106,7 +105,7 @@ OpenDDS::DCPS::TcpSendStrategy::send_bytes_i(const iovec iov[], int n)
     return -1;
   ssize_t result = connection->peer().sendv(iov, n);
   if (DCPS_debug_level > 4)
-    ACE_DEBUG((LM_DEBUG, "(%P|%t) TcpSendStrategy::send_bytes_i sent %d bytes \n", result));
+    ACE_DEBUG((LM_DEBUG, "(%P|%t) TcpSendStrategy::send_bytes_i sent %d bytes\n", result));
 
   return result;
 }
@@ -135,6 +134,13 @@ OpenDDS::DCPS::TcpSendStrategy::add_delayed_notification(TransportQueueElement* 
     // only add the notification when we are not sending REQUEST_ACK message
     TransportSendStrategy::add_delayed_notification(element);
   }
+}
+
+void
+OpenDDS::DCPS::TcpSendStrategy::terminate_send_if_suspended()
+{
+  DBG_ENTRY_LVL("TcpSendStrategy","terminate_send_if_suspended",6);
+  this->clear(MODE_TERMINATED, MODE_SUSPEND);
 }
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL

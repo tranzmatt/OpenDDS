@@ -8,14 +8,16 @@
 #ifndef OPENDDS_DCPS_FILTER_EVALUATOR_H
 #define OPENDDS_DCPS_FILTER_EVALUATOR_H
 
-#include "dds/DCPS/Definitions.h"
+#include "Definitions.h"
 
 #ifndef OPENDDS_NO_CONTENT_SUBSCRIPTION_PROFILE
 
 #include "dds/DdsDcpsInfrastructureC.h"
-#include "dds/DCPS/PoolAllocator.h"
+#include "PoolAllocator.h"
 #include "Comparator_T.h"
 #include "RcObject.h"
+
+#include <dds/DdsDynamicDataC.h>
 
 #include <string>
 
@@ -25,9 +27,13 @@ namespace OpenDDS {
 namespace DCPS {
 
 class MetaStruct;
+class TypeSupportImpl;
 
 template<typename T>
 const MetaStruct& getMetaStruct();
+
+template<typename T>
+struct MarshalTraits;
 
 struct OpenDDS_Dcps_Export Value {
   Value(bool b, bool conversion_preferred = false);
@@ -44,6 +50,7 @@ struct OpenDDS_Dcps_Export Value {
   Value(const char* s, bool conversion_preferred = false);
   Value(const std::string& s, bool conversion_preferred = false);
 #ifdef DDS_HAS_WCHAR
+  Value(ACE_OutputCDR::from_wchar wc, bool conversion_preferred = false);
   Value(const std::wstring& s, bool conversion_preferred = false);
 #endif
   Value(const TAO::String_Manager& s, bool conversion_preferred = false);
@@ -77,7 +84,7 @@ struct OpenDDS_Dcps_Export Value {
     char c_;
     double f_;
     ACE_CDR::LongDouble ld_;
-    const char* s_;
+    char* s_;
   };
   bool conversion_preferred_;
 };
@@ -101,7 +108,7 @@ public:
 
   size_t number_parameters() const { return number_parameters_; }
 
-  bool has_non_key_fields(const MetaStruct& meta) const;
+  bool has_non_key_fields(const TypeSupportImpl& ts) const;
 
   /**
    * Returns true if the unserialized sample matches the filter.
@@ -116,12 +123,11 @@ public:
   /**
    * Returns true if the serialized sample matches the filter.
    */
-  bool eval(ACE_Message_Block* serializedSample, bool swap_bytes,
-            bool cdr_encap, const MetaStruct& meta,
+  bool eval(ACE_Message_Block* serializedSample, Encoding encoding,
+            TypeSupportImpl& typeSupport,
             const DDS::StringSeq& params) const
   {
-    SerializedForEval data(serializedSample, meta, params,
-                           swap_bytes, cdr_encap);
+    SerializedForEval data(serializedSample, typeSupport, params, encoding);
     return eval_i(data);
   }
 
@@ -157,13 +163,14 @@ private:
   };
 
   struct SerializedForEval : DataForEval {
-    SerializedForEval(ACE_Message_Block* data, const MetaStruct& meta,
-                      const DDS::StringSeq& params, bool swap, bool cdr)
-      : DataForEval(meta, params), serialized_(data), swap_(swap), cdr_(cdr) {}
+    SerializedForEval(ACE_Message_Block* data, TypeSupportImpl& type_support,
+                      const DDS::StringSeq& params, Encoding encoding);
     Value lookup(const char* field) const;
     ACE_Message_Block* serialized_;
-    bool swap_, cdr_;
+    Encoding encoding_;
+    TypeSupportImpl& type_support_;
     mutable OPENDDS_MAP(OPENDDS_STRING, Value) cache_;
+    Extensibility exten_;
   };
 
   bool eval_i(DataForEval& data) const;
@@ -171,7 +178,7 @@ private:
   bool extended_grammar_;
   EvalNode* filter_root_;
   OPENDDS_VECTOR(OPENDDS_STRING) order_bys_;
-  /// Number of parameter used in the filter, this should
+  /// Number of parameters used in the filter, this should
   /// match the number of values passed when evaluating the filter
   size_t number_parameters_;
 
@@ -182,7 +189,7 @@ public:
   virtual ~MetaStruct();
 
   virtual Value getValue(const void* stru, const char* fieldSpec) const = 0;
-  virtual Value getValue(Serializer& ser, const char* fieldSpec) const = 0;
+  virtual Value getValue(Serializer& ser, const char* fieldSpec, TypeSupportImpl* ts = 0) const = 0;
 
   virtual ComparatorBase::Ptr create_qc_comparator(const char* fieldSpec,
     ComparatorBase::Ptr next) const = 0;
@@ -190,13 +197,11 @@ public:
   ComparatorBase::Ptr create_qc_comparator(const char* fieldSpec) const
   { return create_qc_comparator(fieldSpec, ComparatorBase::Ptr()); }
 
-  virtual bool compare(const void* lhs, const void* rhs,
-                       const char* fieldSpec) const = 0;
-
-  virtual bool isDcpsKey(const char* field) const = 0;
-
 #ifndef OPENDDS_NO_MULTI_TOPIC
   virtual size_t numDcpsKeys() const = 0;
+
+  virtual bool compare(const void* lhs, const void* rhs,
+                       const char* fieldSpec) const = 0;
 
   virtual const char** getFieldNames() const = 0;
 

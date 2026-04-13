@@ -18,21 +18,18 @@ PerlDDS::add_lib_path('../FooType5');
 my $num_instances_per_writer = 1;
 my $num_samples_per_instance = 10;
 my $args = "-m $num_instances_per_writer -i $num_samples_per_instance";
-$args .= " -DCPSDebugLevel 3";
 
 if ((new PerlACE::ConfigList)->check_config('OPENDDS_SAFETY_PROFILE')) {
-  $args .= " -DCPSConfigFile memory_pool.ini"
+  $args .= " -safety-profile -DCPSConfigFile memory_pool.ini"
 }
+$args .= " -DCPSDebugLevel 3";
 
 my $test = new PerlDDS::TestFramework();
 $test->enable_console_logging();
 $test->process('sub', 'subscriber', $args);
 $test->process('pub', 'publisher', $args);
 
-$test->add_temporary_file('sub', 'subscriber_finished.txt');
-$test->add_temporary_file('sub', 'subscriber_ready.txt');
 $test->add_temporary_file('pub', 'publisher_finished.txt');
-$test->add_temporary_file('pub', 'publisher_ready.txt');
 
 $test->setup_discovery();
 

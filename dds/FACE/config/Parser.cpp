@@ -22,7 +22,7 @@ namespace {
   const char* PUBLISHER_QOS_SECTION  = "publisherqos";
   const char* SUBSCRIBER_QOS_SECTION = "subscriberqos";
 
-  OpenDDS::DCPS::RepoId build_id(const ConnectionSettings& conn)
+  OpenDDS::DCPS::GUID_t build_id(const ConnectionSettings& conn)
   {
     unsigned char participant_key[6];
     participant_key[0] = (conn.participant_id_ >> 0) & 0xFF;
@@ -99,11 +99,15 @@ Parser::parse(const char* filename)
   if (status)
     return status;
 
+  const DDS::DomainParticipantFactory_var dpf = TheParticipantFactory;
+  // For the configuration to be loaded.
+  ACE_UNUSED_ARG(dpf);
+
   for (ConnectionMap::const_iterator pos = connection_map_.begin(), limit = connection_map_.end();
        pos != limit;
        ++pos) {
     const ConnectionSettings& conn = pos->second;
-    OpenDDS::DCPS::RepoId id = build_id(conn);
+    OpenDDS::DCPS::GUID_t id = build_id(conn);
 
     switch (conn.direction_) {
     case FACE::SOURCE:
@@ -138,11 +142,11 @@ Parser::parse(const char* filename)
 
         DCPS::TransportLocatorSeq trans_info;
 
-        OpenDDS::DCPS::TransportConfig_rch config;
+        OpenDDS::DCPS::TransportConfig_rch tp_config;
 
         if (conn.config_set()) {
-          config = TheTransportRegistry->get_config(conn.config_name());
-          if (config.is_nil()) {
+          tp_config = TheTransportRegistry->get_config(conn.config_name());
+          if (tp_config.is_nil()) {
             ACE_ERROR((LM_ERROR,
                        ACE_TEXT("(%P|%t) ERROR: Could not find config/%s\n"),
                        conn.config_name()));
@@ -150,15 +154,15 @@ Parser::parse(const char* filename)
           }
         }
 
-        if (config.is_nil()) {
-          config = TheTransportRegistry->domain_default_config(conn.domain_id_);
+        if (tp_config.is_nil()) {
+          tp_config = TheTransportRegistry->domain_default_config(conn.domain_id_);
         }
 
-        if (config.is_nil()) {
-          config = TheTransportRegistry->global_config();
+        if (tp_config.is_nil()) {
+          tp_config = TheTransportRegistry->global_config();
         }
 
-        config->populate_locators(trans_info);
+        tp_config->populate_locators(trans_info, conn.domain_id_, id);
 
         // Typically, we would ensure that trans_info is not empty.
         // However, when using RTPS, trans_info will be empty so don't check.
@@ -168,6 +172,14 @@ Parser::parse(const char* filename)
         qos.user_data.value[0] = (conn.connection_id_ >> 0) & 0xFF;
         qos.user_data.value[1] = (conn.connection_id_ >> 8) & 0xFF;
         qos.user_data.value[2] = (conn.connection_id_ >> 16) & 0xFF;
+        bool encapsulated_only = false;
+        for (CORBA::ULong i = 0; i < trans_info.length(); ++i) {
+          if (0 == std::strcmp(trans_info[i].transport_type, "rtps_udp")) {
+            encapsulated_only = true;
+            break;
+          }
+        }
+        DCPS::set_writer_effective_data_rep_qos(qos.representation.value, encapsulated_only);
 
         OpenDDS::DCPS::EndpointRegistry::Writer w(topic_name, qos, publisher_qos, conn.config_name(), trans_info);
         OpenDDS::DCPS::StaticDiscovery::instance()->registry.writer_map.insert(std::make_pair(id, w));
@@ -205,11 +217,11 @@ Parser::parse(const char* filename)
 
         DCPS::TransportLocatorSeq trans_info;
 
-        OpenDDS::DCPS::TransportConfig_rch config;
+        OpenDDS::DCPS::TransportConfig_rch tp_config;
 
         if (conn.config_set()) {
-          config = TheTransportRegistry->get_config(conn.config_name());
-          if (config.is_nil()) {
+          tp_config = TheTransportRegistry->get_config(conn.config_name());
+          if (tp_config.is_nil()) {
             ACE_ERROR((LM_ERROR,
                        ACE_TEXT("(%P|%t) ERROR: Could not find transport/%s\n"),
                        conn.config_name()));
@@ -217,15 +229,15 @@ Parser::parse(const char* filename)
           }
         }
 
-        if (config.is_nil()) {
-          config = TheTransportRegistry->domain_default_config(conn.domain_id_);
+        if (tp_config.is_nil()) {
+          tp_config = TheTransportRegistry->domain_default_config(conn.domain_id_);
         }
 
-        if (config.is_nil()) {
-          config = TheTransportRegistry->global_config();
+        if (tp_config.is_nil()) {
+          tp_config = TheTransportRegistry->global_config();
         }
 
-        config->populate_locators(trans_info);
+        tp_config->populate_locators(trans_info, conn.domain_id_, id);
 
         // Typically, we would ensure that trans_info is not empty.
         // However, when using RTPS, trans_info will be empty so don't check.
@@ -236,6 +248,7 @@ Parser::parse(const char* filename)
         qos.user_data.value[1] = (conn.connection_id_ >> 8) & 0xFF;
         qos.user_data.value[2] = (conn.connection_id_ >> 16) & 0xFF;
 
+        DCPS::set_reader_effective_data_rep_qos(qos.representation.value);
         OpenDDS::DCPS::EndpointRegistry::Reader r(topic_name, qos, subscriber_qos, conn.config_name(), trans_info);
         OpenDDS::DCPS::StaticDiscovery::instance()->registry.reader_map.insert(std::make_pair(id, r));
       }

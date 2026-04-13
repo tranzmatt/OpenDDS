@@ -8,14 +8,16 @@
 #ifndef OPENDDS_DCPS_INSTANCESTATE_H
 #define OPENDDS_DCPS_INSTANCESTATE_H
 
+#include "Definitions.h"
+#include "GuidUtils.h"
+#include "PoolAllocator.h"
+#include "SporadicEvent.h"
+#include "TimeTypes.h"
 #include "dcps_export.h"
-#include "ace/Time_Value.h"
-#include "dds/DdsDcpsInfrastructureC.h"
-#include "dds/DCPS/Definitions.h"
-#include "dds/DCPS/GuidUtils.h"
-#include "dds/DCPS/PoolAllocator.h"
-#include "dds/DCPS/ReactorInterceptor.h"
-#include "dds/DCPS/RepoIdTypes.h"
+
+#include <dds/DdsDcpsInfrastructureC.h>
+
+#include <ace/Time_Value.h>
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 #pragma once
@@ -27,10 +29,13 @@ namespace OpenDDS {
 namespace DCPS {
 
 class DataReaderImpl;
-class ReceivedDataElement;
+typedef RcHandle<DataReaderImpl> DataReaderImpl_rch;
+typedef WeakRcHandle<DataReaderImpl> DataReaderImpl_wrch;
 
 class InstanceState;
 typedef RcHandle<InstanceState> InstanceState_rch;
+
+class ReceivedDataElement;
 
 /**
  * @class InstanceState
@@ -43,9 +48,9 @@ typedef RcHandle<InstanceState> InstanceState_rch;
  * Accessors are provided to query the current value of each of
  * these states.
  */
-class OpenDDS_Dcps_Export InstanceState : public ReactorInterceptor {
+class OpenDDS_Dcps_Export InstanceState : public RcObject {
 public:
-  InstanceState(DataReaderImpl* reader,
+  InstanceState(const DataReaderImpl_rch& reader,
                 ACE_Recursive_Thread_Mutex& lock,
                 DDS::InstanceHandle_t handle);
 
@@ -69,25 +74,28 @@ public:
   /// Access no writers generation count
   size_t no_writers_generation_count() const;
 
+  RepoIdSet::const_iterator writers_begin() const { return writers_.begin(); }
+  RepoIdSet::const_iterator writers_end() const { return writers_.end(); }
+
   /// DISPOSE message received for this instance.
   /// Return flag indicates whether the instance state was changed.
   /// This flag is used by concrete DataReader to determine whether
   /// it should notify listener. If state is not changed, the dispose
   /// message is ignored.
-  bool dispose_was_received(const PublicationId& writer_id);
+  bool dispose_was_received(const GUID_t& writer_id);
 
   /// UNREGISTER message received for this instance.
   /// Return flag indicates whether the instance state was changed.
   /// This flag is used by concrete DataReader to determine whether
   /// it should notify listener. If state is not changed, the unregister
   /// message is ignored.
-  bool unregister_was_received(const PublicationId& writer_id);
+  bool unregister_was_received(const GUID_t& writer_id);
 
   /// Data sample received for this instance.
-  void data_was_received(const PublicationId& writer_id);
+  void data_was_received(const GUID_t& writer_id);
 
   /// LIVELINESS message received for this DataWriter.
-  void lively(const PublicationId& writer_id);
+  void lively(const GUID_t& writer_id);
 
   /// A read or take operation has been performed on this instance.
   void accessed();
@@ -114,22 +122,22 @@ public:
   /// Remove the instance immediately.
   void release();
 
-  /// tell this instance when a DataWriter transitions to NOT_ALIVE
-  void writer_became_dead(const PublicationId& writer_id,
-                          int num_alive_writers,
-                          const ACE_Time_Value& when);
+  /// Returns true if the writer is a writer of this instance.
+  bool writes_instance(const GUID_t& writer_id) const
+  {
+    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, lock_, false);
+    return writers_.count(writer_id);
+  }
 
-  WeakRcHandle<OpenDDS::DCPS::DataReaderImpl> data_reader() const;
+  WeakRcHandle<DataReaderImpl> data_reader() const;
+  void state_updated() const;
 
-  virtual int handle_timeout(const ACE_Time_Value& current_time,
-                             const void* arg);
-
-  void set_owner (const PublicationId& owner);
-  PublicationId& get_owner ();
+  void set_owner (const GUID_t& owner);
+  GUID_t get_owner ();
   bool is_exclusive () const;
   bool registered();
   void registered (bool flag);
-  bool is_last (const PublicationId& pub);
+  bool is_last (const GUID_t& pub);
 
   bool no_writer () const;
 
@@ -138,13 +146,10 @@ public:
   DDS::InstanceHandle_t instance_handle() const { return handle_; }
 
   /// Return string of the name of the current instance state
-  OPENDDS_STRING instance_state_string() const
-  {
-    return instance_state_string(instance_state_);
-  }
+  const char* instance_state_string() const;
 
   /// Return string of the name of the instance state kind passed
-  static OPENDDS_STRING instance_state_string(DDS::InstanceStateKind value);
+  static const char* instance_state_string(DDS::InstanceStateKind value);
 
   /// Return string representation of the instance state mask passed
   static OPENDDS_STRING instance_state_mask_string(DDS::InstanceStateMask mask);
@@ -153,6 +158,7 @@ private:
   bool reactor_is_shut_down() const;
 
   ACE_Recursive_Thread_Mutex& lock_;
+  ACE_Thread_Mutex owner_lock_;
 
   /**
    * Current instance state.
@@ -217,38 +223,15 @@ private:
   DDS::InstanceHandle_t handle_;
 
   RepoIdSet writers_;
-  PublicationId owner_;
+  GUID_t owner_;
   bool exclusive_;
   /// registered with participant so it can be called back as
   /// the owner is updated.
   bool registered_;
 
-  struct CommandBase : Command {
-    explicit CommandBase(InstanceState* instance_state)
-      : instance_state_(instance_state)
-    {}
+  SporadicEvent_rch release_task_;
 
-    InstanceState* instance_state_;
-  };
-
-  struct CancelCommand : CommandBase {
-    explicit CancelCommand(InstanceState* instance_state)
-      : CommandBase(instance_state)
-    {}
-
-    void execute();
-  };
-
-  struct ScheduleCommand : CommandBase {
-    ScheduleCommand(InstanceState* instance_state, const ACE_Time_Value& delay)
-      : CommandBase(instance_state)
-      , delay_(delay)
-    {}
-
-    const ACE_Time_Value delay_;
-    void execute();
-  };
-
+  void do_release();
 };
 
 } // namespace DCPS

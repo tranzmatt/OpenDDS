@@ -1,6 +1,4 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
@@ -8,9 +6,7 @@
 #ifndef OPENDDS_DCPS_DATAREADERCALLBACKS_H
 #define OPENDDS_DCPS_DATAREADERCALLBACKS_H
 
-#include "dds/DCPS/Definitions.h"
-#include "dds/DCPS/DiscoveryListener.h"
-#include "dds/DCPS/RcObject.h"
+#include "EndpointCallbacks.h"
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 #pragma once
@@ -19,12 +15,11 @@
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace OpenDDS {
-
-namespace ICE {
-  class Endpoint;
-}
-
 namespace DCPS {
+
+class DiscoveryListener;
+class WriterIdSeq;
+struct WriterAssociation;
 
 /**
 * @class DataReaderCallbacks
@@ -32,39 +27,33 @@ namespace DCPS {
 * @brief Defines the interface for Discovery callbacks into the DataReader.
 *
 */
-class DataReaderCallbacks
-  : public virtual RcObject {
+class OpenDDS_Dcps_Export DataReaderCallbacks
+  : public EndpointCallbacks {
 public:
 
-  DataReaderCallbacks() {}
+  virtual void set_subscription_id(const GUID_t& guid) = 0;
 
-  virtual ~DataReaderCallbacks() {}
-
-  virtual void add_association(const RepoId& yourId,
-                               const WriterAssociation& writer,
+  virtual void add_association(const WriterAssociation& writer,
                                bool active) = 0;
 
-  virtual void association_complete(const RepoId& remote_id) = 0;
-
   virtual void remove_associations(const WriterIdSeq& writers,
-                                   CORBA::Boolean callback) = 0;
+                                   bool callback) = 0;
 
-  virtual void update_incompatible_qos(const IncompatibleQosStatus& status) = 0;
+  virtual void signal_liveliness(const GUID_t& remote_participant) = 0;
 
-  virtual void signal_liveliness(const RepoId& remote_participant) = 0;
-
-  virtual void register_for_writer(const RepoId& /*participant*/,
-                                   const RepoId& /*readerid*/,
-                                   const RepoId& /*writerid*/,
+  virtual void register_for_writer(const GUID_t& /*participant*/,
+                                   const GUID_t& /*readerid*/,
+                                   const GUID_t& /*writerid*/,
                                    const TransportLocatorSeq& /*locators*/,
                                    DiscoveryListener* /*listener*/) { }
 
-  virtual void unregister_for_writer(const RepoId& /*participant*/,
-                                     const RepoId& /*readerid*/,
-                                     const RepoId& /*writerid*/) { }
-
-  virtual ICE::Endpoint* get_ice_endpoint() = 0;
+  virtual void unregister_for_writer(const GUID_t& /*participant*/,
+                                     const GUID_t& /*readerid*/,
+                                     const GUID_t& /*writerid*/) { }
 };
+
+typedef RcHandle<DataReaderCallbacks> DataReaderCallbacks_rch;
+typedef WeakRcHandle<DataReaderCallbacks> DataReaderCallbacks_wrch;
 
 } // namespace DCPS
 } // namespace OpenDDS

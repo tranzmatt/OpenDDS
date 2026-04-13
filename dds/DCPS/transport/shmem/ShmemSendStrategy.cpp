@@ -25,7 +25,7 @@ ShmemSendStrategy::ShmemSendStrategy(ShmemDataLink* link)
                           make_rch<NullSynchStrategy>())
   , link_(link)
   , current_data_(0)
-  , datalink_control_size_(link->impl().config().datalink_control_size_)
+  , datalink_control_size_(link->config()->datalink_control_size())
 {
 #ifdef OPENDDS_SHMEM_UNIX
   memset(&peer_semaphore_, 0, sizeof(peer_semaphore_));
@@ -41,16 +41,16 @@ ShmemSendStrategy::start_i()
   const size_t n_elems = datalink_control_size_ / sizeof(ShmemData),
     extra = datalink_control_size_ % sizeof(ShmemData);
 
-  void* mem = alloc->calloc(datalink_control_size_);
-  if (mem == 0) {
+  void* mem = 0;
+  if (alloc == 0 || (mem = alloc->calloc(datalink_control_size_)) == 0) {
     VDBG_LVL((LM_ERROR, "(%P|%t) ERROR: ShmemSendStrategy for link %@ failed "
               "to allocate %B bytes for control\n", link_, datalink_control_size_), 0);
     return false;
   }
 
   ShmemData* data = reinterpret_cast<ShmemData*>(mem);
-  data[(extra >= sizeof(int)) ? n_elems : (n_elems - 1)].status_ =
-    SHMEM_DATA_END_OF_ALLOC;
+  const size_t limit = (extra >= sizeof(int)) ? n_elems : (n_elems - 1);
+  data[limit].status_ = ShmemData::EndOfAlloc;
   alloc->bind(bound_name_.c_str(), mem);
 
   ShmemAllocator* peer = link_->peer_allocator();
@@ -101,8 +101,8 @@ ShmemSendStrategy::send_bytes_i(const iovec iov[], int n)
   }
 
   ShmemAllocator* alloc = link_->local_allocator();
-  void* from_pool = alloc->malloc(pool_alloc_size);
-  if (from_pool == 0) {
+  void* from_pool = 0;
+  if (alloc == 0 || (from_pool = alloc->malloc(pool_alloc_size)) == 0) {
     VDBG_LVL((LM_ERROR, "(%P|%t) ERROR: ShmemSendStrategy for link %@ failed "
               "to allocate %B bytes for data\n", link_, pool_alloc_size), 0);
     errno = ENOMEM;
@@ -117,19 +117,24 @@ ShmemSendStrategy::send_bytes_i(const iovec iov[], int n)
   }
 
   void* mem = 0;
-  alloc->find(bound_name_.c_str(), mem);
+  if (-1 == alloc->find(bound_name_.c_str(), mem) || mem == 0) {
+    VDBG_LVL((LM_ERROR, "(%P|%t) ERROR: ShmemSendStrategy for link %@ failed "
+              "to find control segment with bound name %C\n", link_, bound_name_.c_str()), 0);
+    errno = ENOENT;
+    return -1;
+  }
 
-  for (ShmemData* iter = reinterpret_cast<ShmemData*>(mem);
-       iter->status_ != SHMEM_DATA_END_OF_ALLOC; ++iter) {
-    if (iter->status_ == SHMEM_DATA_RECV_DONE) {
-      alloc->free(iter->payload_);
+  for (ShmemData* it = reinterpret_cast<ShmemData*>(mem);
+       it->status_ != ShmemData::EndOfAlloc; ++it) {
+    if (it->status_ == ShmemData::RecvDone) {
+      alloc->free(it->payload_);
       // This will eventually be refcounted so instead of a free(), the previous
       // statement would decrement the refcount and check for 0 before free().
       // See the 'FUTURE' comment above.
-      iter->status_ = SHMEM_DATA_FREE;
+      it->status_ = ShmemData::Free;
       VDBG_LVL((LM_DEBUG, "(%P|%t) ShmemSendStrategy for link %@ "
                 "releasing control block #%d\n", link_,
-                iter - reinterpret_cast<ShmemData*>(mem)), 5);
+                it - reinterpret_cast<ShmemData*>(mem)), 5);
     }
   }
 
@@ -137,8 +142,8 @@ ShmemSendStrategy::send_bytes_i(const iovec iov[], int n)
     current_data_ = reinterpret_cast<ShmemData*>(mem);
   }
 
-  for (ShmemData* start = 0; current_data_->status_ == SHMEM_DATA_IN_USE ||
-         current_data_->status_ == SHMEM_DATA_RECV_DONE; ++current_data_) {
+  for (ShmemData* start = 0; current_data_->status_ == ShmemData::InUse ||
+         current_data_->status_ == ShmemData::RecvDone; ++current_data_) {
     if (!start) {
       start = current_data_;
     } else if (start == current_data_) {
@@ -146,12 +151,12 @@ ShmemSendStrategy::send_bytes_i(const iovec iov[], int n)
                 "space for control\n", link_), 0);
       return -1;
     }
-    if (current_data_[1].status_ == SHMEM_DATA_END_OF_ALLOC) {
+    if (current_data_[1].status_ == ShmemData::EndOfAlloc) {
       current_data_ = reinterpret_cast<ShmemData*>(mem) - 1; // incremented by the for loop
     }
   }
 
-  if (current_data_->status_ == SHMEM_DATA_FREE) {
+  if (current_data_->status_ == ShmemData::Free) {
     VDBG((LM_DEBUG, "(%P|%t) ShmemSendStrategy for link %@ "
           "writing at control block #%d header %@ payload %@ len %B\n",
           link_, current_data_ - reinterpret_cast<ShmemData*>(mem),
@@ -159,7 +164,7 @@ ShmemSendStrategy::send_bytes_i(const iovec iov[], int n)
     std::memcpy(current_data_->transport_header_, iov[0].iov_base,
                 sizeof(current_data_->transport_header_));
     current_data_->payload_ = payload;
-    current_data_->status_ = SHMEM_DATA_IN_USE;
+    current_data_->status_ = ShmemData::InUse;
   } else {
     VDBG_LVL((LM_ERROR, "(%P|%t) ERROR: ShmemSendStrategy for link %@ "
               "failed to find space for control\n", link_), 0);
@@ -168,7 +173,7 @@ ShmemSendStrategy::send_bytes_i(const iovec iov[], int n)
 
   ACE_OS::sema_post(&peer_semaphore_);
 
-  return pool_alloc_size + iov[0].iov_len;
+  return static_cast<ssize_t>(pool_alloc_size + iov[0].iov_len);
 }
 
 void

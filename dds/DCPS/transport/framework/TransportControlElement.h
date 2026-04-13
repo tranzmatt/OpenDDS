@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_TRANSPORTGDCONTROLELEMENT_H
-#define OPENDDS_DCPS_TRANSPORTGDCONTROLELEMENT_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTCONTROLELEMENT_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTCONTROLELEMENT_H
 
 #include "dds/DCPS/dcps_export.h"
 #include "dds/DCPS/GuidUtils.h"
@@ -31,7 +31,8 @@ public:
    * msg_block - chain of ACE_Message_Blocks containing the control
    *             sample held by this queue element, if any.
    */
-  explicit TransportControlElement(Message_Block_Ptr msg_block);
+  explicit TransportControlElement(Message_Block_Ptr msg_block,
+                                   const GUID_t& publication_id = GUID_UNKNOWN);
 
   virtual ~TransportControlElement();
 
@@ -41,7 +42,9 @@ protected:
 
   virtual bool requires_exclusive_packet() const;
 
-  virtual RepoId publication_id() const;
+  virtual GUID_t publication_id() const;
+
+  virtual ACE_Message_Block* duplicate_msg() const;
 
   virtual const ACE_Message_Block* msg() const;
 
@@ -55,6 +58,7 @@ private:
   TransportControlElement(const TransportControlElement&);
   /// The control message.
   Message_Block_Ptr msg_;
+  GUID_t publication_id_;
 };
 
 } // namespace DCPS

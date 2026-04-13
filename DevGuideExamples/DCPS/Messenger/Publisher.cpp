@@ -1,26 +1,25 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-#include <ace/Log_Msg.h>
-
-#include <dds/DdsDcpsInfrastructureC.h>
-#include <dds/DdsDcpsPublicationC.h>
+#include "MessengerTypeSupportImpl.h"
 
 #include <dds/DCPS/Marked_Default_Qos.h>
 #include <dds/DCPS/Service_Participant.h>
 #include <dds/DCPS/WaitSet.h>
+#include <dds/DCPS/StaticIncludes.h>
+#if OPENDDS_DO_MANUAL_STATIC_INCLUDES
+#  include <dds/DCPS/RTPS/RtpsDiscovery.h>
+#  include <dds/DCPS/transport/rtps_udp/RtpsUdp.h>
+#endif
 
-#include "dds/DCPS/StaticIncludes.h"
+#include <dds/DdsDcpsInfrastructureC.h>
+#include <dds/DdsDcpsPublicationC.h>
 
-#include "MessengerTypeSupportImpl.h"
+#include <ace/Log_Msg.h>
 
-
-int
-ACE_TMAIN(int argc, ACE_TCHAR *argv[])
+int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
 {
   try {
     // Initialize DomainParticipantFactory
@@ -38,7 +37,7 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
       ACE_ERROR_RETURN((LM_ERROR,
                         ACE_TEXT("ERROR: %N:%l: main() -")
                         ACE_TEXT(" create_participant failed!\n")),
-                       -1);
+                       1);
     }
 
     // Register TypeSupport (Messenger::Message)
@@ -49,7 +48,7 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
       ACE_ERROR_RETURN((LM_ERROR,
                         ACE_TEXT("ERROR: %N:%l: main() -")
                         ACE_TEXT(" register_type failed!\n")),
-                       -1);
+                       1);
     }
 
     // Create Topic (Movie Discussion List)
@@ -65,7 +64,7 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
       ACE_ERROR_RETURN((LM_ERROR,
                         ACE_TEXT("ERROR: %N:%l: main() -")
                         ACE_TEXT(" create_topic failed!\n")),
-                       -1);
+                       1);
     }
 
     // Create Publisher
@@ -78,7 +77,7 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
       ACE_ERROR_RETURN((LM_ERROR,
                         ACE_TEXT("ERROR: %N:%l: main() -")
                         ACE_TEXT(" create_publisher failed!\n")),
-                       -1);
+                       1);
     }
 
     // Create DataWriter
@@ -92,7 +91,7 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
       ACE_ERROR_RETURN((LM_ERROR,
                         ACE_TEXT("ERROR: %N:%l: main() -")
                         ACE_TEXT(" create_datawriter failed!\n")),
-                       -1);
+                       1);
     }
 
     Messenger::MessageDataWriter_var message_writer =
@@ -102,7 +101,7 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
       ACE_ERROR_RETURN((LM_ERROR,
                         ACE_TEXT("ERROR: %N:%l: main() -")
                         ACE_TEXT(" _narrow failed!\n")),
-                       -1);
+                       1);
     }
 
     // Block until Subscriber is available
@@ -112,13 +111,16 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
     DDS::WaitSet_var ws = new DDS::WaitSet;
     ws->attach_condition(condition);
 
+    ACE_DEBUG((LM_DEBUG,
+               ACE_TEXT("Block until subscriber is available\n")));
+
     while (true) {
       DDS::PublicationMatchedStatus matches;
       if (writer->get_publication_matched_status(matches) != ::DDS::RETCODE_OK) {
         ACE_ERROR_RETURN((LM_ERROR,
                           ACE_TEXT("ERROR: %N:%l: main() -")
                           ACE_TEXT(" get_publication_matched_status failed!\n")),
-                         -1);
+                         1);
       }
 
       if (matches.current_count >= 1) {
@@ -131,9 +133,12 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
         ACE_ERROR_RETURN((LM_ERROR,
                           ACE_TEXT("ERROR: %N:%l: main() -")
                           ACE_TEXT(" wait failed!\n")),
-                         -1);
+                         1);
       }
     }
+
+    ACE_DEBUG((LM_DEBUG,
+               ACE_TEXT("Subscriber is available\n")));
 
     ws->detach_condition(condition);
 
@@ -164,7 +169,7 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
       ACE_ERROR_RETURN((LM_ERROR,
                         ACE_TEXT("ERROR: %N:%l: main() -")
                         ACE_TEXT(" wait_for_acknowledgments failed!\n")),
-                       -1);
+                       1);
     }
 
     // Clean-up!
@@ -175,7 +180,7 @@ ACE_TMAIN(int argc, ACE_TCHAR *argv[])
 
   } catch (const CORBA::Exception& e) {
     e._tao_print_exception("Exception caught in main():");
-    return -1;
+    return 1;
   }
 
   return 0;

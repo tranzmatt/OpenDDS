@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_DR_MONITOR_IMPL_H
-#define OPENDDS_DCPS_DR_MONITOR_IMPL_H
+#ifndef OPENDDS_MONITOR_DRMONITORIMPL_H
+#define OPENDDS_MONITOR_DRMONITORIMPL_H
 
 #include "monitor_export.h"
 #include "dds/DCPS/MonitorFactory.h"
@@ -19,22 +19,22 @@
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace OpenDDS {
-namespace DCPS {
+namespace Monitor {
 
-class DRMonitorImpl : public Monitor {
+class DRMonitorImpl : public DCPS::Monitor {
 public:
-  DRMonitorImpl(DataReaderImpl* dr,
-                   OpenDDS::DCPS::DataReaderReportDataWriter_ptr dr_writer);
+  DRMonitorImpl(DCPS::DataReaderImpl* dr,
+                DataReaderReportDataWriter_ptr dr_writer);
   virtual ~DRMonitorImpl();
   virtual void report();
 
 private:
-  DataReaderImpl* dr_;
-  OpenDDS::DCPS::DataReaderReportDataWriter_var dr_writer_;
+  DCPS::DataReaderImpl* dr_;
+  DataReaderReportDataWriter_var dr_writer_;
 };
 
-} // namespace DCPS
-} // namespace OpenDDS
+}
+}
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
 

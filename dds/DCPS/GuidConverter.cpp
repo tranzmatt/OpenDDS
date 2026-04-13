@@ -1,17 +1,20 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-#include "DCPS/DdsDcps_pch.h" //Only the _pch include should start with DCPS/
+#include <DCPS/DdsDcps_pch.h> // Only the _pch include should start with DCPS/
 
 #include "GuidConverter.h"
-#include "dds/DdsDcpsGuidTypeSupportImpl.h"
 
-#include "ace/ACE.h"
-#include "ace/OS_NS_stdio.h"
+#include <dds/DdsDcpsGuidTypeSupportImpl.h>
+
+#include <ace/ACE.h>
+#include <ace/OS_NS_stdio.h>
+
+#ifdef DDS_HAS_WCHAR
+#  include <sstream>
+#endif
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -25,7 +28,7 @@ GuidConverter::GuidConverter(const GUID_t& guid)
 GuidConverter::~GuidConverter()
 {}
 
-long
+unsigned int
 GuidConverter::checksum() const
 {
   return ACE::crc32(reinterpret_cast<const void*>(&guid_), sizeof(guid_));
@@ -153,7 +156,7 @@ GuidConverter::operator OPENDDS_STRING() const
 {
   OPENDDS_STRING ret(to_string(guid_));
   ret += "(";
-  ret += to_dds_string((unsigned long) checksum(), true);
+  ret += to_dds_string(checksum(), true);
   ret += ")";
   return ret;
 }
@@ -186,7 +189,7 @@ operator<<(std::wostream& os, const GuidConverter& rhs)
 #endif //OPENDDS_SAFETY_PROFILE
 
 OPENDDS_STRING
-GuidConverter::uniqueId() const
+GuidConverter::uniqueParticipantId() const
 {
   char id[64];
   ACE_OS::snprintf(id, sizeof id,

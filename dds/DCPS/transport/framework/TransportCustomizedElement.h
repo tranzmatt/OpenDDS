@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_TRANSPORTCUSTOMIZEDELEMENT_H
-#define OPENDDS_DCPS_TRANSPORTCUSTOMIZEDELEMENT_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTCUSTOMIZEDELEMENT_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_TRANSPORTCUSTOMIZEDELEMENT_H
 
 #include "dds/DCPS/dcps_export.h"
 #include "TransportQueueElement.h"
@@ -23,18 +23,25 @@ class OpenDDS_Dcps_Export TransportCustomizedElement
   : public TransportQueueElement {
 
 public:
-  TransportCustomizedElement(TransportQueueElement* orig,
-                             bool fragment);
+  explicit TransportCustomizedElement(TransportQueueElement* orig);
 
-  virtual RepoId publication_id() const;
-  void set_publication_id(const RepoId& id);
+  void set_fragment(TransportQueueElement* orig);
+
+  virtual GUID_t publication_id() const;
+  void set_publication_id(const GUID_t& id);
+
+  GUID_t subscription_id() const;
+  void set_subscription_id(const GUID_t& id);
+
+  SequenceNumber sequence() const;
+  void set_sequence(const SequenceNumber& value);
+
+  virtual ACE_Message_Block* duplicate_msg() const;
 
   virtual const ACE_Message_Block* msg() const;
   void set_msg(Message_Block_Ptr m);
 
   virtual const ACE_Message_Block* msg_payload() const;
-
-  virtual SequenceNumber sequence() const;
 
   virtual bool owned_by_transport() { return false; }
 
@@ -42,24 +49,25 @@ public:
 
   const TransportSendElement* original_send_element() const;
 
+  virtual bool is_last_fragment() const;
+
 protected:
   virtual void release_element(bool dropped_by_transport);
 
   virtual bool requires_exclusive_packet() const { return exclusive_; }
   void set_requires_exclusive() { exclusive_ = true; }
 
-  void set_fragment() { fragment_ = true; }
-
-
   virtual ~TransportCustomizedElement();
 
+  static const TransportSendElement* find_original_send_element(TransportQueueElement* orig);
 
 private:
-  RepoId subscription_id() const;
-
   TransportQueueElement* orig_;
+  const TransportSendElement* original_send_element_;
   Message_Block_Ptr msg_;
-  RepoId publication_id_;
+  GUID_t publication_id_;
+  GUID_t subscription_id_;
+  SequenceNumber sequence_;
   bool fragment_, exclusive_;
 };
 

@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef REGISTERED_DATA_TYPES_H_
-#define REGISTERED_DATA_TYPES_H_
+#ifndef OPENDDS_DCPS_REGISTERED_DATA_TYPES_H
+#define OPENDDS_DCPS_REGISTERED_DATA_TYPES_H
 
 #include "dcps_export.h"
 #include "dds/DdsDcpsDomainC.h"
@@ -81,7 +81,7 @@ private:
   ParticipantMap participants_;
 };
 
-#define Registered_Data_Types Data_Types_Register::instance()
+#define Registered_Data_Types OpenDDS::DCPS::Data_Types_Register::instance()
 
 } // namespace DCPS
 } // namespace OpenDDS

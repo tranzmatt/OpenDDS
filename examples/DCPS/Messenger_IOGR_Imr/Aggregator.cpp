@@ -78,7 +78,7 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[])
   return 0;
 }
 
-Aggregator::Aggregator (void)
+Aggregator::Aggregator ()
   :orb_ (0),
    merged_set_ (0)
 {
@@ -187,8 +187,8 @@ Aggregator::run ()
     }
   catch (const CORBA::Exception&)
     {
-      ACE_ERROR_RETURN ((LM_DEBUG,
-                         "Error in run \n"),
+      ACE_ERROR_RETURN ((LM_ERROR,
+                         "(%P|%t) ERROR: Error in run\n"),
                         -1);
     }
 
@@ -196,7 +196,7 @@ Aggregator::run ()
 }
 
 int
-Aggregator::write_to_file (void)
+Aggregator::write_to_file ()
 {
   //
   CORBA::String_var iorref =
@@ -207,7 +207,7 @@ Aggregator::write_to_file (void)
       FILE *output_file= ACE_OS::fopen (ior_output_file, ACE_TEXT("w"));
       if (output_file == 0)
         ACE_ERROR_RETURN ((LM_ERROR,
-                           "Cannot open output file for writing IOR: %s",
+                           "(%P|%t) ERROR: Cannot open output file for writing IOR: %s",
                            ior_output_file),
                           1);
       ACE_OS::fprintf (output_file, "%s", iorref.in ());
@@ -218,7 +218,7 @@ Aggregator::write_to_file (void)
 }
 
 CORBA::ORB_ptr
-Aggregator::orb (void)
+Aggregator::orb ()
 {
   return this->orb_.in ();
 }

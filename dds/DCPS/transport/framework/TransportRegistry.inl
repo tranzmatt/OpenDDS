@@ -62,23 +62,50 @@ ACE_INLINE
 void
 TransportRegistry::remove_inst(const TransportInst_rch& inst)
 {
-  GuardType guard(this->lock_);
-  InstMap::iterator iter = inst_map_.find(inst->name());
-  if (iter == inst_map_.end()) {
-    return;
+  remove_inst(inst->name());
+}
+
+ACE_INLINE
+void
+TransportRegistry::remove_inst(const OPENDDS_STRING& inst_name)
+{
+  TransportInst_rch inst;
+  {
+    GuardType guard(this->lock_);
+    InstMap::iterator iter = inst_map_.find(inst_name);
+    if (iter == inst_map_.end()) {
+      return;
+    }
+    inst = iter->second;
+    inst_map_.erase(iter);
   }
-  if (iter->second) {
-    iter->second->shutdown();
+
+  if (inst) {
+    inst->shutdown();
   }
-  this->inst_map_.erase(iter);
 }
 
 ACE_INLINE
 void
 TransportRegistry::remove_config(const TransportConfig_rch& cfg)
 {
+  remove_config(cfg->name());
+}
+
+ACE_INLINE
+void
+TransportRegistry::remove_config(const OPENDDS_STRING& config_name)
+{
   GuardType guard(this->lock_);
-  this->config_map_.erase(cfg->name());
+
+  String real_name = config_name;
+
+  AliasMap::const_iterator pos = alias_map_.find(real_name);
+  if (pos != alias_map_.end()) {
+    real_name = pos->second;
+  }
+
+  config_map_.erase(real_name);
 }
 
 ACE_INLINE

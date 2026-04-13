@@ -8,8 +8,8 @@
  * OpenSSL 1.0, as it was written to use OpenSSL 1.1.
  */
 
-#ifndef OPENSSL_LEGACY_H
-#define OPENSSL_LEGACY_H
+#ifndef OPENDDS_DCPS_SECURITY_OPENSSL_LEGACY_H
+#define OPENDDS_DCPS_SECURITY_OPENSSL_LEGACY_H
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 
@@ -34,6 +34,10 @@ inline void DH_get0_key(const DH* dh, const BIGNUM** pub_key, const BIGNUM** pri
   }
 }
 
+#elif OPENSSL_VERSION_NUMBER < 0x30000000L
+#define OPENSSL_V_1_1
+#else
+#define OPENSSL_V_3_0
 #endif // OPENSSL_VERSION_NUMBER < 0x10100000L
 
 #endif

@@ -1,6 +1,4 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
@@ -8,41 +6,45 @@
 #ifndef OPENDDS_DCPS_DOMAIN_PARTICIPANT_IMPL_H
 #define OPENDDS_DCPS_DOMAIN_PARTICIPANT_IMPL_H
 
-#include "dds/DdsDcpsPublicationC.h"
-#include "dds/DdsDcpsSubscriptionExtC.h"
-#include "dds/DdsDcpsTopicC.h"
-#include "dds/DdsDcpsDomainC.h"
-#include "dds/DdsDcpsInfoUtilsC.h"
-#include "dds/DCPS/GuidUtils.h"
-#include "dds/DdsDcpsInfrastructureC.h"
-
-#if !defined (DDS_HAS_MINIMUM_BIT)
-#include "dds/DdsDcpsCoreTypeSupportC.h"
-#endif // !defined (DDS_HAS_MINIMUM_BIT)
-
-#include "EntityImpl.h"
+#include "ConditionVariable.h"
 #include "Definitions.h"
-#include "TopicImpl.h"
+#include "DisjointSequence.h"
+#include "EntityImpl.h"
+#include "GuidBuilder.h"
+#include "GuidUtils.h"
 #include "InstanceHandle.h"
 #include "OwnershipManager.h"
-#include "GuidBuilder.h"
-
-#include "dds/DCPS/transport/framework/TransportImpl_rch.h"
-
-#include "dds/DCPS/PoolAllocator.h"
-
+#include "PoolAllocator.h"
 #include "Recorder.h"
 #include "Replayer.h"
+#include "SporadicEvent.h"
+#include "TimeTypes.h"
+#include "TopicImpl.h"
 
-#include "dds/DCPS/security/framework/SecurityConfig_rch.h"
+#include "XTypes/TypeLookupService.h"
 
-#include "ace/Null_Mutex.h"
-#include "ace/Condition_Thread_Mutex.h"
-#include "ace/Recursive_Thread_Mutex.h"
+#include "transport/framework/TransportImpl_rch.h"
 
-#if !defined (ACE_LACKS_PRAGMA_ONCE)
-#pragma once
-#endif /* ACE_LACKS_PRAGMA_ONCE */
+#include "security/framework/SecurityConfig_rch.h"
+
+#include <dds/DdsDcpsPublicationC.h>
+#include <dds/DdsDcpsSubscriptionExtC.h>
+#include <dds/DdsDcpsTopicC.h>
+#include <dds/DdsDcpsDomainC.h>
+#include <dds/DdsDcpsInfoUtilsC.h>
+#include <dds/DdsDcpsInfrastructureC.h>
+#include <dds/DdsDynamicDataC.h>
+#ifndef DDS_HAS_MINIMUM_BIT
+#  include <dds/DdsDcpsCoreTypeSupportC.h>
+#endif
+
+#include <ace/Null_Mutex.h>
+#include <ace/Thread_Mutex.h>
+#include <ace/Recursive_Thread_Mutex.h>
+
+#ifndef ACE_LACKS_PRAGMA_ONCE
+#  pragma once
+#endif
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -54,7 +56,7 @@ class SubscriberImpl;
 class DataWriterImpl;
 class DomainParticipantFactoryImpl;
 class Monitor;
-
+class BitSubscriber;
 
 class RecorderImpl;
 class ReplayerImpl;
@@ -72,7 +74,7 @@ class FilterEvaluator;
  * for publisher, subscriber and topic. It also acts as a container
  * for the publisher, subscriber and topic objects.
  *
- * See the DDS specification, OMG formal/04-12-02, for a description of
+ * See the DDS specification, OMG formal/2015-04-10, for a description of
  * the interface this class is implementing.
  */
 class OpenDDS_Dcps_Export DomainParticipantImpl
@@ -95,10 +97,10 @@ public:
 
   class OpenDDS_Dcps_Export RepoIdSequence {
   public:
-    explicit RepoIdSequence(const RepoId& base);
-    RepoId next();
+    explicit RepoIdSequence(const GUID_t& base);
+    GUID_t next();
   private:
-    RepoId base_;          // will be combined with serial to produce next
+    GUID_t base_;          // will be combined with serial to produce next
     long serial_;          // will be incremented each time
     GuidBuilder builder_;  // used to modify base
   };
@@ -121,14 +123,13 @@ public:
     CORBA::ULong client_refs_;
   };
 
-  typedef OPENDDS_MAP(OPENDDS_STRING, RefCounted_Topic) TopicMap;
+  typedef OPENDDS_MULTIMAP(OPENDDS_STRING, RefCounted_Topic) TopicMap;
+  typedef TopicMap::iterator TopicMapIterator;
+  typedef std::pair<TopicMapIterator, TopicMapIterator> TopicMapIteratorPair;
 
   typedef OPENDDS_MAP(OPENDDS_STRING, DDS::TopicDescription_var) TopicDescriptionMap;
 
-  typedef OPENDDS_MAP_CMP(RepoId, DDS::InstanceHandle_t, GUID_tKeyLessThan) HandleMap;
-  typedef OPENDDS_MAP(DDS::InstanceHandle_t, RepoId) RepoIdMap;
-
-  DomainParticipantImpl(DomainParticipantFactoryImpl *     factory,
+  DomainParticipantImpl(InstanceHandleGenerator&           handle_generator,
                         const DDS::DomainId_t&             domain_id,
                         const DDS::DomainParticipantQos &  qos,
                         DDS::DomainParticipantListener_ptr a_listener,
@@ -155,6 +156,8 @@ public:
     DDS::Subscriber_ptr s);
 
   virtual DDS::Subscriber_ptr get_builtin_subscriber();
+
+  RcHandle<DCPS::BitSubscriber> get_builtin_subscriber_proxy();
 
   virtual DDS::Topic_ptr create_topic(
     const char *           topic_name,
@@ -255,8 +258,10 @@ public:
   virtual DDS::ReturnCode_t get_default_topic_qos(
     DDS::TopicQos & qos);
 
-  virtual DDS::ReturnCode_t get_current_time(
-    DDS::Time_t & current_time);
+  /**
+   * Set Argument to Current System Time
+   */
+  virtual DDS::ReturnCode_t get_current_time(DDS::Time_t& current_time);
 
 #if !defined (DDS_HAS_MINIMUM_BIT)
 
@@ -284,7 +289,7 @@ public:
   /**
    *  Return the id given by discovery.
    */
-  RepoId get_id();
+  GUID_t get_id() const;
 
   /**
    * Return a unique string based on repo ID.
@@ -292,20 +297,48 @@ public:
   OPENDDS_STRING get_unique_id();
 
   /**
-   * Obtain a local handle representing a GUID.
+   * Assign an instance handle, optionally representing a GUID.
+   * If a GUID is provided (not GUID_UNKNOWN), other calls to assign_handle
+   * for this GUID will return the same handle, as will subsequent calls to
+   * lookup_handle.
+   *
+   * If this method returns a valid (non-HANDLE_NIL) handle, it must be
+   * returned by calling return_handle.
    */
-  DDS::InstanceHandle_t id_to_handle(const RepoId& id);
+  DDS::InstanceHandle_t assign_handle(const GUID_t& id = GUID_UNKNOWN);
+
+  /**
+   * Get a handle that was previously mapped to a GUID or HANDLE_NIL if none exists.
+   *
+   * Handles returned from this method should not be passed to return_handle.
+   */
+  DDS::InstanceHandle_t lookup_handle(const GUID_t& id) const;
+
+  /**
+   * Similar to lookup_handle in that it will return a previously mapped handle,
+   * but will coorindate with assign_handle when a desired handle has not yet
+   * been mapped, but is expected to be. The optional max_wait argument can be
+   * supplied to limit the time spent waiting for a handle. If the wait times out,
+   * a value of HANDLE_NIL is returned.
+   */
+  DDS::InstanceHandle_t await_handle(const GUID_t& id, TimeDuration max_wait = TimeDuration::zero_value) const;
+
+  /**
+   * Return a previously-assigned handle.
+   */
+  void return_handle(DDS::InstanceHandle_t handle);
 
   /**
    * Obtain a GUID representing a local hande.
    * @return GUID_UNKNOWN if not found.
    */
-  RepoId get_repoid(const DDS::InstanceHandle_t& id);
+  GUID_t get_repoid(DDS::InstanceHandle_t id) const;
 
   /**
-   *  Check if the topic is used by any datareader or datawriter.
+   * Check to see if the Participant has any entities left in it.
+   * leftover_entities will be set with a description of what is left.
    */
-  bool is_clean() const;
+  bool is_clean(String* leftover_entities = 0) const;
 
   /**
    * This is used to retrieve the listener for a certain status change.
@@ -315,9 +348,9 @@ public:
    */
   DDS::DomainParticipantListener_ptr listener_for(DDS::StatusKind kind);
 
-  typedef OPENDDS_VECTOR(RepoId) TopicIdVec;
+  typedef OPENDDS_VECTOR(GUID_t) TopicIdVec;
   /**
-   * Populates an std::vector with the RepoId of the topics this
+   * Populates an std::vector with the GUID_t of the topics this
    * participant has created/found.
    */
   void get_topic_ids(TopicIdVec& topics);
@@ -333,7 +366,7 @@ public:
    * Called upon receiving new BIT publication data to
    * update the ownership strength of a publication.
    */
-  void update_ownership_strength(const PublicationId& pub_id,
+  void update_ownership_strength(const GUID_t& pub_id,
                                  const CORBA::Long&   ownership_strength);
 
 #endif
@@ -369,27 +402,43 @@ public:
   void add_adjust_liveliness_timers(DataWriterImpl* writer);
   void remove_adjust_liveliness_timers();
 
-#if defined(OPENDDS_SECURITY)
-  void set_security_config(const Security::SecurityConfig_rch& config);
+  XTypes::TypeLookupService_rch get_type_lookup_service() { return type_lookup_service_; }
 
+#if OPENDDS_CONFIG_SECURITY
+  Security::SecurityConfig_rch get_security_config() const
+  {
+    return security_config_;
+  }
+  DDS::Security::PermissionsHandle permissions_handle() const
+  {
+    return perm_handle_;
+  }
   DDS::Security::ParticipantCryptoHandle crypto_handle() const
   {
     return part_crypto_handle_;
   }
 #endif
 
-private:
+  bool prepare_to_delete_datawriters();
+  bool set_wait_pending_deadline(const MonotonicTimePoint& deadline);
 
+#ifndef OPENDDS_SAFETY_PROFILE
+  DDS::ReturnCode_t get_dynamic_type(
+    DDS::DynamicType_var& type, const DDS::BuiltinTopicKey_t& key);
+#endif
+
+private:
   bool validate_publisher_qos(DDS::PublisherQos & publisher_qos);
   bool validate_subscriber_qos(DDS::SubscriberQos & subscriber_qos);
 
   /** The implementation of create_topic.
    */
 
-  enum {
-    TOPIC_TYPE_HAS_KEYS =1,
-    TOPIC_TYPELESS = 2
-  } TopicTypeMask;
+  ///{@
+  /// constants for the topic_mask argument to create_topic_i
+  static const int TOPIC_TYPE_HAS_KEYS = 1;
+  static const int TOPIC_TYPELESS = 2;
+  ///@}
 
   DDS::Topic_ptr create_topic_i(
     const char *           topic_name,
@@ -414,7 +463,6 @@ private:
     DDS::Topic_ptr a_topic,
     bool           remove_objref);
 
-  DomainParticipantFactoryImpl* factory_;
   /// The default topic qos.
   DDS::TopicQos default_topic_qos_;
   /// The default publisher qos.
@@ -424,13 +472,15 @@ private:
 
   /// The qos of this DomainParticipant.
   DDS::DomainParticipantQos qos_;
+  /// Mutex to protect listener info
+  ACE_Thread_Mutex listener_mutex_;
   /// Used to notify the entity for relevant events.
   DDS::DomainParticipantListener_var listener_;
   /// The StatusKind bit mask indicates which status condition change
   /// can be notified by the listener of this entity.
   DDS::StatusMask listener_mask_;
 
-  #if defined(OPENDDS_SECURITY)
+  #if OPENDDS_CONFIG_SECURITY
   /// This participant id handle given by authentication.
   DDS::Security::IdentityHandle id_handle_;
   /// This participant permissions handle given by access constrol.
@@ -442,7 +492,7 @@ private:
   /// The id of the domain that creates this participant.
   const DDS::DomainId_t domain_id_;
   /// This participant id given by discovery.
-  RepoId dp_id_;
+  GUID_t dp_id_;
 
   /// Whether this DomainParticipant is attached to a federated
   /// repository.
@@ -458,9 +508,18 @@ private:
   /// Collection of TopicDescriptions which are not also Topics
   TopicDescriptionMap topic_descrs_;
 #endif
-  /// Bidirectional collection of handles <--> RepoIds.
-  HandleMap handles_;
+
+  typedef std::pair<DDS::InstanceHandle_t, unsigned int> HandleWithCounter;
+  typedef OPENDDS_MAP_CMP(GUID_t, HandleWithCounter, GUID_tKeyLessThan) CountedHandleMap;
+  typedef OPENDDS_MAP(DDS::InstanceHandle_t, GUID_t) RepoIdMap;
+
+  /// Instance handles assigned which are mapped to GUIDs (use handle_protector_)
+  CountedHandleMap handles_;
+  /// By-handle lookup of instance handles assigned to GUIDs (use handle_protector_)
   RepoIdMap repoIds_;
+
+  typedef OPENDDS_MAP_CMP(GUID_t, DDS::InstanceHandle_t, GUID_tKeyLessThan) HandleMap;
+
   /// Collection of ignored participants.
   HandleMap ignored_participants_;
   /// Collection of ignored topics.
@@ -472,21 +531,20 @@ private:
   /// Protect the topic collection.
   ACE_Recursive_Thread_Mutex topics_protector_;
   /// Protect the handle collection.
-  ACE_Recursive_Thread_Mutex handle_protector_;
-  /// Protect the shutdown.
-  ACE_Thread_Mutex shutdown_mutex_;
-  ACE_Condition<ACE_Thread_Mutex> shutdown_condition_;
-  DDS::ReturnCode_t shutdown_result_;
-  bool shutdown_complete_;
+  mutable ACE_Thread_Mutex handle_protector_;
+
+  mutable ConditionVariable<ACE_Thread_Mutex> handle_waiters_;
 
   /// The built in topic subscriber.
-  DDS::Subscriber_var bit_subscriber_;
+  RcHandle<BitSubscriber> bit_subscriber_;
 
-  /// Instance handle generators for non-repo backed entities
-  /// (i.e. subscribers and publishers).
-  InstanceHandleGenerator participant_handles_;
+  /// Get instances handles from DomainParticipantFactory (use handle_protector_)
+  InstanceHandleGenerator& participant_handles_;
 
-  Monitor* monitor_;
+  /// Keep track of handles that can be reused (use handle_protector_)
+  DisjointSequence::OrderedRanges<DDS::InstanceHandle_t> reusable_handles_;
+
+  unique_ptr<Monitor> monitor_;
 
 #ifndef OPENDDS_NO_OWNERSHIP_KIND_EXCLUSIVE
   OwnershipManager owner_man_;
@@ -494,7 +552,6 @@ private:
 
   /// Publisher ID generator.
   RepoIdSequence pub_id_gen_;
-  RepoId nextPubId();
 
 #ifndef OPENDDS_NO_CONTENT_SUBSCRIPTION_PROFILE
   ACE_Thread_Mutex filter_cache_lock_;
@@ -507,7 +564,7 @@ private:
   RecorderSet recorders_;
   ReplayerSet replayers_;
 
-#if defined(OPENDDS_SECURITY)
+#if OPENDDS_CONFIG_SECURITY
   Security::SecurityConfig_rch security_config_;
 #endif
 
@@ -516,25 +573,28 @@ private:
   /// Protect the replayers collection.
   ACE_Recursive_Thread_Mutex replayers_protector_;
 
-  class LivelinessTimer : public ACE_Event_Handler {
+  class LivelinessTimer : public RcObject {
   public:
     LivelinessTimer(DomainParticipantImpl& impl, DDS::LivelinessQosPolicyKind kind);
     virtual ~LivelinessTimer();
     void add_adjust(OpenDDS::DCPS::DataWriterImpl* writer);
     void remove_adjust();
-    int handle_timeout(const ACE_Time_Value &tv, const void * /* arg */);
-    virtual void dispatch(const ACE_Time_Value& tv) = 0;
+    void execute(const MonotonicTimePoint& now);
+    virtual void dispatch(const MonotonicTimePoint& tv) = 0;
+    virtual void cancel() = 0;
 
   protected:
     DomainParticipantImpl& impl_;
     const DDS::LivelinessQosPolicyKind kind_;
 
-    ACE_Time_Value interval () const { return interval_; }
+    TimeDuration interval () const { return interval_; }
+
+    virtual void schedule(const TimeDuration& interval) = 0;
 
   private:
-    ACE_Time_Value interval_;
+    TimeDuration interval_;
     bool recalculate_interval_;
-    ACE_Time_Value last_liveliness_check_;
+    MonotonicTimePoint last_liveliness_check_;
     bool scheduled_;
     ACE_Thread_Mutex lock_;
   };
@@ -542,24 +602,76 @@ private:
   class AutomaticLivelinessTimer : public LivelinessTimer {
   public:
     AutomaticLivelinessTimer(DomainParticipantImpl& impl);
-    virtual void dispatch(const ACE_Time_Value& tv);
+    virtual void dispatch(const MonotonicTimePoint& tv);
+
+    void cancel()
+    {
+      impl_.automatic_liveliness_task_->cancel();
+    }
+
+  private:
+    void schedule(const TimeDuration& interval)
+    {
+      impl_.automatic_liveliness_task_->schedule(interval);
+    }
   };
-  AutomaticLivelinessTimer automatic_liveliness_timer_;
+  RcHandle<AutomaticLivelinessTimer> automatic_liveliness_timer_;
+  typedef PmfNowEvent<AutomaticLivelinessTimer> AutomaticLivelinessTimerEvent;
+  SporadicEvent_rch automatic_liveliness_task_;
 
   class ParticipantLivelinessTimer : public LivelinessTimer {
   public:
     ParticipantLivelinessTimer(DomainParticipantImpl& impl);
-    virtual void dispatch(const ACE_Time_Value& tv);
-  };
-  ParticipantLivelinessTimer participant_liveliness_timer_;
+    virtual void dispatch(const MonotonicTimePoint& tv);
 
-  ACE_Time_Value liveliness_check_interval(DDS::LivelinessQosPolicyKind kind);
-  bool participant_liveliness_activity_after(const ACE_Time_Value& tv);
+    void cancel()
+    {
+      impl_.participant_liveliness_task_->cancel();
+    }
+
+  private:
+    void schedule(const TimeDuration& interval)
+    {
+      impl_.participant_liveliness_task_->schedule(interval);
+    }
+  };
+  RcHandle<ParticipantLivelinessTimer> participant_liveliness_timer_;
+  typedef PmfNowEvent<ParticipantLivelinessTimer> ParticipantLivelinessTimerEvent;
+  SporadicEvent_rch participant_liveliness_task_;
+
+  TimeDuration liveliness_check_interval(DDS::LivelinessQosPolicyKind kind);
+  bool participant_liveliness_activity_after(const MonotonicTimePoint& tv);
   void signal_liveliness(DDS::LivelinessQosPolicyKind kind);
 
-  ACE_Time_Value last_liveliness_activity_;
+  MonotonicTimePoint last_liveliness_activity_;
 
-  virtual int handle_exception(ACE_HANDLE fd);
+  class ShutdownHandler : public ReactorTask::Command {
+  public:
+    ShutdownHandler(RcHandle<DomainParticipantImpl> dpi)
+      : dpi_(dpi)
+      , shutdown_condition_(shutdown_mutex_)
+      , shutdown_result_(DDS::RETCODE_OK)
+      , shutdown_complete_(false)
+    {}
+
+    void execute(ReactorWrapper& reactor_wrapper);
+    void wait();
+    DDS::ReturnCode_t shutdown_result() const
+    {
+      ACE_Guard<ACE_Thread_Mutex> guard(shutdown_mutex_);
+      return shutdown_result_;
+    }
+
+  private:
+    WeakRcHandle<DomainParticipantImpl> dpi_;
+    /// Protect the shutdown.
+    mutable ACE_Thread_Mutex shutdown_mutex_;
+    ConditionVariable<ACE_Thread_Mutex> shutdown_condition_;
+    DDS::ReturnCode_t shutdown_result_;
+    bool shutdown_complete_;
+  };
+
+  XTypes::TypeLookupService_rch type_lookup_service_;
 };
 
 } // namespace DCPS

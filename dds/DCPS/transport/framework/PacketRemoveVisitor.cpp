@@ -8,7 +8,8 @@
 #include "DCPS/DdsDcps_pch.h" //Only the _pch include should start with DCPS/
 #include "PacketRemoveVisitor.h"
 #include "TransportRetainedElement.h"
-#include "ace/Message_Block.h"
+
+#include <ace/Message_Block.h>
 
 #if !defined (__ACE_INLINE__)
 #include "PacketRemoveVisitor.inl"
@@ -24,7 +25,8 @@ PacketRemoveVisitor::PacketRemoveVisitor(
   ACE_Message_Block*& unsent_head_block,
   ACE_Message_Block* header_block,
   MessageBlockAllocator& mb_allocator,
-  DataBlockAllocator& db_allocator)
+  DataBlockAllocator& db_allocator,
+  bool remove_all)
   : match_(match)
   , head_(unsent_head_block)
   , header_block_(header_block)
@@ -33,6 +35,7 @@ PacketRemoveVisitor::PacketRemoveVisitor(
   , previous_block_(0)
   , replaced_element_mb_allocator_(mb_allocator)
   , replaced_element_db_allocator_(db_allocator)
+  , remove_all_(remove_all)
 {
   DBG_ENTRY_LVL("PacketRemoveVisitor", "PacketRemoveVisitor", 6);
 }
@@ -53,6 +56,11 @@ PacketRemoveVisitor::visit_element_ref(TransportQueueElement*& element)
   VDBG((LM_DEBUG, "(%P|%t) DBG:   "
         "The element is [%0x]\n",
         element));
+
+  if (element->is_retained_replaced()) {
+    status_ = REMOVE_FOUND;
+    return 0;
+  }
 
   // These is the head of the chain of "source" blocks from the element
   // currently being visited.
@@ -310,7 +318,7 @@ PacketRemoveVisitor::visit_element_ref(TransportQueueElement*& element)
     }
 
     // Finally!At this point we have broken the unsent packet chain of
-    // blocks into three seperate chains:
+    // blocks into three separate chains:
     //
     //   (1) this->previous_block_ is either 0, or it points to the block
     //       (from the unsent packet chain) that immediately preceded the
@@ -397,7 +405,7 @@ PacketRemoveVisitor::visit_element_ref(TransportQueueElement*& element)
     // to match the block at the front of the original_blocks chain -
     // with respect to the difference between the rd_ptr() setting and
     // the base() setting.
-    size_t rd_offset = original_blocks->rd_ptr() - original_blocks->base();
+    size_t rd_offset = static_cast<size_t>(original_blocks->rd_ptr() - original_blocks->base());
 
     if (rd_offset > 0) {
       VDBG((LM_DEBUG, "(%P|%t) DBG:   "
@@ -447,7 +455,8 @@ PacketRemoveVisitor::visit_element_ref(TransportQueueElement*& element)
           "Release the original_blocks.\n"));
 
     // Release the chain of original blocks.
-    original_blocks->release();
+    Message_Block_Deleter deleter;
+    deleter(original_blocks);
 
     VDBG((LM_DEBUG, "(%P|%t) DBG:   "
           "Tell original element that data_dropped().\n"));
@@ -461,7 +470,7 @@ PacketRemoveVisitor::visit_element_ref(TransportQueueElement*& element)
     // is retained sample and no callback is made to writer.
     this->status_ = orig_elem->data_dropped() ? REMOVE_RELEASED : REMOVE_FOUND;
 
-    if (this->status_ == REMOVE_RELEASED || this->match_.unique()) {
+    if ((!remove_all_ && status_ == REMOVE_RELEASED) || match_.unique()) {
       VDBG((LM_DEBUG, "(%P|%t) DBG:   "
             "Return 0 to halt visitation.\n"));
       // Replace a single sample if one is specified, otherwise visit the

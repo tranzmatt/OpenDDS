@@ -5,7 +5,6 @@
  * See: http://www.opendds.org/license.html
  */
 
-#include "Tcp_pch.h"
 #include "TcpDataLink.h"
 #include "TcpReceiveStrategy.h"
 #include "TcpInst.h"
@@ -21,18 +20,23 @@
 #include "TcpDataLink.inl"
 #endif /* __ACE_INLINE__ */
 
+namespace {
+  using OpenDDS::DCPS::Encoding;
+  const Encoding encoding_unaligned_native(Encoding::KIND_UNALIGNED_CDR);
+}
+
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 OpenDDS::DCPS::TcpDataLink::TcpDataLink(
+  const OpenDDS::DCPS::TcpTransport_rch& transport_impl,
   const ACE_INET_Addr& remote_address,
-  OpenDDS::DCPS::TcpTransport&  transport_impl,
   Priority priority,
-  bool        is_loopback,
-  bool        is_active)
-  : DataLink(transport_impl, priority, is_loopback, is_active),
-    remote_address_(remote_address),
-    graceful_disconnect_sent_(false),
-    release_is_pending_(false)
+  bool is_loopback,
+  bool is_active)
+  : DataLink(transport_impl, priority, is_loopback, is_active)
+  , remote_address_(remote_address)
+  , graceful_disconnect_sent_(false)
+  , release_is_pending_(false)
 {
   DBG_ENTRY_LVL("TcpDataLink","TcpDataLink",6);
 }
@@ -61,15 +65,54 @@ OpenDDS::DCPS::TcpDataLink::stop_i()
 }
 
 void
+OpenDDS::DCPS::TcpDataLink::send_i(TransportQueueElement* element, bool relink)
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(stopped_clients_mutex_);
+  if (stopped_clients_.count(element->publication_id())) {
+    element->data_dropped(true);
+  } else {
+    DCPS::DataLink::send_i(element, relink);
+  }
+}
+
+void
+OpenDDS::DCPS::TcpDataLink::send_stop_i(GUID_t repoId)
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(stopped_clients_mutex_);
+  if (!stopped_clients_.count(repoId)) {
+    DCPS::DataLink::send_stop_i(repoId);
+  }
+}
+
+bool
+OpenDDS::DCPS::TcpDataLink::check_active_client(const GUID_t& local_id)
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(stopped_clients_mutex_);
+  return stopped_clients_.count(local_id) == 0;
+}
+
+void
+OpenDDS::DCPS::TcpDataLink::client_stop(const GUID_t& local_id)
+{
+  ACE_Guard<ACE_Thread_Mutex> guard(stopped_clients_mutex_);
+  stopped_clients_.insert(local_id);
+
+  TcpSendStrategy_rch strategy = send_strategy();
+  if (strategy) {
+    strategy->remove_all_msgs(local_id);
+  }
+}
+
+void
 OpenDDS::DCPS::TcpDataLink::pre_stop_i()
 {
   DBG_ENTRY_LVL("TcpDataLink","pre_stop_i",6);
 
   DataLink::pre_stop_i();
 
-  TcpReceiveStrategy_rch rs = this->receive_strategy();
+  TcpReceiveStrategy_rch rs = receive_strategy();
 
-  TcpConnection_rch connection(this->connection_.lock());
+  TcpConnection_rch connection(connection_.lock());
 
   if (rs) {
     // If we received the GRACEFUL_DISCONNECT message from peer before we
@@ -77,10 +120,9 @@ OpenDDS::DCPS::TcpDataLink::pre_stop_i()
     // the GRACEFUL_DISCONNECT message to the peer.
     bool disconnected = rs->gracefully_disconnected();
 
-    if (connection && !this->graceful_disconnect_sent_
-        && !disconnected && !this->impl().is_shut_down()) {
-      this->send_graceful_disconnect_message();
-      this->graceful_disconnect_sent_ = true;
+    if (connection && !graceful_disconnect_sent_ && !disconnected) {
+      graceful_disconnect_sent_ = true;
+      send_graceful_disconnect_message();
     }
   }
 
@@ -100,7 +142,10 @@ OpenDDS::DCPS::TcpDataLink::connect(
 {
   DBG_ENTRY_LVL("TcpDataLink","connect",6);
 
-  this->connection_ = connection;
+  {
+    GuardType guard(strategy_lock_);
+    this->connection_ = connection;
+  }
 
   if (connection->peer().enable(ACE_NONBLOCK) == -1) {
     ACE_ERROR_RETURN((LM_ERROR,
@@ -196,7 +241,7 @@ OpenDDS::DCPS::TcpDataLink::reconnect(const TcpConnection_rch& connection)
 {
   DBG_ENTRY_LVL("TcpDataLink","reconnect",6);
 
-  TcpConnection_rch existing_connection(this->connection_.lock());
+  TcpConnection_rch existing_connection(connection_.lock());
   // Sanity check - the connection should exist already since we are reconnecting.
   if (!existing_connection) {
     VDBG_LVL((LM_ERROR,
@@ -208,42 +253,44 @@ OpenDDS::DCPS::TcpDataLink::reconnect(const TcpConnection_rch& connection)
   existing_connection->transfer(connection.in());
 
   bool released = false;
-  TransportStrategy_rch brs;
-  TransportSendStrategy_rch bss;
+  TcpReceiveStrategy_rch trs;
+  TcpSendStrategy_rch tss;
 
   {
-    GuardType guard2(this->strategy_lock_);
+    GuardType strategy_guard(strategy_lock_);
 
-    if (this->receive_strategy_.is_nil() && this->send_strategy_.is_nil()) {
+    trs = dynamic_rchandle_cast<TcpReceiveStrategy>(receive_strategy_);
+    tss = dynamic_rchandle_cast<TcpSendStrategy>(send_strategy_);
+
+    if (!trs || !tss) {
+      // if either are invalid, both should be
+      receive_strategy_.reset();
+      send_strategy_.reset();
       released = true;
-
-    } else {
-      brs = this->receive_strategy_;
-      bss = this->send_strategy_;
     }
   }
 
   if (released) {
-    int result = static_cast<TcpTransport&>(impl()).connect_tcp_datalink(*this, connection);
-    if (result == 0) {
-      do_association_actions();
+    RcHandle<TcpTransport> transport = dynamic_rchandle_cast<TcpTransport>(impl());
+    if (transport) {
+      const int result = transport->connect_tcp_datalink(*this, connection);
+      if (result == 0) {
+        do_association_actions();
+      }
+      return result;
     }
-    return result;
+    return -1;
   }
 
-  this->connection_ = connection;
-
-  TcpReceiveStrategy* rs = static_cast<TcpReceiveStrategy*>(brs.in());
-
-  TcpSendStrategy* ss = static_cast<TcpSendStrategy*>(bss.in());
+  connection_ = connection;
 
   // Associate the new connection object with the receiveing strategy and disassociate
   // the old connection object with the receiveing strategy.
-  int rs_result = rs->reset(existing_connection.in(), connection.in());
+  int rs_result = trs->reset(existing_connection.in(), connection.in());
 
   // Associate the new connection object with the sending strategy and disassociate
   // the old connection object with the sending strategy.
-  int ss_result = ss->reset();
+  int ss_result = tss->reset();
 
   if (rs_result == 0 && ss_result == 0) {
     do_association_actions();
@@ -274,7 +321,7 @@ OpenDDS::DCPS::TcpDataLink::send_graceful_disconnect_message()
   //header_data.message_length_ = 0;
   //header_data.sequence_ = 0;
   //DDS::Time_t source_timestamp
-  //  = OpenDDS::DCPS::time_value_to_time (ACE_OS::gettimeofday ());
+  //  = SystemTimePoint::now().to_idl_struct();
   //header_data.source_timestamp_sec_ = source_timestamp.sec;
   //header_data.source_timestamp_nanosec_ = source_timestamp.nanosec;
   //header_data.coherency_group_ = 0;
@@ -285,9 +332,8 @@ OpenDDS::DCPS::TcpDataLink::send_graceful_disconnect_message()
   // not receive the message when the message has no sample data and is sent
   // in a single packet.
 
-  // To work arround this problem, I have to add bogus data to chain with the
+  // To work around this problem, I have to add bogus data to chain with the
   // DataSampleHeader to make the receiving work.
-  size_t max_marshaled_size = header_data.max_marshaled_size();
 
   Message_Block_Ptr data(
     new ACE_Message_Block(20,
@@ -306,7 +352,7 @@ OpenDDS::DCPS::TcpDataLink::send_graceful_disconnect_message()
   header_data.message_length_ = static_cast<ACE_UINT32>(data->length());
 
   Message_Block_Ptr message(
-    new ACE_Message_Block(max_marshaled_size,
+    new ACE_Message_Block(header_data.get_max_serialized_size(),
                           ACE_Message_Block::MB_DATA,
                           data.release(), //cont
                           0, //data
@@ -320,7 +366,7 @@ OpenDDS::DCPS::TcpDataLink::send_graceful_disconnect_message()
 
   *message << header_data;
 
-  TransportControlElement* send_element = new TransportControlElement(move(message));
+  TransportControlElement* send_element = new TransportControlElement(OPENDDS_MOVE_NS::move(message));
 
   // I don't want to rebuild a connection in order to send
   // a graceful disconnect message.
@@ -336,37 +382,40 @@ OpenDDS::DCPS::TcpDataLink::set_release_pending(bool flag)
 bool
 OpenDDS::DCPS::TcpDataLink::is_release_pending() const
 {
-  return this->release_is_pending_.value();
+  return release_is_pending_;
 }
 
 bool
 OpenDDS::DCPS::TcpDataLink::handle_send_request_ack(TransportQueueElement* element)
 {
   if (Transport_debug_level >= 1) {
-    const GuidConverter converter(element->publication_id());
     ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) TcpDataLink::handle_send_request_ack(%@) sequence number %q, publication_id=%C\n"),
-      element, element->sequence().getValue(), OPENDDS_STRING(converter).c_str()));
+      element, element->sequence().getValue(), LogGuid(element->publication_id()).c_str()));
   }
-
-  ACE_Guard<ACE_SYNCH_MUTEX> guard(pending_request_acks_lock_);
-  pending_request_acks_.push_back(element);
-  return false;
+  bool result = false;
+  TcpConnection_rch connection(connection_.lock());
+  if (connection) {
+    ACE_Guard<ACE_SYNCH_MUTEX> guard(pending_request_acks_lock_);
+    pending_request_acks_.push_back(element);
+  } else {
+    element->data_dropped(true);
+    result = true;
+  }
+  return result;
 }
-
 
 void
 OpenDDS::DCPS::TcpDataLink::ack_received(const ReceivedDataSample& sample)
 {
-  SequenceNumber sequence = sample.header_.sequence_;
+  const SequenceNumber sequence = sample.header_.sequence_;
 
-  if (sample.header_.sequence_ == -1) {
+  if (sequence == -1) {
     return;
   }
 
   if (Transport_debug_level >= 1) {
-    const GuidConverter converter(sample.header_.publication_id_);
     ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) TcpDataLink::ack_received() received sequence number %q, publiction_id=%C\n"),
-      sequence.getValue(), OPENDDS_STRING(converter).c_str()));
+      sequence.getValue(), LogGuid(sample.header_.publication_id_).c_str()));
   }
 
   TransportQueueElement* elem=0;
@@ -374,7 +423,7 @@ OpenDDS::DCPS::TcpDataLink::ack_received(const ReceivedDataSample& sample)
     // find the pending request with the same sequence number.
     ACE_Guard<ACE_SYNCH_MUTEX> guard(pending_request_acks_lock_);
     PendingRequestAcks::iterator it;
-    for (it = pending_request_acks_.begin(); it != pending_request_acks_.end(); ++it){
+    for (it = pending_request_acks_.begin(); it != pending_request_acks_.end(); ++it) {
       if ((*it)->sequence() == sequence && (*it)->publication_id() == sample.header_.publication_id_) {
         elem = *it;
         pending_request_acks_.erase(it);
@@ -388,7 +437,7 @@ OpenDDS::DCPS::TcpDataLink::ack_received(const ReceivedDataSample& sample)
       ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) TcpDataLink::ack_received() found matching element %@\n"),
         elem));
     }
-    this->send_strategy_->deliver_ack_request(elem);
+    send_strategy()->deliver_ack_request(elem);
   }
   else {
     ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) TcpDataLink::ack_received() received unknown sequence number %q\n"),
@@ -399,9 +448,10 @@ OpenDDS::DCPS::TcpDataLink::ack_received(const ReceivedDataSample& sample)
 void
 OpenDDS::DCPS::TcpDataLink::request_ack_received(const ReceivedDataSample& sample)
 {
-  if (sample.header_.sequence_ == -1 && sample.header_.message_length_ == sizeof(RepoId)) {
-    RepoId local;
-    DCPS::Serializer ser(&(*sample.sample_));
+  if (sample.header_.sequence_ == -1 && sample.header_.message_length_ == guid_cdr_size) {
+    GUID_t local;
+    Message_Block_Ptr payload(receive_strategy()->to_msgblock(sample));
+    Serializer ser(payload.get(), encoding_unaligned_native);
     if (ser >> local) {
       invoke_on_start_callbacks(local, sample.header_.publication_id_, true);
     }
@@ -415,16 +465,14 @@ OpenDDS::DCPS::TcpDataLink::request_ack_received(const ReceivedDataSample& sampl
   // Other data in the DataSampleHeader are not necessary set. The bogus values
   // can be used.
 
-  header_data.byte_order_  = ACE_CDR_BYTE_ORDER;
+  header_data.byte_order_ = ACE_CDR_BYTE_ORDER;
   header_data.message_length_ = 0;
   header_data.sequence_ = sample.header_.sequence_;
   header_data.publication_id_ = sample.header_.publication_id_;
   header_data.publisher_id_ = sample.header_.publisher_id_;
 
-  size_t max_marshaled_size = header_data.max_marshaled_size();
-
   Message_Block_Ptr message(
-    new ACE_Message_Block(max_marshaled_size,
+    new ACE_Message_Block(header_data.get_max_serialized_size(),
                           ACE_Message_Block::MB_DATA,
                           0, //cont
                           0, //data
@@ -438,7 +486,7 @@ OpenDDS::DCPS::TcpDataLink::request_ack_received(const ReceivedDataSample& sampl
 
   *message << header_data;
 
-  TransportControlElement* send_element =  new TransportControlElement(move(message));
+  TransportControlElement* send_element =  new TransportControlElement(OPENDDS_MOVE_NS::move(message));
 
 
   // I don't want to rebuild a connection in order to send
@@ -449,19 +497,22 @@ OpenDDS::DCPS::TcpDataLink::request_ack_received(const ReceivedDataSample& sampl
 void
 OpenDDS::DCPS::TcpDataLink::do_association_actions()
 {
-  typedef std::vector<std::pair<RepoId, RepoId> > PairVec;
-  PairVec to_send;
-  PairVec to_call;
+  // We have a connection.
+  // Invoke callbacks for readers so we can receive messages and let writers know we are ready.
+  typedef std::vector<std::pair<GUID_t, GUID_t> > PairVec;
+  PairVec to_call_and_send;
 
   {
     GuardType guard(strategy_lock_);
 
+    if (!connection_ || !send_strategy_) {
+      return;
+    }
+
     for (OnStartCallbackMap::const_iterator it = on_start_callbacks_.begin(); it != on_start_callbacks_.end(); ++it) {
       for (RepoToClientMap::const_iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-        GuidConverter conv(it2->first);
-        to_send.push_back(std::make_pair(it2->first, it->first));
-        if (!conv.isWriter()) {
-          to_call.push_back(std::make_pair(it2->first, it->first));
+        if (GuidConverter(it2->first).isReader()) {
+          to_call_and_send.push_back(std::make_pair(it2->first, it->first));
         }
       }
     }
@@ -469,30 +520,25 @@ OpenDDS::DCPS::TcpDataLink::do_association_actions()
 
   send_strategy_->link_released(false);
 
-  for (PairVec::const_iterator it = to_call.begin(); it != to_call.end(); ++it) {
+  for (PairVec::const_iterator it = to_call_and_send.begin(); it != to_call_and_send.end(); ++it) {
     invoke_on_start_callbacks(it->first, it->second, true);
-  }
-
-  for (PairVec::const_iterator it = to_send.begin(); it != to_send.end(); ++it) {
     send_association_msg(it->first, it->second);
   }
 }
 
 void
-OpenDDS::DCPS::TcpDataLink::send_association_msg(const RepoId& local, const RepoId& remote)
+OpenDDS::DCPS::TcpDataLink::send_association_msg(const GUID_t& local, const GUID_t& remote)
 {
   DataSampleHeader header_data;
   header_data.message_id_ = REQUEST_ACK;
-  header_data.byte_order_  = ACE_CDR_BYTE_ORDER;
-  header_data.message_length_ = sizeof(remote);
+  header_data.byte_order_ = ACE_CDR_BYTE_ORDER;
+  header_data.message_length_ = guid_cdr_size;
   header_data.sequence_ = -1;
   header_data.publication_id_ = local;
   header_data.publisher_id_ = remote;
 
-  size_t max_marshaled_size = header_data.max_marshaled_size();
-
   Message_Block_Ptr message(
-    new ACE_Message_Block(max_marshaled_size,
+    new ACE_Message_Block(header_data.get_max_serialized_size(),
                           ACE_Message_Block::MB_DATA,
                           0, //cont
                           0, //data
@@ -505,10 +551,10 @@ OpenDDS::DCPS::TcpDataLink::send_association_msg(const RepoId& local, const Repo
                           0));
 
   *message << header_data;
-  DCPS::Serializer ser(message.get());
+  Serializer ser(message.get(), encoding_unaligned_native);
   ser << remote;
 
-  TransportControlElement* send_element = new TransportControlElement(move(message));
+  TransportControlElement* send_element = new TransportControlElement(OPENDDS_MOVE_NS::move(message), local);
 
   this->send_i(send_element, false);
 }
@@ -518,7 +564,7 @@ OpenDDS::DCPS::TcpDataLink::drop_pending_request_acks()
 {
   ACE_Guard<ACE_SYNCH_MUTEX> guard(pending_request_acks_lock_);
   PendingRequestAcks::iterator it;
-  for (it = pending_request_acks_.begin(); it != pending_request_acks_.end(); ++it){
+  for (it = pending_request_acks_.begin(); it != pending_request_acks_.end(); ++it) {
     (*it)->data_dropped(true);
   }
   pending_request_acks_.clear();
@@ -527,31 +573,45 @@ OpenDDS::DCPS::TcpDataLink::drop_pending_request_acks()
 OpenDDS::DCPS::TcpSendStrategy_rch
 OpenDDS::DCPS::TcpDataLink::send_strategy()
 {
+  GuardType guard(strategy_lock_);
   return static_rchandle_cast<OpenDDS::DCPS::TcpSendStrategy>(send_strategy_);
 }
 
 OpenDDS::DCPS::TcpReceiveStrategy_rch
 OpenDDS::DCPS::TcpDataLink::receive_strategy()
 {
+  GuardType guard(strategy_lock_);
   return static_rchandle_cast<OpenDDS::DCPS::TcpReceiveStrategy>(receive_strategy_);
 }
+
 int
-OpenDDS::DCPS::TcpDataLink::make_reservation(const RepoId& remote_subscription_id,
-                                             const RepoId& local_publication_id,
-                                             const TransportSendListener_wrch& send_listener)
+OpenDDS::DCPS::TcpDataLink::make_reservation(const GUID_t& remote_subscription_id,
+                                             const GUID_t& local_publication_id,
+                                             const TransportSendListener_wrch& send_listener,
+                                             bool reliable)
 {
-  const int result = DataLink::make_reservation(remote_subscription_id, local_publication_id, send_listener);
+  {
+    ACE_Guard<ACE_Thread_Mutex> guard(stopped_clients_mutex_);
+    stopped_clients_.erase(local_publication_id);
+  }
+  const int result = DataLink::make_reservation(remote_subscription_id, local_publication_id, send_listener, reliable);
   send_association_msg(local_publication_id, remote_subscription_id);
   return result;
 }
 
 int
-OpenDDS::DCPS::TcpDataLink::make_reservation(const RepoId& remote_publication_id,
-                                             const RepoId& local_subscription_id,
-                                             const TransportReceiveListener_wrch& receive_listener)
+OpenDDS::DCPS::TcpDataLink::make_reservation(const GUID_t& remote_publication_id,
+                                             const GUID_t& local_subscription_id,
+                                             const TransportReceiveListener_wrch& receive_listener,
+                                             bool reliable)
 {
-  const int result = DataLink::make_reservation(remote_publication_id, local_subscription_id, receive_listener);
+  {
+    ACE_Guard<ACE_Thread_Mutex> guard(stopped_clients_mutex_);
+    stopped_clients_.erase(local_subscription_id);
+  }
+  const int result = DataLink::make_reservation(remote_publication_id, local_subscription_id, receive_listener, reliable);
   send_association_msg(local_subscription_id, remote_publication_id);
+
   return result;
 }
 

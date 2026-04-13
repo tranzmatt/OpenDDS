@@ -1,12 +1,13 @@
 #ifndef itl_hpp
 #define itl_hpp
 
+#include <iostream>
 #include <string>
 #include <vector>
 #include <set>
 #include <map>
 #include <stdexcept>
-#include "rapidjson/document.h"
+#include <dds/DCPS/RapidJsonWrapper.h>
 
 namespace itl {
 

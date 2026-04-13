@@ -122,7 +122,7 @@ create_reader(const DDS::Subscriber_var& sub, const char* topicName,
   const DDS::DataReaderListener_var& listener = 0,
   const DDS::StatusMask& mask = OpenDDS::DCPS::DEFAULT_STATUS_MASK)
 {
-  const DDS::TypeSupport_var ts = new typename ::OpenDDS::DCPS::DDSTraits<MessageType>::TypeSupportTypeImpl();
+  const DDS::TypeSupport_var ts = new typename ::OpenDDS::DCPS::DDSTraits<MessageType>::TypeSupportImplType();
   const DDS::DomainParticipant_var dp = sub->get_participant();
   const CORBA::String_var typeName = ts->get_type_name();
   (void) ts->register_type(dp, typeName); // may have been registered before
@@ -207,6 +207,8 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[])
     // Create the Datareaders
     ::DDS::DataReaderQos dr_qos;
     sub->get_default_datareader_qos(dr_qos);
+
+    dr_qos.reliability.kind = DDS::RELIABLE_RELIABILITY_QOS;
 
 #ifndef OPENDDS_NO_OWNERSHIP_PROFILE
     dr_qos.history.depth = history_depth;

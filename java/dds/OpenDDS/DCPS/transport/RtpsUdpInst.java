@@ -21,7 +21,7 @@ public class RtpsUdpInst extends TransportInst {
     public native boolean isUseMulticast();
     public native void setUseMulticast(boolean um);
 
-    public native String getMulticastGroupAddress();
+    public native String getMulticastGroupAddress(int domain);
     public native void setMulticastGroupAddress(String mga);
 
     public native int getNakDepth();
@@ -32,10 +32,4 @@ public class RtpsUdpInst extends TransportInst {
 
     public native long getHeartbeatPeriod();
     public native void setHeartbeatPeriod(long hbp);
-
-    public native long getHeartbeatResponseDelay();
-    public native void setHeartbeatResponseDelay(long hrd);
-
-    public native long getHandshakeTimeout();
-    public native void setHandshakeTimeout(long ht);
 }

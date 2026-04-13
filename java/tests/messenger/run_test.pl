@@ -1,4 +1,4 @@
-#! /usr/bin/perl
+#!/usr/bin/env perl
 
 eval '(exit $?0)' && eval 'exec perl -S $0 ${1+"$@"}'
      & eval 'exec perl -S $0 $argv:q'
@@ -49,7 +49,7 @@ if ($debug ne '0') {
     $pub_opts .= " $debug_opt -ORBLogFile pub.log";
     $sub_opts .= " $debug_opt -ORBLogFile sub.log";
 }
-
+$pub_opts .= " -DCPSPendingTimeout 3";
 my $dcpsrepo_ior = 'repo.ior';
 
 unlink $dcpsrepo_ior;

@@ -5,11 +5,14 @@
  * See: http://www.opendds.org/license.html
  */
 
-#include "dds/DCPS/security/BuiltInSecurityPluginInst.h"
-#include "dds/DCPS/security/AccessControlBuiltInImpl.h"
-#include "dds/DCPS/security/AuthenticationBuiltInImpl.h"
-#include "dds/DCPS/security/CryptoBuiltInImpl.h"
-#include "dds/DCPS/security/UtilityImpl.h"
+#include "BuiltInSecurityPluginInst.h"
+
+#include "AccessControlBuiltInImpl.h"
+#include "AuthenticationBuiltInImpl.h"
+#include "CryptoBuiltInImpl.h"
+#include "UtilityImpl.h"
+
+#include <dds/OpenDDSConfigWrapper.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -20,23 +23,22 @@ using DDS::Security::CryptoKeyExchange;
 using DDS::Security::CryptoTransform;
 
 BuiltInSecurityPluginInst::BuiltInSecurityPluginInst()
-#ifdef OPENDDS_SECURITY
+#if OPENDDS_CONFIG_SECURITY
   : authentication_(new AuthenticationBuiltInImpl)
   , access_control_(new AccessControlBuiltInImpl)
   , key_factory_(new CryptoBuiltInImpl)
   , key_exchange_(CryptoKeyExchange::_narrow(key_factory_))
   , transform_(CryptoTransform::_narrow(key_factory_))
-  , utility_(new UtilityImpl())
+  , utility_(DCPS::make_rch<UtilityImpl>())
 #endif
 {
 }
 
 BuiltInSecurityPluginInst::~BuiltInSecurityPluginInst()
 {
-  delete utility_;
 }
 
-#ifdef OPENDDS_SECURITY
+#if OPENDDS_CONFIG_SECURITY
 Authentication_var BuiltInSecurityPluginInst::create_authentication()
 {
   return authentication_;
@@ -62,7 +64,7 @@ CryptoTransform_var BuiltInSecurityPluginInst::create_crypto_transform()
   return transform_;
 }
 
-Utility* BuiltInSecurityPluginInst::create_utility()
+DCPS::RcHandle<Utility> BuiltInSecurityPluginInst::create_utility()
 {
   return utility_;
 }

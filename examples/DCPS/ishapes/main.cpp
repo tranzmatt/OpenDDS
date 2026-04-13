@@ -8,12 +8,15 @@
 #include <dds/DdsDcpsInfrastructureC.h>
 #include <dds/DdsDcpsPublicationC.h>
 #include <dds/DdsDcpsSubscriptionC.h>
+#include <dds/OpenDDSConfigWrapper.h>
 
 #include <dds/DCPS/Marked_Default_Qos.h>
 #include <dds/DCPS/Service_Participant.h>
 #include <dds/DCPS/WaitSet.h>
 
 #include <dds/DCPS/RTPS/RtpsDiscovery.h>
+#include <dds/DCPS/RTPS/RtpsDiscoveryConfig.h>
+
 #include <dds/DCPS/transport/framework/TransportRegistry.h>
 
 #include "dds/DCPS/StaticIncludes.h"
@@ -26,18 +29,15 @@
 
 #include <ace/Argv_Type_Converter.h>
 
+#if OPENDDS_CONFIG_SECURITY
+#include <dds/DCPS/security/framework/Properties.h>
+#endif
+
 using namespace OpenDDS::RTPS;
 using namespace OpenDDS::DCPS;
 
-#ifdef OPENDDS_SECURITY
+#if OPENDDS_CONFIG_SECURITY
 // security setup helpers:
-
-const char DDSSEC_PROP_IDENTITY_CA[] = "dds.sec.auth.identity_ca";
-const char DDSSEC_PROP_IDENTITY_CERT[] = "dds.sec.auth.identity_certificate";
-const char DDSSEC_PROP_IDENTITY_PRIVKEY[] = "dds.sec.auth.private_key";
-const char DDSSEC_PROP_PERM_CA[] = "dds.sec.access.permissions_ca";
-const char DDSSEC_PROP_PERM_GOV_DOC[] = "dds.sec.access.governance";
-const char DDSSEC_PROP_PERM_DOC[] = "dds.sec.access.permissions";
 
 const char auth_ca_file[] = "file:security/TESTONLY_identity_ca_cert.pem";
 const char perm_ca_file[] = "file:security/TESTONLY_permissions_ca_cert.pem";
@@ -69,7 +69,6 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[]) {
       TransportRegistry::instance()->create_inst("the_rtps_transport",
                                                  "rtps_udp");
     RtpsUdpInst_rch rui = static_rchandle_cast<RtpsUdpInst>(inst);
-    rui->handshake_timeout_ = 1;
 
     config->instances_.push_back(inst);
     TransportRegistry::instance()->global_config(config);
@@ -77,7 +76,8 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[]) {
     DDS::DomainId_t domain = 0;
     bool multicast = true;
     unsigned int resend = 1;
-    std::string partition, governance, permissions;
+    ShapesDialog::QosConfig qosConfig("", false);
+    std::string governance, permissions;
     int defaultSize = 0;
 
     int curr = 1;
@@ -91,7 +91,7 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[]) {
     for (; curr < argc; ++curr) {
       if (ACE_OS::strcmp(ACE_TEXT("-u"), argv[curr]) == 0) {
         multicast = false;
-        rui->use_multicast_ = false;
+        rui->use_multicast(false);
         std::cout << "SEDP / user topics on unicast only" << std::endl;
       } else if ((ACE_OS::strcmp(ACE_TEXT("-r"), argv[curr]) == 0) &&
         (curr + 1 < argc)) {
@@ -129,8 +129,8 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[]) {
         disc->dx(temp);
       } else if ((ACE_OS::strcmp(ACE_TEXT("-partition"), argv[curr]) == 0) &&
         (curr + 1 < argc)) {
-        partition = ACE_TEXT_ALWAYS_CHAR(argv[++curr]);
-        std::cout << "Partition[0]: " << partition << std::endl;
+        qosConfig.partition_ = ACE_TEXT_ALWAYS_CHAR(argv[++curr]);
+        std::cout << "Partition[0]: " << qosConfig.partition_ << std::endl;
       } else if ((ACE_OS::strcmp(ACE_TEXT("-defaultSize"), argv[curr]) == 0) &&
         (curr + 1 < argc)) {
         defaultSize = ACE_OS::atoi(argv[++curr]);
@@ -140,29 +140,35 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[]) {
       } else if ((ACE_OS::strcmp(ACE_TEXT("-permissions"), argv[curr]) == 0) &&
         (curr + 1 < argc)) {
         permissions = ACE_TEXT_ALWAYS_CHAR(argv[++curr]);
+      } else if ((ACE_OS::strcmp(ACE_TEXT("-xcdr1"), argv[curr]) == 0)) {
+        qosConfig.xcdr1_ = true;
+        std::cout << "XCDR1 encoding" << std::endl;
+      } else if ((ACE_OS::strcmp(ACE_TEXT("-no-xtypes"), argv[curr]) == 0)) {
+        disc->use_xtypes(RtpsDiscoveryConfig::XTYPES_NONE);
+        std::cout << "XTypes disabled in discovery" << std::endl;
       } else {
         std::cout << "Ignoring unknown param: " <<
           ACE_TEXT_ALWAYS_CHAR(argv[curr]) << std::endl;
       }
     }
 
-    disc->resend_period(ACE_Time_Value(resend));
+    disc->resend_period(TimeDuration(resend));
     disc->sedp_multicast(multicast);
     TheServiceParticipant->add_discovery(static_rchandle_cast<Discovery>(disc));
     TheServiceParticipant->set_repo_domain(domain, disc->key());
     DDS::DomainParticipantQos dp_qos;
     dpf->get_default_participant_qos(dp_qos);
 
-#ifdef OPENDDS_SECURITY
+#if OPENDDS_CONFIG_SECURITY
     if (!governance.empty() && !permissions.empty()) {
       TheServiceParticipant->set_security(true);
       DDS::PropertySeq& props = dp_qos.property.value;
-      append(props, DDSSEC_PROP_IDENTITY_CA, auth_ca_file);
-      append(props, DDSSEC_PROP_IDENTITY_CERT, id_cert_file);
-      append(props, DDSSEC_PROP_IDENTITY_PRIVKEY, id_key_file);
-      append(props, DDSSEC_PROP_PERM_CA, perm_ca_file);
-      append(props, DDSSEC_PROP_PERM_GOV_DOC, ("file:" + governance).c_str());
-      append(props, DDSSEC_PROP_PERM_DOC, ("file:" + permissions).c_str());
+      append(props, DDS::Security::Properties::AuthIdentityCA, auth_ca_file);
+      append(props, DDS::Security::Properties::AuthIdentityCertificate, id_cert_file);
+      append(props, DDS::Security::Properties::AuthPrivateKey, id_key_file);
+      append(props, DDS::Security::Properties::AccessPermissionsCA, perm_ca_file);
+      append(props, DDS::Security::Properties::AccessGovernance, ("file:" + governance).c_str());
+      append(props, DDS::Security::Properties::AccessPermissions, ("file:" + permissions).c_str());
     }
 #endif
 
@@ -184,11 +190,11 @@ int ACE_TMAIN(int argc, ACE_TCHAR *argv[]) {
     QApplication app(argc, atc.get_ASCII_argv());
     Q_INIT_RESOURCE(ishape);
     // create and show your widgets here
-    ShapesDialog shapes(participant, partition, defaultSize);
+    ShapesDialog shapes(participant, qosConfig, defaultSize);
 
-#ifdef OPENDDS_SECURITY
+#if OPENDDS_CONFIG_SECURITY
     if (TheServiceParticipant->get_security()) {
-      shapes.setWindowTitle("OpenDDS Security BETA");
+      shapes.setWindowTitle("OpenDDS with DDS Security");
     }
 #endif
 

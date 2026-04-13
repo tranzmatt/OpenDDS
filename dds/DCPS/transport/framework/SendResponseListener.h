@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_SENDREPONSELISTENER_H
-#define OPENDDS_DCPS_SENDREPONSELISTENER_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_SENDRESPONSELISTENER_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_SENDRESPONSELISTENER_H
 
 #include "dds/DCPS/dcps_export.h"
 #include "TransportSendListener.h"
@@ -45,6 +45,7 @@ public:
   void notify_publication_reconnected(const ReaderIdSeq&) {}
   void notify_publication_lost(const ReaderIdSeq&) {}
   void remove_associations(const ReaderIdSeq&, bool) {}
+  void replay_durable_data_for(const GUID_t&) {}
 
   void track_message();
 

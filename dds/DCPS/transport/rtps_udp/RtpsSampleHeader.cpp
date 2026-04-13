@@ -6,26 +6,31 @@
  */
 
 #include "RtpsSampleHeader.h"
+
 #include "RtpsUdpSendStrategy.h"
 
-#include "dds/DCPS/Serializer.h"
-#include "dds/DCPS/DataSampleElement.h"
-#include "dds/DCPS/Marked_Default_Qos.h"
-#include "dds/DCPS/Qos_Helper.h"
-#include "dds/DCPS/Service_Participant.h"
-#include "dds/DCPS/DisjointSequence.h"
+#include <dds/DCPS/DataSampleElement.h>
+#include <dds/DCPS/DisjointSequence.h>
+#include <dds/DCPS/EncapsulationHeader.h>
+#include <dds/DCPS/Marked_Default_Qos.h>
+#include <dds/DCPS/Qos_Helper.h>
+#include <dds/DCPS/SequenceNumber.h>
+#include <dds/DCPS/Serializer.h>
+#include <dds/DCPS/Service_Participant.h>
 
-#include "dds/DCPS/RTPS/RtpsCoreTypeSupportImpl.h"
-#include "dds/DCPS/RTPS/MessageTypes.h"
-#include "dds/DCPS/RTPS/BaseMessageTypes.h"
+#include <dds/DCPS/RTPS/RtpsCoreTypeSupportImpl.h>
+#include <dds/DCPS/RTPS/MessageTypes.h>
+#include <dds/DCPS/RTPS/MessageUtils.h>
 
-#include "dds/DCPS/transport/framework/ReceivedDataSample.h"
-#include "dds/DCPS/transport/framework/TransportSendListener.h"
+#include <dds/DCPS/transport/framework/ReceivedDataSample.h>
+#include <dds/DCPS/transport/framework/TransportSendListener.h>
+
+#include <dds/OpenDDSConfigWrapper.h>
 
 #include <cstring>
 
 #ifndef __ACE_INLINE__
-#include "RtpsSampleHeader.inl"
+#  include "RtpsSampleHeader.inl"
 #endif
 
 namespace {
@@ -72,17 +77,16 @@ RtpsSampleHeader::init(ACE_Message_Block& mb)
   ACE_CDR::Octet flags = 0;
 
   if (mb.length() > 1) {
-    flags = mb.rd_ptr()[1];
+    flags = static_cast<ACE_CDR::Octet>(mb.rd_ptr()[1]);
   } else if (mb.cont() && mb.cont()->length() > 0) {
-    flags = mb.cont()->rd_ptr()[0];
+    flags = static_cast<ACE_CDR::Octet>(mb.cont()->rd_ptr()[0]);
   } else {
     return;
   }
 
-  const bool little_endian = flags & FLAG_E;
   const size_t starting_length = mb.total_length();
-  Serializer ser(&mb, ACE_CDR_BYTE_ORDER != little_endian,
-                 Serializer::ALIGN_CDR);
+  Serializer ser(&mb, Encoding::KIND_XCDR1,
+    (flags & FLAG_E) ? ENDIAN_LITTLE : ENDIAN_BIG);
 
   ACE_CDR::UShort octetsToNextHeader = 0;
 
@@ -111,7 +115,7 @@ RtpsSampleHeader::init(ACE_Message_Block& mb)
   CASE_SMKIND(DATA, DataSubmessage, data)
   CASE_SMKIND(DATA_FRAG, DataFragSubmessage, data_frag)
 
-#if defined(OPENDDS_SECURITY)
+#if OPENDDS_CONFIG_SECURITY
     // Each submessage type introduced by the Security spec is treated
     // as an opaque octet sequence at this layer.
     case SEC_BODY:
@@ -146,33 +150,46 @@ RtpsSampleHeader::init(ACE_Message_Block& mb)
   if (valid_) {
 
     frag_ = (kind == DATA_FRAG);
+    data_ = (kind == DATA);
 
-    // marshaled_size_ is # of bytes of submessage we have read from "mb"
-    marshaled_size_ = starting_length - mb.total_length();
+    // serialized_size_ is # of bytes of submessage we have read from "mb"
+    serialized_size_ = starting_length - mb.total_length();
+
+    const ACE_CDR::UShort remaining = static_cast<ACE_CDR::UShort>(message_length_ - SMHDR_SZ);
 
     if (octetsToNextHeader == 0 && kind != PAD && kind != INFO_TS) {
       // see RTPS v2.1 section 9.4.5.1.3
       // In this case the current Submessage extends to the end of Message,
       // so we will use the message_length_ that was set in pdu_remaining().
-      octetsToNextHeader =
-        static_cast<ACE_CDR::UShort>(message_length_ - SMHDR_SZ);
+      octetsToNextHeader = remaining;
+
+    } else if (octetsToNextHeader > remaining) {
+      valid_ = false;
+      return;
     }
 
-    if ((kind == DATA && (flags & (FLAG_D | FLAG_K_IN_DATA)))
-        || kind == DATA_FRAG) {
+    if ((data_ && (flags & (FLAG_D | FLAG_K_IN_DATA))) || frag_) {
       // These Submessages have a payload which we haven't deserialized yet.
       // The TransportReceiveStrategy will know this via message_length().
       // octetsToNextHeader does not count the SubmessageHeader (4 bytes)
-      message_length_ = octetsToNextHeader + SMHDR_SZ - marshaled_size_;
+      message_length_ = octetsToNextHeader + SMHDR_SZ - serialized_size_;
+      if (frag_) {
+        const DataFragSubmessage& df = submessage_.data_frag_sm();
+        if (df.fragmentSize == 0 || df.fragmentStartingNum.value == 0 ||
+            df.fragmentsInSubmessage == 0 || last_fragment(df) > total_fragments(df)) {
+          valid_ = false;
+          return;
+        }
+      }
     } else {
       // These Submessages _could_ have extra data that we don't know about
       // (from a newer minor version of the RTPS spec).  Either way, indicate
       // to the TransportReceiveStrategy that there is no data payload here.
       message_length_ = 0;
-      ACE_CDR::UShort marshaled = static_cast<ACE_CDR::UShort>(marshaled_size_);
-      if (octetsToNextHeader + SMHDR_SZ > marshaled) {
-        valid_ = ser.skip(octetsToNextHeader + SMHDR_SZ - marshaled);
-        marshaled_size_ = octetsToNextHeader + SMHDR_SZ;
+      const ACE_CDR::UShort marshaledNoHeader = static_cast<ACE_CDR::UShort>(serialized_size_ - SMHDR_SZ);
+      if (octetsToNextHeader > marshaledNoHeader) {
+        valid_ = ser.skip(static_cast<size_t>(octetsToNextHeader - marshaledNoHeader));
+        serialized_size_ = octetsToNextHeader + SMHDR_SZ;
       }
     }
   }
@@ -239,7 +256,7 @@ RtpsSampleHeader::into_received_data_sample(ReceivedDataSample& rds)
     const DataSubmessage& rtps = submessage_.data_sm();
     opendds.cdr_encapsulation_ = true;
     opendds.message_length_ = message_length();
-    opendds.sequence_.setValue(rtps.writerSN.high, rtps.writerSN.low);
+    opendds.sequence_ = to_opendds_seqnum(rtps.writerSN);
     opendds.publication_id_.entityId = rtps.writerId;
     opendds.message_id_ = SAMPLE_DATA;
 
@@ -254,16 +271,14 @@ RtpsSampleHeader::into_received_data_sample(ReceivedDataSample& rds)
       // the MD5 hash of a >16 byte key, so we must limit this to Built-in
       // endpoints which are assumed to use GUIDs as keys.
       if ((rtps.writerId.entityKind & 0xC0) == 0xC0 // Only Built-in endpoints
-          && (rtps.smHeader.flags & FLAG_Q) && !rds.sample_) {
+          && (rtps.smHeader.flags & FLAG_Q) && !rds.has_data()) {
         for (CORBA::ULong i = 0; i < rtps.inlineQos.length(); ++i) {
           if (rtps.inlineQos[i]._d() == PID_KEY_HASH) {
-            rds.sample_.reset(new ACE_Message_Block(20));
-            // CDR_BE encapsuation scheme (endianness is not used for key hash)
-            rds.sample_->copy("\x00\x00\x00\x00", 4);
+            // CDR_BE encapsulation scheme (endianness is not used for key hash)
+            rds.replace("\x00\x00\x00\x00", EncapsulationHeader::serialized_size);
             const CORBA::Octet* data = rtps.inlineQos[i].key_hash().value;
-            rds.sample_->copy(reinterpret_cast<const char*>(data), 16);
-            opendds.message_length_ =
-              static_cast<ACE_UINT32>(rds.sample_->length());
+            rds.append(reinterpret_cast<const char*>(data), sizeof(DDS::OctetArray16));
+            opendds.message_length_ = EncapsulationHeader::serialized_size + sizeof(DDS::OctetArray16);
             opendds.key_fields_only_ = true;
             if (Transport_debug_level) {
               ACE_DEBUG((LM_DEBUG,
@@ -274,8 +289,8 @@ RtpsSampleHeader::into_received_data_sample(ReceivedDataSample& rds)
           }
         }
       } else {
-      // FUTURE: Handle the case of D = 0 and K = 0
-      // used for Coherent Sets in PRESENTATION QoS (see 8.7.5)
+        // FUTURE: Handle the case of D = 0 and K = 0
+        // used for Coherent Sets in PRESENTATION QoS (see 8.7.5)
         if (Transport_debug_level) {
           ACE_DEBUG((LM_WARNING,
                      "(%P|%t) RtpsSampleHeader::into_received_data_sample() - "
@@ -287,6 +302,7 @@ RtpsSampleHeader::into_received_data_sample(ReceivedDataSample& rds)
     }
 
     if (rtps.smHeader.flags & (FLAG_D | FLAG_K_IN_DATA)) {
+      // TODO(iguessthislldo: Convert to use Encoding
       // Peek at the byte order from the encapsulation containing the payload.
       opendds.byte_order_ = payload_byte_order(rds);
     }
@@ -297,7 +313,7 @@ RtpsSampleHeader::into_received_data_sample(ReceivedDataSample& rds)
     const DataFragSubmessage& rtps = submessage_.data_frag_sm();
     opendds.cdr_encapsulation_ = true;
     opendds.message_length_ = message_length();
-    opendds.sequence_.setValue(rtps.writerSN.high, rtps.writerSN.low);
+    opendds.sequence_ = to_opendds_seqnum(rtps.writerSN);
     opendds.publication_id_.entityId = rtps.writerId;
     opendds.message_id_ = SAMPLE_DATA;
     opendds.key_fields_only_ = (rtps.smHeader.flags & FLAG_K_IN_FRAG);
@@ -321,7 +337,7 @@ RtpsSampleHeader::into_received_data_sample(ReceivedDataSample& rds)
 
 bool RtpsSampleHeader::payload_byte_order(const ReceivedDataSample& rds)
 {
-  return rds.sample_->rd_ptr()[1] & RTPS::FLAG_E;
+  return rds.peek(1) & RTPS::FLAG_E;
 }
 
 namespace {
@@ -333,10 +349,9 @@ namespace {
                             header.source_timestamp_nanosec_};
     const InfoTimestampSubmessage ts = {
       {INFO_TS, flags, INFO_TS_SZ},
-      {st.sec, static_cast<ACE_UINT32>(st.nanosec * NANOS_TO_RTPS_FRACS + .5)}
+      {static_cast<ACE_UINT32>(st.sec), DCPS::nanoseconds_to_uint32_fractional_seconds(st.nanosec)}
     };
-    const CORBA::ULong i = subm.length();
-    subm.length(i + 1);
+    const CORBA::ULong i = DCPS::grow(subm) - 1;
     subm[i].info_ts_sm(ts);
   }
 }
@@ -362,8 +377,8 @@ RtpsSampleHeader::populate_data_sample_submessages(
     idest.smHeader.submessageLength = INFO_DST_SZ;
     std::memcpy(idest.guidPrefix, dsle.get_sub_id(0).guidPrefix,
                 sizeof(GuidPrefix_t));
-    subm.length(i + 1);
-    subm[i++].info_dst_sm(idest);
+    i = DCPS::grow(subm);
+    subm[i - 1].info_dst_sm(idest);
   } else {
     //Not durability resend, but could have inline gaps
     for (CORBA::ULong x = 0; x < i; ++x) {
@@ -375,8 +390,8 @@ RtpsSampleHeader::populate_data_sample_submessages(
         idest.smHeader.submessageLength = INFO_DST_SZ;
         std::memcpy(idest.guidPrefix, GUIDPREFIX_UNKNOWN,
                     sizeof(GuidPrefix_t));
-        subm.length(i + 1);
-        subm[i++].info_dst_sm(idest);
+        i = DCPS::grow(subm);
+        subm[i - 1].info_dst_sm(idest);
         break;
       }
     }
@@ -388,7 +403,7 @@ RtpsSampleHeader::populate_data_sample_submessages(
     DATA_OCTETS_TO_IQOS,
     readerId,
     dsle.get_pub_id().entityId,
-    {dsle.get_header().sequence_.getHigh(), dsle.get_header().sequence_.getLow()},
+    RTPS::to_rtps_seqnum(dsle.get_header().sequence_),
     ParameterList()
   };
   const char message_id = dsle.get_header().message_id_;
@@ -414,8 +429,8 @@ RtpsSampleHeader::populate_data_sample_submessages(
     data.smHeader.flags |= FLAG_Q;
   }
 
-  subm.length(i + 1);
-  subm[i].data_sm(data);
+  i = DCPS::grow(subm);
+  subm[i - 1].data_sm(data);
 }
 
 namespace {
@@ -429,9 +444,7 @@ namespace {
     std::memcpy(kh.value, data->rd_ptr() + offset, sizeof(GUID_t));
     RTPS::Parameter p;
     p.key_hash(kh);
-    const CORBA::ULong i = plist.length();
-    plist.length(i + 1);
-    plist[i] = p;
+    DCPS::push_back(plist, p);
   }
 }
 
@@ -446,7 +459,6 @@ RtpsSampleHeader::populate_data_control_submessages(
   const DataSampleHeader& header = tsce.header();
   const ACE_CDR::Octet flags = header.byte_order_;
   add_timestamp(subm, flags, header);
-  CORBA::ULong i = subm.length();
 
   static const CORBA::Octet BUILT_IN_WRITER = 0xC2;
 
@@ -456,7 +468,7 @@ RtpsSampleHeader::populate_data_control_submessages(
     DATA_OCTETS_TO_IQOS,
     ENTITYID_UNKNOWN,
     header.publication_id_.entityId,
-    {header.sequence_.getHigh(), header.sequence_.getLow()},
+    RTPS::to_rtps_seqnum(header.sequence_),
     ParameterList()
   };
   switch (header.message_id_) {
@@ -465,14 +477,13 @@ RtpsSampleHeader::populate_data_control_submessages(
     // We have decided to send a DATA Submessage containing the key and an
     // inlineQoS StatusInfo of zero.
     data.smHeader.flags |= FLAG_K_IN_DATA;
-    const int qos_len = data.inlineQos.length();
-    data.inlineQos.length(qos_len + 1);
+    const DDS::UInt32 qos_len = DCPS::grow(data.inlineQos) - 1;
     data.inlineQos[qos_len].status_info(STATUS_INFO_REGISTER);
     break;
   }
   case UNREGISTER_INSTANCE: {
     data.smHeader.flags |= FLAG_K_IN_DATA;
-    const int qos_len = data.inlineQos.length();
+    const DDS::UInt32 qos_len = data.inlineQos.length();
     data.inlineQos.length(qos_len+1);
     data.inlineQos[qos_len].status_info(STATUS_INFO_UNREGISTER);
     if (header.publication_id_.entityId.entityKind == BUILT_IN_WRITER) {
@@ -482,8 +493,7 @@ RtpsSampleHeader::populate_data_control_submessages(
   }
   case DISPOSE_INSTANCE: {
     data.smHeader.flags |= FLAG_K_IN_DATA;
-    const int qos_len = data.inlineQos.length();
-    data.inlineQos.length(qos_len + 1);
+    const DDS::UInt32 qos_len = DCPS::grow(data.inlineQos) - 1;
     data.inlineQos[qos_len].status_info(STATUS_INFO_DISPOSE);
     if (header.publication_id_.entityId.entityKind == BUILT_IN_WRITER) {
       add_key_hash(data.inlineQos, tsce.msg_payload());
@@ -492,8 +502,7 @@ RtpsSampleHeader::populate_data_control_submessages(
   }
   case DISPOSE_UNREGISTER_INSTANCE: {
     data.smHeader.flags |= FLAG_K_IN_DATA;
-    const int qos_len = data.inlineQos.length();
-    data.inlineQos.length(qos_len + 1);
+    const DDS::UInt32 qos_len = DCPS::grow(data.inlineQos) - 1;
     data.inlineQos[qos_len].status_info(STATUS_INFO_DISPOSE_UNREGISTER);
     if (header.publication_id_.entityId.entityKind == BUILT_IN_WRITER) {
       add_key_hash(data.inlineQos, tsce.msg_payload());
@@ -520,15 +529,14 @@ RtpsSampleHeader::populate_data_control_submessages(
     data.smHeader.flags |= FLAG_Q;
   }
 
-  subm.length(i + 1);
-  subm[i].data_sm(data);
+  CORBA::ULong idx = DCPS::grow(subm) - 1;
+  subm[idx].data_sm(data);
 }
 
 #define PROCESS_INLINE_QOS(QOS_NAME, DEFAULT_QOS, WRITER_QOS) \
   if (WRITER_QOS.QOS_NAME != DEFAULT_QOS.QOS_NAME) {          \
-    const int qos_len = plist.length();                       \
-    plist.length(qos_len + 1);                                \
-    plist[qos_len].QOS_NAME(WRITER_QOS.QOS_NAME);             \
+    const DDS::UInt32 idx = DCPS::grow(plist) - 1;            \
+    plist[idx].QOS_NAME(WRITER_QOS.QOS_NAME);                 \
   }
 
 void
@@ -540,10 +548,9 @@ RtpsSampleHeader::populate_inline_qos(
 
   // Always include topic name (per the spec)
   {
-    const int qos_len = plist.length();
-    plist.length(qos_len + 1);
-    plist[qos_len].string_data(qos_data.topic_name.c_str());
-    plist[qos_len]._d(PID_TOPIC_NAME);
+    const DDS::UInt32 idx = DCPS::grow(plist) - 1;
+    plist[idx].string_data(qos_data.topic_name.c_str());
+    plist[idx]._d(PID_TOPIC_NAME);
   }
 
   // Conditionally include other QoS inline when the differ from the
@@ -563,7 +570,20 @@ RtpsSampleHeader::populate_inline_qos(
   PROCESS_INLINE_QOS(ownership_strength, default_dw_qos, qos_data.dw_qos);
 #endif
   PROCESS_INLINE_QOS(liveliness, default_dw_qos, qos_data.dw_qos);
-  PROCESS_INLINE_QOS(reliability, default_dw_qos, qos_data.dw_qos);
+  if (qos_data.dw_qos.reliability != default_dw_qos.reliability) {
+    const DDS::UInt32 idx = DCPS::grow(plist) - 1;
+
+    ReliabilityQosPolicyRtps reliability;
+    reliability.max_blocking_time = qos_data.dw_qos.reliability.max_blocking_time;
+
+    if (qos_data.dw_qos.reliability.kind == DDS::BEST_EFFORT_RELIABILITY_QOS) {
+      reliability.kind.value = RTPS::BEST_EFFORT;
+    } else { // default to RELIABLE for writers
+      reliability.kind.value = RTPS::RELIABLE;
+    }
+
+    plist[idx].reliability(reliability);
+  }
   PROCESS_INLINE_QOS(transport_priority, default_dw_qos, qos_data.dw_qos);
   PROCESS_INLINE_QOS(lifespan, default_dw_qos, qos_data.dw_qos);
   PROCESS_INLINE_QOS(destination_order, default_dw_qos, qos_data.dw_qos);
@@ -622,11 +642,9 @@ RtpsSampleHeader::split(const ACE_Message_Block& orig, size_t size,
                         Message_Block_Ptr& head, Message_Block_Ptr& tail)
 {
   using namespace RTPS;
-  static const SequenceRange unknown_range(SequenceNumber::SEQUENCENUMBER_UNKNOWN(),
-                                           SequenceNumber::SEQUENCENUMBER_UNKNOWN());
   size_t data_offset = 0;
   const char* rd = orig.rd_ptr();
-  ACE_CDR::ULong starting_frag, sample_size;
+  ACE_CDR::ULong starting_frag = 0, sample_size = 0;
   ACE_CDR::Octet flags;
   bool swap_bytes;
 
@@ -634,7 +652,7 @@ RtpsSampleHeader::split(const ACE_Message_Block& orig, size_t size,
   // The submessages from the start of the msg block to this point (data_offset)
   // will be copied to both the head and tail fragments.
   while (true) {
-    flags = rd[data_offset + 1];
+    flags = static_cast<ACE_CDR::Octet>(rd[data_offset + 1]);
     swap_bytes = ACE_CDR_BYTE_ORDER != bool(flags & FLAG_E);
     bool found_data = false;
 
@@ -645,7 +663,7 @@ RtpsSampleHeader::split(const ACE_Message_Block& orig, size_t size,
           ACE_ERROR((LM_ERROR, "(%P|%t) RtpsSampleHeader::split() ERROR - "
             "attempting to fragment a Data submessage with no payload.\n"));
         }
-        return unknown_range;
+        return unknown_sequence_range;
       }
       found_data = true;
       starting_frag = 1;
@@ -672,7 +690,7 @@ RtpsSampleHeader::split(const ACE_Message_Block& orig, size_t size,
         ACE_ERROR((LM_ERROR, "(%P|%t) RtpsSampleHeader::split() ERROR - "
           "invalid octetsToNextHeader encountered while fragmenting.\n"));
       }
-      return unknown_range;
+      return unknown_sequence_range;
     }
   }
 
@@ -683,17 +701,21 @@ RtpsSampleHeader::split(const ACE_Message_Block& orig, size_t size,
   if (rd[data_offset] == DATA) {
     sz += 12; // DATA_FRAG is 12 bytes larger than DATA
     iqos_offset -= 12;
-    new_flags &= ~(FLAG_K_IN_DATA | FLAG_K_IN_FRAG);
+    new_flags = flags & (FLAG_E | FLAG_Q);
     if (flags & FLAG_K_IN_DATA) {
       new_flags |= FLAG_K_IN_FRAG;
     }
+    if (flags & FLAG_N_IN_DATA) {
+      new_flags |= FLAG_N_IN_FRAG;
+    }
+
   }
   head.reset(DataSampleHeader::alloc_msgblock(orig, sz, false));
 
   head->copy(rd, data_offset);
 
   head->wr_ptr()[0] = DATA_FRAG;
-  head->wr_ptr()[1] = new_flags;
+  head->wr_ptr()[1] = static_cast<char>(new_flags);
   head->wr_ptr(2);
 
   std::memset(head->wr_ptr(), 0, 4); // octetsToNextHeader, extraFlags
@@ -707,6 +729,12 @@ RtpsSampleHeader::split(const ACE_Message_Block& orig, size_t size,
   const size_t max_data = size - sz, orig_payload = orig.cont()->total_length();
   const ACE_CDR::UShort frags =
     static_cast<ACE_CDR::UShort>(std::min(max_data, orig_payload) / FRAG_SIZE);
+  if (frags == 0) {
+    ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: RtpsSampleHeader::split: "
+      "Number of Fragments is Zero: min(%B, %B) / FRAG_SIZE\n",
+      max_data, orig_payload));
+    return unknown_sequence_range;
+  }
   write(head, frags, swap_bytes);
   write(head, FRAG_SIZE, swap_bytes);
   write(head, sample_size, swap_bytes);
@@ -721,7 +749,7 @@ RtpsSampleHeader::split(const ACE_Message_Block& orig, size_t size,
   tail->copy(rd, data_offset);
 
   tail->wr_ptr()[0] = DATA_FRAG;
-  tail->wr_ptr()[1] = new_flags & ~FLAG_Q;
+  tail->wr_ptr()[1] = static_cast<char>(new_flags & ~FLAG_Q);
   tail->wr_ptr(2);
 
   std::memset(tail->wr_ptr(), 0, 4); // octetsToNextHeader, extraFlags
@@ -747,6 +775,16 @@ RtpsSampleHeader::split(const ACE_Message_Block& orig, size_t size,
 
   return SequenceRange(starting_frag + frags - 1,
                        starting_frag + frags + tail_frags - 1);
+}
+
+FragmentNumber RtpsSampleHeader::last_fragment(const RTPS::DataFragSubmessage& df)
+{
+  return df.fragmentStartingNum.value + df.fragmentsInSubmessage - 1;
+}
+
+ACE_UINT32 RtpsSampleHeader::total_fragments(const RTPS::DataFragSubmessage& df)
+{
+  return df.sampleSize / df.fragmentSize + ((df.sampleSize % df.fragmentSize) ? 1 : 0);
 }
 
 }

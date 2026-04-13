@@ -28,8 +28,8 @@ SubscriberMDataReaderListenerImpl::~SubscriberMDataReaderListenerImpl()
 void SubscriberMDataReaderListenerImpl::on_data_available(DDS::DataReader_ptr reader)
 {
   try {
-    OpenDDS::DCPS::SubscriberReportDataReader_var subm_dr =
-      OpenDDS::DCPS::SubscriberReportDataReader::_narrow(reader);
+    OpenDDS::Monitor::SubscriberReportDataReader_var subm_dr =
+      OpenDDS::Monitor::SubscriberReportDataReader::_narrow(reader);
 
     if (CORBA::is_nil(subm_dr.in())) {
       ACE_ERROR((LM_ERROR,
@@ -38,14 +38,14 @@ void SubscriberMDataReaderListenerImpl::on_data_available(DDS::DataReader_ptr re
       ACE_OS::exit(-1);
     }
 
-    OpenDDS::DCPS::SubscriberReport subr;
+    OpenDDS::Monitor::SubscriberReport subr;
     DDS::SampleInfo si;
 
-    DDS::ReturnCode_t status = subm_dr->take_next_sample(subr, si) ;
+    DDS::ReturnCode_t status = subm_dr->take_next_sample(subr, si);
 
     if (status == DDS::RETCODE_OK) {
       std::cout << "SampleInfo.sample_rank = " << si.sample_rank << std::endl;
-      std::cout << "SampleInfo.instance_state = " << si.instance_state << std::endl;
+      std::cout << "SampleInfo.instance_state = " << OpenDDS::DCPS::InstanceState::instance_state_string(si.instance_state) << std::endl;
 
       if (si.valid_data) {
         std::cout << "SubscriberReport:" << std::endl

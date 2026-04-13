@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_RELIABLESESSION_H
-#define DCPS_RELIABLESESSION_H
+#ifndef OPENDDS_DCPS_TRANSPORT_MULTICAST_RELIABLESESSION_H
+#define OPENDDS_DCPS_TRANSPORT_MULTICAST_RELIABLESESSION_H
 
 #include "Multicast_Export.h"
 
@@ -24,31 +24,11 @@ OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 namespace OpenDDS {
 namespace DCPS {
 
-class ReliableSession;
-
-class OpenDDS_Multicast_Export NakWatchdog
-  : public DataLinkWatchdog {
-public:
-  explicit NakWatchdog(ACE_Reactor* reactor,
-                       ACE_thread_t owner,
-                       ReliableSession* session);
-
-  virtual bool reactor_is_shut_down() const;
-
-protected:
-  virtual ACE_Time_Value next_interval();
-  virtual void on_interval(const void* arg);
-
-private:
-  ~NakWatchdog() { }
-  ReliableSession* session_;
-};
-
 class OpenDDS_Multicast_Export ReliableSession
   : public MulticastSession {
 public:
-  ReliableSession(ACE_Reactor* reactor,
-                  ACE_thread_t owner,
+  ReliableSession(RcHandle<EventDispatcher> event_dispatcher,
+                  ACE_Reactor* reactor,
                   MulticastDataLink* link,
                   MulticastPeer remote_peer);
 
@@ -60,7 +40,7 @@ public:
   virtual bool ready_to_deliver(const TransportHeader& header,
                                 const ReceivedDataSample& data);
   void deliver_held_data();
-  virtual void release_remote(const RepoId& remote);
+  virtual void release_remote(const GUID_t& remote);
 
   virtual bool control_received(char submessage_id,
                                 const Message_Block_Ptr& control);
@@ -81,11 +61,14 @@ public:
   virtual void syn_hook(const SequenceNumber& seq);
 
 private:
-  RcHandle<NakWatchdog> nak_watchdog_;
+  typedef PmfEvent<ReliableSession> ReliableSessionEvent;
+  SporadicEvent_rch nak_watchdog_;
+  TimeDuration nak_delay();
+  void process_naks();
 
   DisjointSequence nak_sequence_;
 
-  typedef OPENDDS_MAP(ACE_Time_Value, SequenceNumber) NakRequestMap;
+  typedef OPENDDS_MAP(MonotonicTimePoint, SequenceNumber) NakRequestMap;
   NakRequestMap nak_requests_;
 
   ACE_Thread_Mutex held_lock_;
@@ -94,6 +77,11 @@ private:
 
   typedef OPENDDS_SET(SequenceRange) NakPeerSet;
   NakPeerSet nak_peers_;
+
+  const TimeDuration nak_timeout_;
+  const size_t nak_delay_intervals_;
+  const size_t nak_max_;
+  const TimeDuration nak_interval_;
 };
 
 } // namespace DCPS

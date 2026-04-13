@@ -13,7 +13,6 @@
 
 class Writer : public ACE_Task_Base {
 public:
-
   Writer(DDS::DataWriter_ptr writer);
 
   void start();
@@ -27,7 +26,7 @@ public:
 
 private:
   DDS::DataWriter_var writer_;
-  ACE_Atomic_Op<ACE_SYNCH_MUTEX, int> finished_instances_;
+  OpenDDS::DCPS::Atomic<int> finished_instances_;
 };
 
 #endif /* WRITER_H */

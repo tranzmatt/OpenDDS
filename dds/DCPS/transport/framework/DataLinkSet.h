@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_DCPS_DATALINKSET_H
-#define OPENDDS_DCPS_DATALINKSET_H
+#ifndef OPENDDS_DCPS_TRANSPORT_FRAMEWORK_DATALINKSET_H
+#define OPENDDS_DCPS_TRANSPORT_FRAMEWORK_DATALINKSET_H
 
 #include "dds/DCPS/dcps_export.h"
 #include "dds/DCPS/RcObject.h"
@@ -46,18 +46,18 @@ public:
   void send_control(DataSampleElement* sample);
 
   /// Send control message to each DataLink in the set.
-  SendControlStatus send_control(RepoId                           pub_id,
+  SendControlStatus send_control(GUID_t                           pub_id,
                                  const TransportSendListener_rch& listener,
                                  const DataSampleHeader&          header,
                                  Message_Block_Ptr                msg);
 
-  void send_response(RepoId sub_id,
+  void send_response(GUID_t sub_id,
                      const DataSampleHeader& header,
                      Message_Block_Ptr response);
 
   bool remove_sample(const DataSampleElement* sample);
 
-  bool remove_all_msgs(RepoId pub_id);
+  bool remove_all_msgs(const GUID_t& pub_id);
 
   /// Calls send_start() on the links in link_set and also adds
   /// the links from link_set to *this.
@@ -65,14 +65,14 @@ public:
 
   /// Calls send_stop() on the links with ID repoId and then
   /// clears the set.
-  void send_stop(RepoId repoId);
+  void send_stop(GUID_t repoId);
 
-  DataLinkSet_rch select_links(const RepoId* remoteIds,
+  DataLinkSet_rch select_links(const GUID_t* remoteIds,
                                const CORBA::ULong num_targets);
 
   bool empty();
 
-  void send_final_acks(const RepoId& readerid);
+  void send_final_acks(const GUID_t& readerid);
 
   typedef ACE_SYNCH_MUTEX     LockType;
   typedef ACE_Guard<LockType> GuardType;
@@ -85,6 +85,14 @@ public:
   MapType& map() { return map_; }
   //@}
 
+  void terminate_send_if_suspended();
+
+  SequenceNumber cur_cumulative_ack(const GUID_t& writer_id,
+                                    const GUID_t& reader_id) const;
+
+  bool is_leading(const GUID_t& writer_id,
+                  const GUID_t& reader_id) const;
+
 private:
 
   /// Hash map for DataLinks.
@@ -92,7 +100,7 @@ private:
 
   /// This lock will protect critical sections of code that play a
   /// role in the sending of data.
-  LockType lock_;
+  mutable LockType lock_;
 
   /// Listener for TransportSendControlElements created in send_response
   SendResponseListener send_response_listener_;

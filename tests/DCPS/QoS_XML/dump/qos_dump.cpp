@@ -15,8 +15,8 @@ int ACE_TMAIN (int, ACE_TCHAR *[])
           ::DDS::DataWriterQos dw_qos;
           retcode_qos = xml_loader.get_datawriter_qos (
                                 dw_qos,
-                                "qos#TestProfile",
-                                "TopicName");
+                                ACE_TEXT("qos#TestProfile"),
+                                ACE_TEXT("TopicName"));
           if (retcode_qos != DDS::RETCODE_OK)
             {
               ACE_ERROR ((LM_ERROR, "MAIN - "
@@ -40,8 +40,8 @@ int ACE_TMAIN (int, ACE_TCHAR *[])
           ::DDS::DataReaderQos dr_qos;
           retcode_qos = xml_loader.get_datareader_qos (
                                 dr_qos,
-                                "qos#TestProfile",
-                                "TopicName");
+                                ACE_TEXT("qos#TestProfile"),
+                                ACE_TEXT("TopicName"));
           if (retcode_qos != DDS::RETCODE_OK)
             {
               ACE_ERROR ((LM_ERROR, "MAIN - "
@@ -50,11 +50,49 @@ int ACE_TMAIN (int, ACE_TCHAR *[])
               ++retval;
             }
 
+          if (dr_qos.type_consistency.ignore_sequence_bounds != true)
+          {
+            ACE_ERROR ((LM_ERROR, "PARSEXML - "
+                  "get_datareader_qos returned an invalid type type_consistency ignore_sequence_bounds.\n"));
+            ++retval;
+          }
+          if (dr_qos.type_consistency.ignore_string_bounds != true)
+          {
+            ACE_ERROR ((LM_ERROR, "PARSEXML - "
+                  "get_datareader_qos return an invalid type type_consistency ignore_string_bounds.\n"));
+            ++retval;
+          }
+          if (dr_qos.type_consistency.ignore_member_names != true)
+          {
+            ACE_ERROR ((LM_ERROR, "PARSEXML - "
+                  "get_datareader_qos return an invalid type type_consistency ignore_member_names.\n"));
+            ++retval;
+          }
+          if (dr_qos.type_consistency.prevent_type_widening != true)
+          {
+            ACE_ERROR ((LM_ERROR, "PARSEXML - "
+                  "get_datareader_qos return an invalid type type_consistency prevent_type_widening.\n"));
+            ++retval;
+          }
+          if (dr_qos.type_consistency.force_type_validation != true)
+          {
+            ACE_ERROR ((LM_ERROR, "PARSEXML - "
+                  "get_datareader_qos return an invalid type type_consistency force_type_validation.\n"));
+            ++retval;
+          }
+          if (dr_qos.representation.value.length() != 2)
+          {
+            ACE_ERROR ((LM_ERROR, "PARSEXML - "
+                  "get_datareader_qos return an invalid length %d for data_representation.\n",
+                  dr_qos.representation.value.length()));
+            ++retval;
+          }
+
           ::DDS::TopicQos tp_qos;
           retcode_qos = xml_loader.get_topic_qos (
                                 tp_qos,
-                                "qos#TestProfile",
-                                "TopicName");
+                                ACE_TEXT("qos#TestProfile"),
+                                ACE_TEXT("TopicName"));
           if (retcode_qos != DDS::RETCODE_OK)
             {
               ACE_ERROR ((LM_ERROR, "MAIN - "
@@ -63,10 +101,17 @@ int ACE_TMAIN (int, ACE_TCHAR *[])
               ++retval;
             }
 
+          if (tp_qos.durability_service.history_kind != DDS::KEEP_LAST_HISTORY_QOS)
+          {
+            ACE_ERROR ((LM_ERROR, "PARSEXML - "
+                  "get_topic_qos returned an invalid type durability_service history_kind.\n"));
+            ++retval;
+          }
+
           ::DDS::PublisherQos pub_qos;
           retcode_qos = xml_loader.get_publisher_qos (
                                 pub_qos,
-                                "qos#TestProfile");
+                                ACE_TEXT("qos#TestProfile"));
           if (retcode_qos != DDS::RETCODE_OK)
             {
               ACE_ERROR ((LM_ERROR, "MAIN - "
@@ -78,7 +123,7 @@ int ACE_TMAIN (int, ACE_TCHAR *[])
           ::DDS::SubscriberQos sub_qos;
           retcode_qos = xml_loader.get_subscriber_qos (
                                 sub_qos,
-                                "qos#TestProfile");
+                                ACE_TEXT("qos#TestProfile"));
           if (retcode_qos != DDS::RETCODE_OK)
             {
               ACE_ERROR ((LM_ERROR, "MAIN - "
@@ -90,7 +135,7 @@ int ACE_TMAIN (int, ACE_TCHAR *[])
           ::DDS::DomainParticipantQos dp_qos;
           retcode_qos = xml_loader.get_participant_qos (
                                 dp_qos,
-                                "qos#TestProfile");
+                                ACE_TEXT("qos#TestProfile"));
           if (retcode_qos != DDS::RETCODE_OK)
             {
               ACE_ERROR ((LM_ERROR, "MAIN - "

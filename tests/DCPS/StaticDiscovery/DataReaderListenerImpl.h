@@ -11,30 +11,41 @@
 #include <dds/DdsDcpsSubscriptionC.h>
 #include <dds/DCPS/LocalObject.h>
 #include <dds/DCPS/Definitions.h>
+#include <dds/DCPS/GuidUtils.h>
 
 #include <string>
 #include <vector>
+#include <set>
+#include <map>
 
-typedef void (*callback_t)(bool);
+typedef void (*callback_t)(bool, const OpenDDS::DCPS::GUID_t&);
 
 class DataReaderListenerImpl
   : public virtual OpenDDS::DCPS::LocalObject<DDS::DataReaderListener> {
 public:
-  DataReaderListenerImpl(const std::string& id, const std::vector<std::string>& writers, const int total_writers, const int expected_samples, callback_t done_callback, DDS::Subscriber_ptr subscriber, bool check_bits)
-    : id_(id)
-    , writers_(writers)
+  DataReaderListenerImpl(const std::string& id, bool reliable, bool expect_all_samples, const int total_writers, const int expected_samples, callback_t done_callback, bool check_bits)
+    : reader_guid_(OpenDDS::DCPS::GUID_UNKNOWN)
+    , id_(id)
+    , reliable_(reliable)
+    , expect_all_samples_(expect_all_samples)
     , total_writers_(total_writers)
     , expected_samples_(expected_samples)
+    , previous_count_(0)
     , received_samples_(0)
     , done_callback_(done_callback)
-    , subscriber_(subscriber)
-    , check_bits_(check_bits)
     , builtin_read_error_(false)
+#ifndef DDS_HAS_MINIMUM_BIT
+    , check_bits_(check_bits)
+#endif
   {
-    ACE_DEBUG((LM_DEBUG, "(%P|%t) Starting DataReader %C\n", id.c_str()));
+#ifdef DDS_HAS_MINIMUM_BIT
+    ACE_UNUSED_ARG(check_bits);
+#endif
   }
 
   ~DataReaderListenerImpl();
+
+  void set_guid(const OpenDDS::DCPS::GUID_t& guid);
 
   virtual void on_requested_deadline_missed(
     DDS::DataReader_ptr reader,
@@ -72,17 +83,22 @@ public:
 #endif /* DDS_HAS_MINIMUM_BIT */
 
 private:
+  OpenDDS::DCPS::GUID_t reader_guid_;
   std::string id_;
-  const std::vector<std::string>& writers_;
+  bool reliable_;
+  bool expect_all_samples_;
   const int total_writers_;
   const int expected_samples_;
+  int previous_count_;
   int received_samples_;
+  typedef std::set<int> SampleSet;
+  typedef std::map<OpenDDS::DCPS::GUID_t, SampleSet, OpenDDS::DCPS::GUID_tKeyLessThan> SampleSetMap;
+  SampleSetMap guid_received_samples_;
   callback_t done_callback_;
-  DDS::Subscriber_ptr subscriber_;
-  bool check_bits_;
   bool builtin_read_error_;
 #ifndef DDS_HAS_MINIMUM_BIT
-  DDS::DataReader_var     builtin_;
+  bool check_bits_;
+  DDS::DataReader_var builtin_;
 #endif /* DDS_HAS_MINIMUM_BIT */
 };
 

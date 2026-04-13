@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_BESTEFFORTSESSION_H
-#define DCPS_BESTEFFORTSESSION_H
+#ifndef OPENDDS_DCPS_TRANSPORT_MULTICAST_BESTEFFORTSESSION_H
+#define OPENDDS_DCPS_TRANSPORT_MULTICAST_BESTEFFORTSESSION_H
 
 #include "Multicast_Export.h"
 
@@ -20,8 +20,7 @@ namespace DCPS {
 class OpenDDS_Multicast_Export BestEffortSession
   : public MulticastSession {
 public:
-  BestEffortSession(ACE_Reactor* reactor,
-                    ACE_thread_t owner,
+  BestEffortSession(RcHandle<EventDispatcher> event_dispatcher,
                     MulticastDataLink* link,
                     MulticastPeer remote_peer);
 

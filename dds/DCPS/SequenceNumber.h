@@ -8,15 +8,15 @@
 #ifndef OPENDDS_DCPS_SEQUENCENUMBER_H
 #define OPENDDS_DCPS_SEQUENCENUMBER_H
 
-#include "ace/Global_Macros.h"
+#include "Serializer.h"
 
-#include <utility>
+#include <ace/Global_Macros.h>
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 #pragma once
 #endif /* ACE_LACKS_PRAGMA_ONCE */
 
-#include "dds/DCPS/Serializer.h"
+#include <utility>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -47,14 +47,14 @@ public:
     } else {
       ++this->low_;
     }
-    return *this ;
+    return *this;
   }
 
   /// Post-increment.
   SequenceNumber operator++(int) {
     SequenceNumber value(*this);
     ++*this;
-    return value ;
+    return value;
   }
 
   SequenceNumber previous() const {
@@ -70,7 +70,7 @@ public:
     } else {
       --retVal.low_;
     }
-    return retVal ;
+    return retVal;
   }
 
   void setValue(Value value) {
@@ -101,11 +101,11 @@ public:
   /// Derive a full suite of logical operations.
   bool operator==(const SequenceNumber& rvalue) const {
     return (this->high_ == rvalue.high_) &&
-           (this->low_ == rvalue.low_) ;
+           (this->low_ == rvalue.low_);
   }
   bool operator!=(const SequenceNumber& rvalue) const {
     return (this->high_ != rvalue.high_) ||
-           (this->low_ != rvalue.low_) ;
+           (this->low_ != rvalue.low_);
   }
   bool operator>=(const SequenceNumber& rvalue) const {
     return !(*this  < rvalue);
@@ -125,7 +125,7 @@ public:
     return low_;
   }
 
-  // SEQUENCENUMBER_UNKOWN is defined by the RTPS spec.
+  // SEQUENCENUMBER_UNKNOWN is defined by the RTPS spec.
   static SequenceNumber SEQUENCENUMBER_UNKNOWN() {
     return SequenceNumber(-1, 0);
   }
@@ -193,16 +193,21 @@ operator+(int lhs, const SequenceNumber& rhs)
   return rhs + lhs;
 }
 
-inline void
-gen_find_size(const SequenceNumber& /*sn*/, size_t& size, size_t& padding) {
-  find_size_ulong(size, padding);
-  size += gen_max_marshaled_size(CORBA::Long());
+inline
+void serialized_size(const Encoding& encoding, size_t& size,
+  const SequenceNumber& /*sn*/)
+{
+  primitive_serialized_size_ulong(encoding, size, 2);
 }
 
 typedef std::pair<SequenceNumber, SequenceNumber> SequenceRange;
+extern OpenDDS_Dcps_Export const SequenceRange unknown_sequence_range;
 
-} // namespace OpenDDS
+typedef SequenceNumber::Value FragmentNumber;
+static const FragmentNumber INVALID_FRAGMENT = -1;
+
 } // namespace DCPS
+} // namespace OpenDDS
 
 OPENDDS_END_VERSIONED_NAMESPACE_DECL
 

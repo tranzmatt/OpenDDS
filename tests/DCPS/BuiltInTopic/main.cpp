@@ -21,6 +21,7 @@
 #include "tests/DCPS/FooType4/FooDefTypeSupportImpl.h"
 #include "tests/DCPS/common/TestSupport.h"
 #include "dds/DdsDcpsCoreTypeSupportImpl.h"
+#include "tests/Utils/WaitForSample.h"
 
 #if !defined(DDS_HAS_MINIMUM_BIT)
 #include "dds/DCPS/StaticIncludes.h"
@@ -186,6 +187,8 @@ void test_bit_participant ()
 
       TEST_CHECK (! CORBA::is_nil (dr.in ()));
 
+      Utils::waitForSample(dr);
+
       ::DDS::ParticipantBuiltinTopicDataDataReader_var part_dr
         = ::DDS::ParticipantBuiltinTopicDataDataReader::_narrow (dr.in ());
 
@@ -211,13 +214,7 @@ void test_bit_participant ()
 
       // BuiltinTopicKey_t is initialized from its corresponding RepoId.
       // This test verifies that the conversion was done correctly.
-
-      //NOTE: this is only valid for InfoRepo-based Discovery
-
-      OpenDDS::DCPS::RepoIdConverter converter(participant_servant->get_id());
-      TEST_CHECK(part_data[0].key.value[0] == converter.federationId());
-      TEST_CHECK(part_data[0].key.value[1] == converter.participantId());
-      TEST_CHECK(part_data[0].key.value[2] == converter.entityId());
+      TEST_CHECK(OpenDDS::DCPS::bit_key_to_guid(part_data[0].key) == participant_servant->get_id());
     }
   catch (...)
     {
@@ -236,6 +233,8 @@ void test_bit_topic ()
         = bit_subscriber->lookup_datareader (BUILT_IN_TOPIC_TOPIC);
 
       TEST_CHECK (! CORBA::is_nil (dr.in ()));
+
+      Utils::waitForSample(dr);
 
       ::DDS::TopicBuiltinTopicDataDataReader_var topic_dr
         = ::DDS::TopicBuiltinTopicDataDataReader::_narrow (dr.in ());
@@ -260,21 +259,13 @@ void test_bit_topic ()
 
       // BuiltinTopicKey_t is initialized from its corresponding RepoId.
       // This test verifies that the conversion was done correctly.
-
-      //NOTE: this is only valid for InfoRepo-based Discovery
-      OpenDDS::DCPS::RepoIdConverter converter(topic_servant->get_id());
-
-      TEST_CHECK(topic_data[0].key.value[0] == converter.federationId());
-      TEST_CHECK(topic_data[0].key.value[1] == converter.participantId());
-      TEST_CHECK(topic_data[0].key.value[2] == converter.entityId());
+      TEST_CHECK(OpenDDS::DCPS::bit_key_to_guid(topic_data[0].key) == topic_servant->get_id());
 
       topic_servant->get_qos (topic_qos);
 
       TEST_CHECK (ACE_OS::strcmp (topic_data[0].name.in (), TEST_TOPIC) == 0);
       TEST_CHECK (ACE_OS::strcmp (topic_data[0].type_name.in (), TEST_TOPIC_TYPE) == 0);
 
-      //The SunOS compiler had problem resolving operator in a namespace.
-      //To resolve the compilation errors, the operator is called explicitly.
       TEST_CHECK (topic_data[0].durability == topic_qos.durability);
       TEST_CHECK (topic_data[0].deadline == topic_qos.deadline);
       TEST_CHECK (topic_data[0].latency_budget == topic_qos.latency_budget);
@@ -304,6 +295,8 @@ void test_bit_publication ()
 
       TEST_CHECK (! CORBA::is_nil (dr.in ()));
 
+      Utils::waitForSample(dr);
+
       ::DDS::PublicationBuiltinTopicDataDataReader_var pub_dr
         = ::DDS::PublicationBuiltinTopicDataDataReader::_narrow (dr.in ());
 
@@ -330,27 +323,15 @@ void test_bit_publication ()
 
       // BuiltinTopicKey_t is initialized from its corresponding RepoId.
       // This test verifies that the conversion was done correctly.
-      OpenDDS::DCPS::RepoIdConverter pub_converter(datawriter_servant->get_publication_id());
-      //NOTE: this is only valid for InfoRepo-based Discovery
-
-      TEST_CHECK(the_pub_data.key.value[0] == pub_converter.federationId());
-      TEST_CHECK(the_pub_data.key.value[1] == pub_converter.participantId());
-      TEST_CHECK(the_pub_data.key.value[2] == pub_converter.entityId());
+      TEST_CHECK(OpenDDS::DCPS::bit_key_to_guid(the_pub_data.key) == datawriter_servant->get_guid());
 
       // BuiltinTopicKey_t is initialized from its corresponding RepoId.
       // This test verifies that the conversion was done correctly.
-      OpenDDS::DCPS::RepoIdConverter part_converter(participant_servant->get_id());
-      //NOTE: this is only valid for InfoRepo-based Discovery
-
-      TEST_CHECK(the_pub_data.participant_key.value[0] == part_converter.federationId());
-      TEST_CHECK(the_pub_data.participant_key.value[1] == part_converter.participantId());
-      TEST_CHECK(the_pub_data.participant_key.value[2] == part_converter.entityId());
+      TEST_CHECK(OpenDDS::DCPS::bit_key_to_guid(the_pub_data.participant_key) == participant_servant->get_id());
 
       TEST_CHECK (ACE_OS::strcmp (the_pub_data.topic_name.in (), TEST_TOPIC) == 0);
       TEST_CHECK (ACE_OS::strcmp (the_pub_data.type_name.in (), TEST_TOPIC_TYPE) == 0);
 
-      //The SunOS compiler had problem resolving operator in a namespace.
-      //To resolve the compilation errors, the operator is called explicitly.
       TEST_CHECK (the_pub_data.durability == dw_qos.durability);
       TEST_CHECK (the_pub_data.deadline == dw_qos.deadline);
       TEST_CHECK (the_pub_data.latency_budget == dw_qos.latency_budget);
@@ -383,6 +364,8 @@ void test_bit_subscription ()
 
       TEST_CHECK (! CORBA::is_nil (dr.in ()));
 
+      Utils::waitForSample(dr);
+
       ::DDS::SubscriptionBuiltinTopicDataDataReader_var sub_dr
         = ::DDS::SubscriptionBuiltinTopicDataDataReader::_narrow (dr.in ());
 
@@ -409,27 +392,15 @@ void test_bit_subscription ()
 
       // BuiltinTopicKey_t is initialized from its corresponding RepoId.
       // This test verifies that the conversion was done correctly.
-      OpenDDS::DCPS::RepoIdConverter sub_converter(datareader_servant->get_subscription_id());
-      //NOTE: this is only valid for InfoRepo-based Discovery
-
-      TEST_CHECK(the_sub_data.key.value[0] == sub_converter.federationId());
-      TEST_CHECK(the_sub_data.key.value[1] == sub_converter.participantId());
-      TEST_CHECK(the_sub_data.key.value[2] == sub_converter.entityId());
+      TEST_CHECK(OpenDDS::DCPS::bit_key_to_guid(the_sub_data.key) == datareader_servant->get_guid());
 
       // BuiltinTopicKey_t is initialized from its corresponding RepoId.
       // This test verifies that the conversion was done correctly.
-      OpenDDS::DCPS::RepoIdConverter part_converter(participant_servant->get_id());
-      //NOTE: this is only valid for InfoRepo-based Discovery
-
-      TEST_CHECK(the_sub_data.participant_key.value[0] == part_converter.federationId());
-      TEST_CHECK(the_sub_data.participant_key.value[1] == part_converter.participantId());
-      TEST_CHECK(the_sub_data.participant_key.value[2] == part_converter.entityId());
+      TEST_CHECK(OpenDDS::DCPS::bit_key_to_guid(the_sub_data.participant_key) == participant_servant->get_id());
 
       TEST_CHECK (ACE_OS::strcmp (the_sub_data.topic_name.in (), TEST_TOPIC) == 0);
       TEST_CHECK (ACE_OS::strcmp (the_sub_data.type_name.in (), TEST_TOPIC_TYPE) == 0);
 
-      //The SunOS compiler had problem resolving operator in a namespace.
-      //To resolve the compilation errors, the operator is called explicitly.
       TEST_CHECK (the_sub_data.durability == dr_qos.durability);
       TEST_CHECK (the_sub_data.deadline == dr_qos.deadline);
       TEST_CHECK (the_sub_data.latency_budget == dr_qos.latency_budget);

@@ -31,6 +31,8 @@ Test::DataReaderListener::passed() const
 void
 Test::DataReaderListener::on_data_available (DDS::DataReader_ptr reader)
 {
+  ACE_Guard<ACE_Thread_Mutex> g(mutex_);
+
   Test::DataDataReader_var dr = Test::DataDataReader::_narrow (reader);
   if (!dr) {
     ACE_ERROR((LM_ERROR,
@@ -196,4 +198,3 @@ Test::DataReaderListener::on_budget_exceeded (
     const ::OpenDDS::DCPS::BudgetExceededStatus&)
 {
 }
-

@@ -5,25 +5,22 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_FILESYSTEMSTORAGE_H
-#define OPENDDS_FILESYSTEMSTORAGE_H
+#ifndef OPENDDS_DCPS_FILESYSTEMSTORAGE_H
+#define OPENDDS_DCPS_FILESYSTEMSTORAGE_H
 
 #ifndef OPENDDS_SAFETY_PROFILE
 
-#include "dds/DCPS/dcps_export.h"
-#include "dds/DCPS/RcHandle_T.h"
-#include "dds/DCPS/RcObject.h"
+#include "dcps_export.h"
+
+#include "DirentWrapper.h"
+#include "RcHandle_T.h"
+#include "RcObject.h"
 
 #include "ace/Synch_Traits.h"
 #include "ace/SString.h"
-#include "ace/os_include/os_dirent.h"
-
-ACE_BEGIN_VERSIONED_NAMESPACE_DECL
-class ACE_Dirent;
-ACE_END_VERSIONED_NAMESPACE_DECL
 
 #include <iosfwd>
-#include "dds/DCPS/PoolAllocator.h"
+#include "PoolAllocator.h"
 
 #include <iterator>
 
@@ -31,7 +28,7 @@ ACE_END_VERSIONED_NAMESPACE_DECL
 #pragma once
 #endif /* ACE_LACKS_PRAGMA_ONCE */
 
-// This can be overriden by the user, but make sure that it's less than
+// This can be overridden by the user, but make sure that it's less than
 // the actual operating system and filesystem limit so that the "overflow"
 // directories can be created as needed.
 #ifndef OPENDDS_FILESYSTEMSTORAGE_MAX_FILES_PER_DIR
@@ -112,9 +109,14 @@ private:
   typedef OPENDDS_MAP(ACE_TString, ACE_TString) Map;
 
   template <typename Item>
-  class Iterator
-        : public std::iterator<std::input_iterator_tag, typename Item::Ptr> {
+  class Iterator {
   public:
+    typedef std::input_iterator_tag iterator_category;
+    typedef typename Item::Ptr value_type;
+    typedef std::ptrdiff_t difference_type;
+    typedef value_type* pointer;
+    typedef value_type& reference;
+
     typename Item::Ptr operator*() const {
       return deref();
     }

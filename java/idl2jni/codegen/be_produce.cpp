@@ -112,7 +112,7 @@ string to_macro(const char *fn)
   string ret = "IDL2JNI_GENERATED_";
 
   for (size_t i = 0; i < strlen(fn); ++i) {
-    ret += isalnum(fn[i]) ? toupper(fn[i]) : '_';
+    ret += isalnum(fn[i]) ? static_cast<char>(toupper(fn[i])) : '_';
   }
 
   return ret;
@@ -244,7 +244,7 @@ BE_produce()
 
   // Get the root node.
   AST_Decl *d = idl_global->root();
-  AST_Root *root = AST_Root::narrow_from_decl(d);
+  AST_Root *root = dynamic_cast<AST_Root*>(d);
 
   if (root == 0) {
     ACE_ERROR((LM_ERROR,

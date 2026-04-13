@@ -5,14 +5,16 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DATABLOCKLOCKPOOL_H
-#define DATABLOCKLOCKPOOL_H
+#ifndef OPENDDS_DCPS_DATABLOCKLOCKPOOL_H
+#define OPENDDS_DCPS_DATABLOCKLOCKPOOL_H
 
-#include "ace/Lock_Adapter_T.h"
-#include "ace/Thread_Mutex.h"
-#include "ace/Containers_T.h"
+#include "Atomic.h"
 #include "dcps_export.h"
-#include "dds/DCPS/PoolAllocationBase.h"
+#include "PoolAllocationBase.h"
+
+#include <ace/Lock_Adapter_T.h>
+#include <ace/Thread_Mutex.h>
+#include <ace/Containers_T.h>
 
 /**
  * @class DataBlockLockPool
@@ -39,17 +41,17 @@ public:
   ~DataBlockLockPool() { }
 
   DataBlockLock * get_lock() {
-    unsigned long index = iterator_++ % size_;
+    const unsigned long index = iterator_++ % size_;
     return &(pool_[index]);
   }
 
 private:
   typedef ACE_Array<DataBlockLock> Pool;
 
-  Pool   pool_;
+  Pool pool_;
   const unsigned long size_;
   /// Counter used to track which lock to give out next (modulus size_)
-  ACE_Atomic_Op<ACE_Thread_Mutex, unsigned long> iterator_;
+  OpenDDS::DCPS::Atomic<unsigned long> iterator_;
 };
 
 #endif /* DATABLOCKLOCKPOOL_H  */

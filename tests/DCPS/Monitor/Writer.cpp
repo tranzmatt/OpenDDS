@@ -119,15 +119,17 @@ Writer::svc()
 
       message.count++;
 
-      if (send_interval > 0)
-      {
-        ACE_OS::sleep (send_interval);
+      if (send_interval > 0) {
+        ACE_OS::sleep(static_cast<unsigned int>(send_interval));
       }
     }
 
   } catch (const CORBA::Exception& e) {
     e._tao_print_exception("Exception caught in svc():");
   }
+
+  // Patch to prevent premature shutdown
+  ACE_OS::sleep(1);
 
   finished_instances_ ++;
 
@@ -143,5 +145,5 @@ Writer::is_finished() const
 int
 Writer::get_timeout_writes() const
 {
-  return timeout_writes_.value();
+  return timeout_writes_;
 }

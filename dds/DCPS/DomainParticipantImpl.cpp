@@ -1,48 +1,53 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
 
-#include "DCPS/DdsDcps_pch.h" //Only the _pch include should start with DCPS/
+#include <DCPS/DdsDcps_pch.h> // Only the _pch include should start with DCPS/
+
 #include "DomainParticipantImpl.h"
-#include "dds/DdsDcpsGuidC.h"
-#include "FeatureDisabledQosCheck.h"
-#include "Service_Participant.h"
-#include "Qos_Helper.h"
-#include "GuidConverter.h"
-#include "PublisherImpl.h"
-#include "SubscriberImpl.h"
-#include "DataWriterImpl.h"
-#include "Marked_Default_Qos.h"
-#include "Registered_Data_Types.h"
-#include "Transient_Kludge.h"
-#include "DomainParticipantFactoryImpl.h"
-#include "Util.h"
-#include "MonitorFactory.h"
-#include "BitPubListenerImpl.h"
-#include "ContentFilteredTopicImpl.h"
-#include "MultiTopicImpl.h"
-#include "dds/DCPS/transport/framework/TransportRegistry.h"
-#include "dds/DCPS/transport/framework/TransportExceptions.h"
-
-#ifdef OPENDDS_SECURITY
-#include "dds/DCPS/security/framework/SecurityRegistry.h"
-#include "dds/DCPS/security/framework/SecurityConfig.h"
-#endif
-
-#include "RecorderImpl.h"
-#include "ReplayerImpl.h"
 
 #include "BuiltInTopicUtils.h"
-#if !defined (DDS_HAS_MINIMUM_BIT)
-#include "dds/DdsDcpsCoreTypeSupportImpl.h"
-#endif // !defined (DDS_HAS_MINIMUM_BIT)
+#include "ContentFilteredTopicImpl.h"
+#include "DCPS_Utils.h"
+#include "DataWriterImpl.h"
+#include "DomainParticipantFactoryImpl.h"
+#include "FeatureDisabledQosCheck.h"
+#include "GuidConverter.h"
+#include "Marked_Default_Qos.h"
+#include "MonitorFactory.h"
+#include "MultiTopicImpl.h"
+#include "PublisherImpl.h"
+#include "Qos_Helper.h"
+#include "RecorderImpl.h"
+#include "Registered_Data_Types.h"
+#include "ReplayerImpl.h"
+#include "Service_Participant.h"
+#include "Service_Participant.h"
+#include "SubscriberImpl.h"
+#include "Transient_Kludge.h"
+#include "Util.h"
 
-#include "tao/debug.h"
-#include "ace/Reactor.h"
-#include "ace/OS_NS_unistd.h"
+#include "transport/framework/TransportRegistry.h"
+#include "transport/framework/TransportExceptions.h"
+
+#include <dds/OpenDDSConfigWrapper.h>
+
+#if OPENDDS_CONFIG_SECURITY
+#  include "security/framework/SecurityRegistry.h"
+#  include "security/framework/SecurityConfig.h"
+#  include "security/framework/Properties.h"
+#endif
+
+#include "XTypes/Utils.h"
+
+#include <dds/DdsDcpsGuidC.h>
+#ifndef DDS_HAS_MINIMUM_BIT
+#  include <dds/DdsDcpsCoreTypeSupportImpl.h>
+#endif
+
+#include <ace/Reactor.h>
+#include <ace/OS_NS_unistd.h>
 
 namespace Util {
 
@@ -89,37 +94,54 @@ namespace DCPS {
 //      cannot be false.
 
 // Implementation skeleton constructor
-DomainParticipantImpl::DomainParticipantImpl(DomainParticipantFactoryImpl *     factory,
-                                             const DDS::DomainId_t&             domain_id,
-                                             const DDS::DomainParticipantQos &  qos,
-                                             DDS::DomainParticipantListener_ptr a_listener,
-                                             const DDS::StatusMask &            mask)
-  : factory_(factory),
-    default_topic_qos_(TheServiceParticipant->initial_TopicQos()),
-    default_publisher_qos_(TheServiceParticipant->initial_PublisherQos()),
-    default_subscriber_qos_(TheServiceParticipant->initial_SubscriberQos()),
-    qos_(qos),
-#ifdef OPENDDS_SECURITY
-    id_handle_(DDS::HANDLE_NIL),
-    perm_handle_(DDS::HANDLE_NIL),
-    part_crypto_handle_(DDS::HANDLE_NIL),
+DomainParticipantImpl::DomainParticipantImpl(
+  InstanceHandleGenerator& handle_generator,
+  const DDS::DomainId_t& domain_id,
+  const DDS::DomainParticipantQos& qos,
+  DDS::DomainParticipantListener_ptr a_listener,
+  const DDS::StatusMask& mask)
+  : default_topic_qos_(TheServiceParticipant->initial_TopicQos())
+  , default_publisher_qos_(TheServiceParticipant->initial_PublisherQos())
+  , default_subscriber_qos_(TheServiceParticipant->initial_SubscriberQos())
+  , qos_(qos)
+#if OPENDDS_CONFIG_SECURITY
+  , id_handle_(DDS::HANDLE_NIL)
+  , perm_handle_(DDS::HANDLE_NIL)
+  , part_crypto_handle_(DDS::HANDLE_NIL)
 #endif
-    domain_id_(domain_id),
-    dp_id_(GUID_UNKNOWN),
-    federated_(false),
-    shutdown_condition_(shutdown_mutex_),
-    shutdown_complete_(false),
-    monitor_(0),
-    pub_id_gen_(dp_id_),
-    automatic_liveliness_timer_ (*this),
-    participant_liveliness_timer_ (*this)
+  , domain_id_(domain_id)
+  , dp_id_(GUID_UNKNOWN)
+  , federated_(false)
+  , handle_waiters_(handle_protector_)
+  , participant_handles_(handle_generator)
+  , pub_id_gen_(dp_id_)
+  , automatic_liveliness_timer_(make_rch<AutomaticLivelinessTimer>(ref(*this)))
+  , automatic_liveliness_task_(make_rch<SporadicEvent>(TheServiceParticipant->event_dispatcher(), make_rch<AutomaticLivelinessTimerEvent>(automatic_liveliness_timer_, &LivelinessTimer::execute)))
+  , participant_liveliness_timer_(make_rch<ParticipantLivelinessTimer>(ref(*this)))
+  , participant_liveliness_task_(make_rch<SporadicEvent>(TheServiceParticipant->event_dispatcher(), make_rch<ParticipantLivelinessTimerEvent>( participant_liveliness_timer_, &LivelinessTimer::execute)))
 {
   (void) this->set_listener(a_listener, mask);
-  monitor_ = TheServiceParticipant->monitor_factory_->create_dp_monitor(this);
+  monitor_.reset(TheServiceParticipant->monitor_factory_->create_dp_monitor(this));
+  type_lookup_service_ = make_rch<XTypes::TypeLookupService>();
 }
 
 DomainParticipantImpl::~DomainParticipantImpl()
 {
+#if OPENDDS_CONFIG_SECURITY
+  if (security_config_ && perm_handle_ != DDS::HANDLE_NIL) {
+    Security::AccessControl_var access = security_config_->get_access_control();
+    DDS::Security::SecurityException se;
+    if (!access->return_permissions_handle(perm_handle_, se)) {
+      if (DCPS::security_debug.auth_warn) {
+        ACE_ERROR((LM_ERROR,
+                   ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::~DomainParticipantImpl: ")
+                   ACE_TEXT("Unable to return permissions handle. SecurityException[%d.%d]: %C\n"),
+                   se.code, se.minor_code, se.message.in()));
+      }
+    }
+  }
+#endif
+
 }
 
 DDS::Publisher_ptr
@@ -133,9 +155,14 @@ DomainParticipantImpl::create_publisher(
   if (! this->validate_publisher_qos(pub_qos))
     return DDS::Publisher::_nil();
 
+  // Although Publisher entities have GUIDs assigned (see pub_id_gen_),
+  // these are not GUIDs from the RTPS spec and
+  // so the handle doesn't need to correlate to the GUID.
+  const DDS::InstanceHandle_t handle = assign_handle();
+
   PublisherImpl* pub = 0;
   ACE_NEW_RETURN(pub,
-                 PublisherImpl(participant_handles_.next(),
+                 PublisherImpl(handle,
                                pub_id_gen_.next(),
                                pub_qos,
                                a_listener,
@@ -143,14 +170,14 @@ DomainParticipantImpl::create_publisher(
                                this),
                  DDS::Publisher::_nil());
 
-  if ((enabled_ == true) && (qos_.entity_factory.autoenable_created_entities)) {
+  if (enabled_ && qos_.entity_factory.autoenable_created_entities) {
     pub->enable();
   }
 
   DDS::Publisher_ptr pub_obj(pub);
 
   // this object will also act as the guard for leaking Publisher Impl
-  Publisher_Pair pair(pub, pub_obj, NO_DUP);
+  Publisher_Pair pair(pub, pub_obj, false);
 
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
                    tao_mon,
@@ -158,10 +185,12 @@ DomainParticipantImpl::create_publisher(
                    DDS::Publisher::_nil());
 
   if (OpenDDS::DCPS::insert(publishers_, pair) == -1) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::create_publisher, ")
-               ACE_TEXT("%p\n"),
-               ACE_TEXT("insert")));
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::create_publisher, ")
+                 ACE_TEXT("%p\n"),
+                 ACE_TEXT("insert")));
+    }
     return DDS::Publisher::_nil();
   }
 
@@ -173,43 +202,63 @@ DomainParticipantImpl::delete_publisher(
   DDS::Publisher_ptr p)
 {
   // The servant's ref count should be 2 at this point,
-  // one referenced by poa, one referenced by the subscriber
+  // one referenced by poa, one referenced by the publisher
   // set.
   PublisherImpl* the_servant = dynamic_cast<PublisherImpl*>(p);
-
   if (!the_servant) {
-    ACE_ERROR((LM_ERROR,
-      ACE_TEXT("(%P|%t) ERROR: ")
-      ACE_TEXT("DomainParticipantImpl::delete_publisher, ")
-      ACE_TEXT("Failed to obtain PublisherImpl.\n")));
+    if (log_level >= LogLevel::Notice) {
+      ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_publisher: "
+                 "Failed to obtain PublisherImpl\n"));
+    }
     return DDS::RETCODE_ERROR;
   }
 
-  if (!the_servant->is_clean()) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("DomainParticipantImpl::delete_publisher, ")
-               ACE_TEXT("The publisher is not empty.\n")));
+  const Publisher_Pair pub_pair(the_servant, p, true);
+
+  {
+    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, g,
+      publishers_protector_, DDS::RETCODE_ERROR);
+    if (publishers_.count(pub_pair) == 0) {
+      if (log_level >= LogLevel::Notice) {
+        ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_publisher: "
+                   "This publisher doesn't belong to this participant\n"));
+      }
+      return DDS::RETCODE_PRECONDITION_NOT_MET;
+    }
+  }
+
+  String leftover_entities;
+  if (!the_servant->is_clean(&leftover_entities)) {
+    if (log_level >= LogLevel::Notice) {
+      ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_publisher: "
+                 "The publisher is not empty. %C leftover\n",
+                 leftover_entities.c_str()));
+    }
     return DDS::RETCODE_PRECONDITION_NOT_MET;
   }
 
-  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                   tao_mon,
-                   this->publishers_protector_,
-                   DDS::RETCODE_ERROR);
-
-  Publisher_Pair pair(the_servant, p, DUP);
-
-  if (OpenDDS::DCPS::remove(publishers_, pair) == -1) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::delete_publisher, ")
-               ACE_TEXT("%p\n"),
-               ACE_TEXT("remove")));
-    return DDS::RETCODE_ERROR;
-
-  } else {
-    return DDS::RETCODE_OK;
+  const DDS::ReturnCode_t ret = the_servant->delete_contained_entities();
+  if (ret != DDS::RETCODE_OK) {
+    if (log_level >= LogLevel::Notice) {
+      ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_publisher: "
+                 "Failed to delete contained entities: %C\n", retcode_to_string(ret)));
+    }
+    return ret;
   }
+
+  {
+    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, g,
+      publishers_protector_, DDS::RETCODE_ERROR);
+    if (remove(publishers_, pub_pair) == -1) {
+      if (log_level >= LogLevel::Notice) {
+        ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_publisher: "
+          "publisher not found\n"));
+      }
+      return DDS::RETCODE_ERROR;
+    }
+  }
+
+  return DDS::RETCODE_OK;
 }
 
 DDS::Subscriber_ptr
@@ -224,22 +273,24 @@ DomainParticipantImpl::create_subscriber(
     return DDS::Subscriber::_nil();
   }
 
-  SubscriberImpl* sub = 0 ;
+  const DDS::InstanceHandle_t handle = assign_handle();
+
+  SubscriberImpl* sub = 0;
   ACE_NEW_RETURN(sub,
-                 SubscriberImpl(participant_handles_.next(),
+                 SubscriberImpl(handle,
                                 sub_qos,
                                 a_listener,
                                 mask,
                                 this),
                  DDS::Subscriber::_nil());
 
-  if ((enabled_ == true) && (qos_.entity_factory.autoenable_created_entities)) {
+  if (enabled_ && qos_.entity_factory.autoenable_created_entities) {
     sub->enable();
   }
 
   DDS::Subscriber_ptr sub_obj(sub);
 
-  Subscriber_Pair pair(sub, sub_obj, NO_DUP);
+  Subscriber_Pair pair(sub, sub_obj, false);
 
   ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
                    tao_mon,
@@ -247,10 +298,12 @@ DomainParticipantImpl::create_subscriber(
                    DDS::Subscriber::_nil());
 
   if (OpenDDS::DCPS::insert(subscribers_, pair) == -1) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::create_subscriber, ")
-               ACE_TEXT("%p\n"),
-               ACE_TEXT("insert")));
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::create_subscriber, ")
+                 ACE_TEXT("%p\n"),
+                 ACE_TEXT("insert")));
+    }
     return DDS::Subscriber::_nil();
   }
 
@@ -264,58 +317,75 @@ DomainParticipantImpl::delete_subscriber(
   // The servant's ref count should be 2 at this point,
   // one referenced by poa, one referenced by the subscriber
   // set.
-  SubscriberImpl* the_servant = dynamic_cast<SubscriberImpl*>(s);
-
+  SubscriberImpl* const the_servant = dynamic_cast<SubscriberImpl*>(s);
   if (!the_servant) {
-    ACE_ERROR((LM_ERROR,
-      ACE_TEXT("(%P|%t) ERROR: ")
-      ACE_TEXT("DomainParticipantImpl::delete_subscriber, ")
-      ACE_TEXT("Failed to obtain SubscriberImpl.\n")));
+    if (log_level >= LogLevel::Notice) {
+      ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_subscriber: "
+                 "Failed to obtain SubscriberImpl\n"));
+    }
     return DDS::RETCODE_ERROR;
   }
 
-  if (!the_servant->is_clean()) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("DomainParticipantImpl::delete_subscriber, ")
-               ACE_TEXT("The subscriber is not empty.\n")));
+  const Subscriber_Pair sub_pair(the_servant, s, true);
+
+  {
+    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, g,
+      subscribers_protector_, DDS::RETCODE_ERROR);
+    if (subscribers_.count(sub_pair) == 0) {
+      if (log_level >= LogLevel::Notice) {
+        ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_subscriber: "
+                   "This subscriber doesn't belong to this participant\n"));
+      }
+      return DDS::RETCODE_PRECONDITION_NOT_MET;
+    }
+  }
+
+  String leftover_entities;
+  if (!the_servant->is_clean(&leftover_entities)) {
+    if (log_level >= LogLevel::Notice) {
+      ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_subscriber: "
+                 "The subscriber is not empty. %C leftover\n",
+                 leftover_entities.c_str()));
+    }
     return DDS::RETCODE_PRECONDITION_NOT_MET;
   }
 
-  DDS::ReturnCode_t ret
-  = the_servant->delete_contained_entities();
-
+  const DDS::ReturnCode_t ret = the_servant->delete_contained_entities();
   if (ret != DDS::RETCODE_OK) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("DomainParticipantImpl::delete_subscriber, ")
-               ACE_TEXT("Failed to delete contained entities.\n")));
-    return DDS::RETCODE_ERROR;
+    if (log_level >= LogLevel::Notice) {
+      ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_subscriber: "
+                 "Failed to delete contained entities: %C\n", retcode_to_string(ret)));
+    }
+    return ret;
   }
 
-  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                   tao_mon,
-                   this->subscribers_protector_,
-                   DDS::RETCODE_ERROR);
-
-  Subscriber_Pair pair(the_servant, s, DUP);
-
-  if (OpenDDS::DCPS::remove(subscribers_, pair) == -1) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::delete_subscriber, ")
-               ACE_TEXT("%p\n"),
-               ACE_TEXT("remove")));
-    return DDS::RETCODE_ERROR;
-
-  } else {
-    return DDS::RETCODE_OK;
+  {
+    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, g,
+      subscribers_protector_, DDS::RETCODE_ERROR);
+    if (remove(subscribers_, sub_pair) == -1) {
+      if (log_level >= LogLevel::Notice) {
+        ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_subscriber: "
+          "subscriber not found\n"));
+      }
+      return DDS::RETCODE_ERROR;
+    }
   }
+
+  return DDS::RETCODE_OK;
 }
 
 DDS::Subscriber_ptr
 DomainParticipantImpl::get_builtin_subscriber()
 {
-  return DDS::Subscriber::_duplicate(bit_subscriber_.in());
+  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, g, subscribers_protector_, DDS::Subscriber_ptr());
+  return bit_subscriber_->get();
+}
+
+RcHandle<BitSubscriber>
+DomainParticipantImpl::get_builtin_subscriber_proxy()
+{
+  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, g, subscribers_protector_, RcHandle<BitSubscriber>());
+  return bit_subscriber_;
 }
 
 DDS::Topic_ptr
@@ -378,21 +448,26 @@ DomainParticipantImpl::create_topic_i(
   OPENDDS_NO_DURABILITY_KIND_TRANSIENT_PERSISTENT_COMPATIBILITY_CHECK(qos, DDS::Topic::_nil());
 
   if (!Qos_Helper::valid(topic_qos)) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("DomainParticipantImpl::create_topic, ")
-               ACE_TEXT("invalid qos.\n")));
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: ")
+                 ACE_TEXT("DomainParticipantImpl::create_topic, ")
+                 ACE_TEXT("invalid qos.\n")));
+    }
     return DDS::Topic::_nil();
   }
 
   if (!Qos_Helper::consistent(topic_qos)) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("DomainParticipantImpl::create_topic, ")
-               ACE_TEXT("inconsistent qos.\n")));
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: ")
+                 ACE_TEXT("DomainParticipantImpl::create_topic, ")
+                 ACE_TEXT("inconsistent qos.\n")));
+    }
     return DDS::Topic::_nil();
   }
 
+  // See if there is a Topic with the same name.
   TopicMap::mapped_type* entry = 0;
   bool found = false;
   {
@@ -405,9 +480,9 @@ DomainParticipantImpl::create_topic_i(
     if (topic_descrs_.count(topic_name)) {
       if (DCPS_debug_level > 3) {
         ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-          ACE_TEXT("DomainParticipantImpl::create_topic, ")
-          ACE_TEXT("can't create a Topic due to name \"%C\" already in use ")
-          ACE_TEXT("by a TopicDescription.\n"), topic_name));
+                   ACE_TEXT("DomainParticipantImpl::create_topic, ")
+                   ACE_TEXT("can't create a Topic due to name \"%C\" already in use ")
+                   ACE_TEXT("by a TopicDescription.\n"), topic_name));
       }
       return 0;
     }
@@ -418,10 +493,12 @@ DomainParticipantImpl::create_topic_i(
     }
   }
 
+  /*
+   * If there is a topic with the same name, return the topic if it has the
+   * same type name and QoS, else it is an error.
+   */
   if (found) {
-    CORBA::String_var found_type
-    = entry->pair_.svt_->get_type_name();
-
+    CORBA::String_var found_type = entry->pair_.svt_->get_type_name();
     if (ACE_OS::strcmp(type_name, found_type) == 0) {
       DDS::TopicQos found_qos;
       entry->pair_.svt_->get_qos(found_qos);
@@ -436,23 +513,25 @@ DomainParticipantImpl::create_topic_i(
         }
         return DDS::Topic::_duplicate(entry->pair_.obj_.in());
 
-      } else {
+      } else { // Same Name and Type, Different QoS
         if (DCPS_debug_level >= 1) {
-          ACE_DEBUG((LM_DEBUG,
-                     ACE_TEXT("(%P|%t) DomainParticipantImpl::create_topic, ")
-                     ACE_TEXT("qos not match: topic_name=%C type_name=%C\n"),
-                     topic_name, type_name));
+          ACE_ERROR((LM_ERROR,
+            ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::create_topic: ")
+            ACE_TEXT("topic with name \"%C\" and type %C already exists, ")
+            ACE_TEXT("but the QoS doesn't match.\n"),
+            topic_name, type_name));
         }
 
         return DDS::Topic::_nil();
       }
 
-    } else { // no match
+    } else { // Same Name, Different Type
       if (DCPS_debug_level >= 1) {
-        ACE_DEBUG((LM_DEBUG,
-                   ACE_TEXT("(%P|%t) DomainParticipantImpl::create_topic, ")
-                   ACE_TEXT(" not match: topic_name=%C type_name=%C\n"),
-                   topic_name, type_name));
+        ACE_ERROR((LM_ERROR,
+          ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::create_topic: ")
+          ACE_TEXT("topic with name \"%C\" already exists, but its type, %C ")
+          ACE_TEXT("is not the same as %C.\n"),
+          topic_name, found_type.in(), type_name));
       }
 
       return DDS::Topic::_nil();
@@ -463,15 +542,15 @@ DomainParticipantImpl::create_topic_i(
     OpenDDS::DCPS::TypeSupport_var type_support;
 
     if (0 == topic_mask) {
-       // creating a topic with compile time type
+      // creating a topic with compile time type
       type_support = Registered_Data_Types->lookup(this, type_name);
       if (CORBA::is_nil(type_support)) {
         if (DCPS_debug_level >= 1) {
-            ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-                       ACE_TEXT("DomainParticipantImpl::create_topic, ")
-                       ACE_TEXT("can't create a topic=%C type_name=%C ")
-                       ACE_TEXT("is not registered.\n"),
-                       topic_name, type_name));
+           ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
+                      ACE_TEXT("DomainParticipantImpl::create_topic, ")
+                      ACE_TEXT("can't create a topic=%C type_name=%C ")
+                      ACE_TEXT("is not registered.\n"),
+                      topic_name, type_name));
         }
         return DDS::Topic::_nil();
       }
@@ -483,14 +562,26 @@ DomainParticipantImpl::create_topic_i(
                                                 a_listener,
                                                 mask,
                                                 type_support);
-    if ((this->enabled_ == true) && qos_.entity_factory.autoenable_created_entities) {
-      if (new_topic->enable() != DDS::RETCODE_OK) {
+
+    if (!new_topic) {
+      if (DCPS_debug_level > 0) {
         ACE_ERROR((LM_WARNING,
                    ACE_TEXT("(%P|%t) WARNING: ")
                    ACE_TEXT("DomainParticipantImpl::create_topic, ")
-                   ACE_TEXT("enable failed.\n")));
-        return DDS::Topic::_nil();
+                   ACE_TEXT("create_new_topic failed.\n")));
+      }
+      return DDS::Topic::_nil();
+    }
 
+    if (enabled_ && qos_.entity_factory.autoenable_created_entities) {
+      if (new_topic->enable() != DDS::RETCODE_OK) {
+        if (DCPS_debug_level > 0) {
+          ACE_ERROR((LM_WARNING,
+                     ACE_TEXT("(%P|%t) WARNING: ")
+                     ACE_TEXT("DomainParticipantImpl::create_topic, ")
+                     ACE_TEXT("enable failed.\n")));
+        }
+        return DDS::Topic::_nil();
       }
     }
     return new_topic._retn();
@@ -504,12 +595,10 @@ DomainParticipantImpl::delete_topic(
   return delete_topic_i(a_topic, false);
 }
 
-DDS::ReturnCode_t
-DomainParticipantImpl::delete_topic_i(
+DDS::ReturnCode_t DomainParticipantImpl::delete_topic_i(
   DDS::Topic_ptr a_topic,
-  bool             remove_objref)
+  bool remove_objref)
 {
-
   DDS::ReturnCode_t ret = DDS::RETCODE_OK;
 
   try {
@@ -519,14 +608,12 @@ DomainParticipantImpl::delete_topic_i(
     TopicImpl* the_topic_servant = dynamic_cast<TopicImpl*>(a_topic);
 
     if (!the_topic_servant) {
-      ACE_ERROR_RETURN((LM_ERROR,
-        ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::delete_topic_i, ")
-        ACE_TEXT("%p\n"),
-        ACE_TEXT("failed to obtain TopicImpl.")),
-        DDS::RETCODE_ERROR);
+      if (log_level >= LogLevel::Notice) {
+        ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_topic_i: %p\n"
+                   "failed to obtain TopicImpl."));
+      }
+      return DDS::RETCODE_ERROR;
     }
-
-    CORBA::String_var topic_name = the_topic_servant->get_name();
 
     DDS::DomainParticipant_var dp = the_topic_servant->get_participant();
 
@@ -534,22 +621,20 @@ DomainParticipantImpl::delete_topic_i(
       dynamic_cast<DomainParticipantImpl*>(dp.in());
 
     if (the_dp_servant != this) {
-      if (DCPS_debug_level >= 1) {
-        ACE_DEBUG((LM_DEBUG,
-          ACE_TEXT("(%P|%t) DomainParticipantImpl::delete_topic_i: ")
-          ACE_TEXT("will return PRECONDITION_NOT_MET because this is not the ")
-          ACE_TEXT("participant that owns this topic\n")));
+      if (log_level >= LogLevel::Notice) {
+        ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_topic_i: "
+                   "will return PRECONDITION_NOT_MET because this is not the "
+                   "participant that owns this topic\n"));
       }
       return DDS::RETCODE_PRECONDITION_NOT_MET;
     }
     if (!remove_objref && the_topic_servant->has_entity_refs()) {
       // If entity_refs is true (nonzero), then some reader or writer is using
       // this topic and the spec requires delete_topic() to fail with the error:
-      if (DCPS_debug_level >= 1) {
-        ACE_DEBUG((LM_DEBUG,
-          ACE_TEXT("(%P|%t) DomainParticipantImpl::delete_topic_i: ")
-          ACE_TEXT("will return PRECONDITION_NOT_MET because there are still ")
-          ACE_TEXT("outstanding references to this topic\n")));
+      if (log_level >= LogLevel::Notice) {
+        ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_topic_i: "
+                   "will return PRECONDITION_NOT_MET because there are still "
+                   "outstanding references to this topic\n"));
       }
       return DDS::RETCODE_PRECONDITION_NOT_MET;
     }
@@ -560,91 +645,78 @@ DomainParticipantImpl::delete_topic_i(
                        this->topics_protector_,
                        DDS::RETCODE_ERROR);
 
+      CORBA::String_var topic_name = the_topic_servant->get_name();
       TopicMap::mapped_type* entry = 0;
 
-      if (Util::find(topics_, topic_name.in(), entry) == -1) {
-        ACE_ERROR_RETURN((LM_ERROR,
-                          ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::delete_topic_i, ")
-                          ACE_TEXT("%p\n"),
-                          ACE_TEXT("find")),
-                         DDS::RETCODE_ERROR);
+      TopicMapIteratorPair iters = topics_.equal_range(topic_name.in());
+      TopicMapIterator iter;
+      for (iter = iters.first; iter != iters.second; ++iter) {
+        if (iter->second.pair_.svt_ == the_topic_servant) {
+          entry = &iter->second;
+          break;
+        }
+      }
+      if (entry == 0) {
+        if (log_level >= LogLevel::Notice) {
+          ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_topic_i: not found\n"));
+        }
+        return DDS::RETCODE_ERROR;
       }
 
-      --entry->client_refs_;
+      const CORBA::ULong client_refs = --entry->client_refs_;
 
-      if (remove_objref == true ||
-          0 == entry->client_refs_) {
-        //TBD - mark the TopicImpl as deleted and make it
-        //      reject calls to the TopicImpl.
+      if (remove_objref || 0 == client_refs) {
+        const GUID_t topicId = the_topic_servant->get_id();
+        topics_.erase(iter);
+
         Discovery_rch disco = TheServiceParticipant->get_discovery(domain_id_);
-        TopicStatus status
-        = disco->remove_topic(the_dp_servant->get_domain_id(),
-                              the_dp_servant->get_id(),
-                              the_topic_servant->get_id());
+        TopicStatus status = disco->remove_topic(
+          the_dp_servant->get_domain_id(), the_dp_servant->get_id(), topicId);
 
         if (status != REMOVED) {
-          ACE_ERROR_RETURN((LM_ERROR,
-                            ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::delete_topic_i, ")
-                            ACE_TEXT("remove_topic failed with return value %d\n"), status),
-                           DDS::RETCODE_ERROR);
+          if (log_level >= LogLevel::Notice) {
+            ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_topic_i, "
+                       "remove_topic failed with return value <%C>\n", topicstatus_to_string(status)));
+           }
+          return DDS::RETCODE_ERROR;
         }
 
-        // note: this will destroy the TopicImpl if there are no
-        // client object reference to it.
-        if (topics_.erase(topic_name.in()) == 0) {
-          ACE_ERROR_RETURN((LM_ERROR,
-                            ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::delete_topic_i, ")
-                            ACE_TEXT("%p \n"),
-                            ACE_TEXT("unbind")),
-                           DDS::RETCODE_ERROR);
+        return DDS::RETCODE_OK;
 
-        } else
-          return DDS::RETCODE_OK;
-
+      } else {
+        if (DCPS_debug_level > 4) {
+          ACE_DEBUG((LM_DEBUG, "(%P|%t) DomainParticipantImpl::delete_topic_i: "
+                     "Didn't remove topic from the map, remove_objref %d client_refs %d\n",
+                     remove_objref, client_refs));
+        }
       }
     }
 
   } catch (...) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::delete_topic_i, ")
-               ACE_TEXT(" Caught Unknown Exception \n")));
+    if (log_level >= LogLevel::Notice) {
+      ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::delete_topic_i, "
+                 " Caught Unknown Exception\n"));
+    }
     ret = DDS::RETCODE_ERROR;
   }
 
   return ret;
 }
 
-//Note: caller should NOT assign to Topic_var (without _duplicate'ing)
-//      because it will steal the framework's reference.
 DDS::Topic_ptr
 DomainParticipantImpl::find_topic(
-  const char * topic_name,
-  const DDS::Duration_t & timeout)
+  const char* topic_name,
+  const DDS::Duration_t& timeout)
 {
-  ACE_Time_Value timeout_tv
-  = ACE_OS::gettimeofday() + ACE_Time_Value(timeout.sec, timeout.nanosec/1000);
+  const MonotonicTimePoint timeout_at(MonotonicTimePoint::now() + TimeDuration(timeout));
 
   bool first_time = true;
-
-  while (first_time || ACE_OS::gettimeofday() < timeout_tv) {
+  while (first_time || MonotonicTimePoint::now() < timeout_at) {
     if (first_time) {
       first_time = false;
     }
 
-    TopicMap::mapped_type* entry = 0;
-    {
-      ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                       tao_mon,
-                       this->topics_protector_,
-                       DDS::Topic::_nil());
-
-      if (Util::find(topics_, topic_name, entry) == 0) {
-        ++entry->client_refs_;
-        return DDS::Topic::_duplicate(entry->pair_.obj_.in());
-      }
-    }
-
-    RepoId topic_id;
+    GUID_t topic_id;
     CORBA::String_var type_name;
     DDS::TopicQos_var qos;
 
@@ -656,7 +728,7 @@ DomainParticipantImpl::find_topic(
                                            qos.out(),
                                            topic_id);
 
-
+    const MonotonicTimePoint now = MonotonicTimePoint::now();
     if (status == FOUND) {
       OpenDDS::DCPS::TypeSupport_var type_support =
         Registered_Data_Types->lookup(this, type_name.in());
@@ -680,22 +752,20 @@ DomainParticipantImpl::find_topic(
       return new_topic;
 
     } else if (status == INTERNAL_ERROR) {
-      ACE_ERROR((LM_ERROR,
-                 ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::find_topic - ")
-                 ACE_TEXT("topic not found, discovery returned INTERNAL_ERROR!\n")));
+      if (DCPS_debug_level > 0) {
+        ACE_ERROR((LM_ERROR,
+                   ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::find_topic - ")
+                   ACE_TEXT("topic not found, discovery returned INTERNAL_ERROR!\n")));
+      }
       return DDS::Topic::_nil();
-    } else {
-      ACE_Time_Value now = ACE_OS::gettimeofday();
+    } else if (now < timeout_at) {
+      const TimeDuration remaining = timeout_at - now;
 
-      if (now < timeout_tv) {
-        ACE_Time_Value remaining = timeout_tv - now;
+      if (remaining.value().sec() >= 1) {
+        ACE_OS::sleep(1);
 
-        if (remaining.sec() >= 1) {
-          ACE_OS::sleep(1);
-
-        } else {
-          ACE_OS::sleep(remaining);
-        }
+      } else {
+        ACE_OS::sleep(remaining.value());
       }
     }
   }
@@ -704,7 +774,7 @@ DomainParticipantImpl::find_topic(
     // timed out
     ACE_DEBUG((LM_DEBUG,
                ACE_TEXT("(%P|%t) DomainParticipantImpl::find_topic, ")
-               ACE_TEXT("timed out. \n")));
+               ACE_TEXT("timed out.\n")));
   }
 
   return DDS::Topic::_nil();
@@ -746,9 +816,9 @@ DomainParticipantImpl::create_contentfilteredtopic(
   if (CORBA::is_nil(related_topic)) {
     if (DCPS_debug_level > 3) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::create_contentfilteredtopic, ")
-        ACE_TEXT("can't create a content-filtered topic due to null related ")
-        ACE_TEXT("topic.\n")));
+                 ACE_TEXT("DomainParticipantImpl::create_contentfilteredtopic, ")
+                 ACE_TEXT("can't create a content-filtered topic due to null related ")
+                 ACE_TEXT("topic.\n")));
     }
     return 0;
   }
@@ -758,9 +828,9 @@ DomainParticipantImpl::create_contentfilteredtopic(
   if (topics_.count(name)) {
     if (DCPS_debug_level > 3) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::create_contentfilteredtopic, ")
-        ACE_TEXT("can't create a content-filtered topic due to name \"%C\" ")
-        ACE_TEXT("already in use by a Topic.\n"), name));
+                 ACE_TEXT("DomainParticipantImpl::create_contentfilteredtopic, ")
+                 ACE_TEXT("can't create a content-filtered topic due to name \"%C\" ")
+                 ACE_TEXT("already in use by a Topic.\n"), name));
     }
     return 0;
   }
@@ -768,9 +838,9 @@ DomainParticipantImpl::create_contentfilteredtopic(
   if (topic_descrs_.count(name)) {
     if (DCPS_debug_level > 3) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::create_contentfilteredtopic, ")
-        ACE_TEXT("can't create a content-filtered topic due to name \"%C\" ")
-        ACE_TEXT("already in use by a TopicDescription.\n"), name));
+                 ACE_TEXT("DomainParticipantImpl::create_contentfilteredtopic, ")
+                 ACE_TEXT("can't create a content-filtered topic due to name \"%C\" ")
+                 ACE_TEXT("already in use by a TopicDescription.\n"), name));
     }
     return 0;
   }
@@ -786,9 +856,9 @@ DomainParticipantImpl::create_contentfilteredtopic(
   } catch (const std::exception& e) {
     if (DCPS_debug_level) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::create_contentfilteredtopic, ")
-        ACE_TEXT("can't create a content-filtered topic due to runtime error: ")
-        ACE_TEXT("%C.\n"), e.what()));
+                 ACE_TEXT("DomainParticipantImpl::create_contentfilteredtopic, ")
+                 ACE_TEXT("can't create a content-filtered topic due to runtime error: ")
+                 ACE_TEXT("%C.\n"), e.what()));
     }
     return 0;
   }
@@ -809,9 +879,9 @@ DDS::ReturnCode_t DomainParticipantImpl::delete_contentfilteredtopic(
   if (iter == topic_descrs_.end()) {
     if (DCPS_debug_level > 3) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::delete_contentfilteredtopic, ")
-        ACE_TEXT("can't delete a content-filtered topic \"%C\" ")
-        ACE_TEXT("because it is not in the set.\n"), name.in ()));
+                 ACE_TEXT("DomainParticipantImpl::delete_contentfilteredtopic, ")
+                 ACE_TEXT("can't delete a content-filtered topic \"%C\" ")
+                 ACE_TEXT("because it is not in the set.\n"), name.in ()));
     }
     return DDS::RETCODE_PRECONDITION_NOT_MET;
   }
@@ -821,9 +891,9 @@ DDS::ReturnCode_t DomainParticipantImpl::delete_contentfilteredtopic(
   if (!tdi) {
     if (DCPS_debug_level > 3) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::delete_contentfilteredtopic, ")
-        ACE_TEXT("can't delete a content-filtered topic \"%C\" ")
-        ACE_TEXT("failed to obtain TopicDescriptionImpl\n"), name.in()));
+                 ACE_TEXT("DomainParticipantImpl::delete_contentfilteredtopic, ")
+                 ACE_TEXT("can't delete a content-filtered topic \"%C\" ")
+                 ACE_TEXT("failed to obtain TopicDescriptionImpl\n"), name.in()));
     }
     return DDS::RETCODE_ERROR;
   }
@@ -831,9 +901,9 @@ DDS::ReturnCode_t DomainParticipantImpl::delete_contentfilteredtopic(
   if (tdi->has_entity_refs()) {
     if (DCPS_debug_level > 3) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::delete_contentfilteredtopic, ")
-        ACE_TEXT("can't delete a content-filtered topic \"%C\" ")
-        ACE_TEXT("because it is used by a datareader\n"), name.in ()));
+                 ACE_TEXT("DomainParticipantImpl::delete_contentfilteredtopic, ")
+                 ACE_TEXT("can't delete a content-filtered topic \"%C\" ")
+                 ACE_TEXT("because it is used by a datareader\n"), name.in ()));
     }
     return DDS::RETCODE_PRECONDITION_NOT_MET;
   }
@@ -855,9 +925,9 @@ DDS::MultiTopic_ptr DomainParticipantImpl::create_multitopic(
   if (topics_.count(name)) {
     if (DCPS_debug_level > 3) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::create_multitopic, ")
-        ACE_TEXT("can't create a multi topic due to name \"%C\" ")
-        ACE_TEXT("already in use by a Topic.\n"), name));
+                 ACE_TEXT("DomainParticipantImpl::create_multitopic, ")
+                 ACE_TEXT("can't create a multi topic due to name \"%C\" ")
+                 ACE_TEXT("already in use by a Topic.\n"), name));
     }
     return 0;
   }
@@ -865,9 +935,9 @@ DDS::MultiTopic_ptr DomainParticipantImpl::create_multitopic(
   if (topic_descrs_.count(name)) {
     if (DCPS_debug_level > 3) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::create_multitopic, ")
-        ACE_TEXT("can't create a multi topic due to name \"%C\" ")
-        ACE_TEXT("already in use by a TopicDescription.\n"), name));
+                 ACE_TEXT("DomainParticipantImpl::create_multitopic, ")
+                 ACE_TEXT("can't create a multi topic due to name \"%C\" ")
+                 ACE_TEXT("already in use by a TopicDescription.\n"), name));
     }
     return 0;
   }
@@ -879,9 +949,9 @@ DDS::MultiTopic_ptr DomainParticipantImpl::create_multitopic(
   } catch (const std::exception& e) {
     if (DCPS_debug_level) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::create_multitopic, ")
-        ACE_TEXT("can't create a multi topic due to runtime error: ")
-        ACE_TEXT("%C.\n"), e.what()));
+                 ACE_TEXT("DomainParticipantImpl::create_multitopic, ")
+                 ACE_TEXT("can't create a multi topic due to runtime error: ")
+                 ACE_TEXT("%C.\n"), e.what()));
     }
     return 0;
   }
@@ -901,9 +971,9 @@ DDS::ReturnCode_t DomainParticipantImpl::delete_multitopic(
   if (iter == topic_descrs_.end()) {
     if (DCPS_debug_level > 3) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::delete_multitopic, ")
-        ACE_TEXT("can't delete a multitopic \"%C\" ")
-        ACE_TEXT("because it is not in the set.\n"), mt_name.in ()));
+                 ACE_TEXT("DomainParticipantImpl::delete_multitopic, ")
+                 ACE_TEXT("can't delete a multitopic \"%C\" ")
+                 ACE_TEXT("because it is not in the set.\n"), mt_name.in ()));
     }
     return DDS::RETCODE_PRECONDITION_NOT_MET;
   }
@@ -913,10 +983,10 @@ DDS::ReturnCode_t DomainParticipantImpl::delete_multitopic(
   if (!tdi) {
     if (DCPS_debug_level > 3) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::delete_multitopic, ")
-        ACE_TEXT("can't delete a multitopic topic \"%C\" ")
-        ACE_TEXT("failed to obtain TopicDescriptionImpl.\n"),
-        mt_name.in()));
+                 ACE_TEXT("DomainParticipantImpl::delete_multitopic, ")
+                 ACE_TEXT("can't delete a multitopic topic \"%C\" ")
+                 ACE_TEXT("failed to obtain TopicDescriptionImpl.\n"),
+                 mt_name.in()));
     }
     return DDS::RETCODE_ERROR;
   }
@@ -924,9 +994,9 @@ DDS::ReturnCode_t DomainParticipantImpl::delete_multitopic(
   if (tdi->has_entity_refs()) {
     if (DCPS_debug_level > 3) {
       ACE_ERROR((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::delete_multitopic, ")
-        ACE_TEXT("can't delete a multitopic topic \"%C\" ")
-        ACE_TEXT("because it is used by a datareader.\n"), mt_name.in ()));
+                 ACE_TEXT("DomainParticipantImpl::delete_multitopic, ")
+                 ACE_TEXT("can't delete a multitopic topic \"%C\" ")
+                 ACE_TEXT("because it is used by a datareader.\n"), mt_name.in ()));
     }
     return DDS::RETCODE_PRECONDITION_NOT_MET;
   }
@@ -979,8 +1049,17 @@ DomainParticipantImpl::deref_filter_eval(const char* filter)
 DDS::ReturnCode_t
 DomainParticipantImpl::delete_contained_entities()
 {
-  // mark that the entity is being deleted
-  set_deleted(true);
+  if (!get_deleted()) {
+    // mark that the entity is being deleted
+    set_deleted(true);
+
+    if (!prepare_to_delete_datawriters()) {
+      return DDS::RETCODE_ERROR;
+    }
+    if (!set_wait_pending_deadline(TheServiceParticipant->new_pending_timeout_deadline())) {
+      return DDS::RETCODE_ERROR;
+    }
+  }
 
   // BIT subscriber and data readers will be deleted with the
   // rest of the entities, so need to report to discovery that
@@ -989,28 +1068,23 @@ DomainParticipantImpl::delete_contained_entities()
   if (disc)
     disc->fini_bit(this);
 
-  if (ACE_OS::thr_equal(TheServiceParticipant->reactor_owner(),
-                        ACE_Thread::self())) {
-    handle_exception(0);
-
-  } else {
-    TheServiceParticipant->reactor()->notify(this);
-
-    shutdown_mutex_.acquire();
-    while (!shutdown_complete_) {
-      shutdown_condition_.wait();
-    }
-    shutdown_complete_ = false;
-    shutdown_mutex_.release();
+  RcHandle<ShutdownHandler> handler = make_rch<ShutdownHandler>(rchandle_from(this));
+  TheServiceParticipant->reactor_task()->execute_or_enqueue(handler);
+  if (!TheServiceParticipant->reactor_task()->on_thread()) {
+    // If on the reactor thread, waiting would cause a deadlock.
+    handler->wait();
   }
 
-  bit_subscriber_ = DDS::Subscriber::_nil();
+  {
+    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, g, subscribers_protector_, DDS::RETCODE_ERROR);
+    bit_subscriber_.reset();
+  }
 
-  OpenDDS::DCPS::Registered_Data_Types->unregister_participant(this);
+  Registered_Data_Types->unregister_participant(this);
 
   // the participant can now start creating new contained entities
   set_deleted(false);
-  return shutdown_result_;
+  return handler->shutdown_result();
 }
 
 CORBA::Boolean
@@ -1083,7 +1157,7 @@ DomainParticipantImpl::set_qos(
       return DDS::RETCODE_OK;
 
     // for the not changeable qos, it can be changed before enable
-    if (!Qos_Helper::changeable(qos_, qos) && enabled_ == true) {
+    if (!Qos_Helper::changeable(qos_, qos) && enabled_) {
       return DDS::RETCODE_IMMUTABLE_POLICY;
 
     } else {
@@ -1096,10 +1170,12 @@ DomainParticipantImpl::set_qos(
                                              qos_);
 
       if (!status) {
-        ACE_ERROR_RETURN((LM_ERROR,
-                          ACE_TEXT("(%P|%t) DomainParticipantImpl::set_qos, ")
-                          ACE_TEXT("failed on compatibility check. \n")),
-                         DDS::RETCODE_ERROR);
+        if (DCPS_debug_level > 0) {
+          ACE_ERROR((LM_ERROR,
+                     ACE_TEXT("(%P|%t) DomainParticipantImpl::set_qos, ")
+                     ACE_TEXT("failed on compatibility check.\n")));
+        }
+        return DDS::RETCODE_ERROR;
       }
     }
 
@@ -1123,6 +1199,7 @@ DomainParticipantImpl::set_listener(
   DDS::DomainParticipantListener_ptr a_listener,
   DDS::StatusMask mask)
 {
+  ACE_Guard<ACE_Thread_Mutex> g(listener_mutex_);
   listener_mask_ = mask;
   //note: OK to duplicate  a nil object ref
   listener_ = DDS::DomainParticipantListener::_duplicate(a_listener);
@@ -1132,6 +1209,7 @@ DomainParticipantImpl::set_listener(
 DDS::DomainParticipantListener_ptr
 DomainParticipantImpl::get_listener()
 {
+  ACE_Guard<ACE_Thread_Mutex> g(listener_mutex_);
   return DDS::DomainParticipantListener::_duplicate(listener_.in());
 }
 
@@ -1139,16 +1217,17 @@ DDS::ReturnCode_t
 DomainParticipantImpl::ignore_participant(
   DDS::InstanceHandle_t handle)
 {
-#if !defined (DDS_HAS_MINIMUM_BIT)
-
-  if (enabled_ == false) {
-    ACE_ERROR_RETURN((LM_ERROR,
-                      ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_participant, ")
-                      ACE_TEXT("Entity is not enabled. \n")),
-                     DDS::RETCODE_NOT_ENABLED);
+#ifndef DDS_HAS_MINIMUM_BIT
+  if (!enabled_) {
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_participant, ")
+                 ACE_TEXT("Entity is not enabled.\n")));
+    }
+    return DDS::RETCODE_NOT_ENABLED;
   }
 
-  RepoId ignoreId = get_repoid(handle);
+  GUID_t ignoreId = get_repoid(handle);
   HandleMap::const_iterator location = this->ignored_participants_.find(ignoreId);
 
   if (location == this->ignored_participants_.end()) {
@@ -1159,11 +1238,10 @@ DomainParticipantImpl::ignore_participant(
   }
 
   if (DCPS_debug_level >= 4) {
-    GuidConverter converter(dp_id_);
     ACE_DEBUG((LM_DEBUG,
                ACE_TEXT("(%P|%t) DomainParticipantImpl::ignore_participant: ")
                ACE_TEXT("%C ignoring handle %x.\n"),
-               OPENDDS_STRING(converter).c_str(),
+               LogGuid(dp_id_).c_str(),
                handle));
   }
 
@@ -1171,20 +1249,20 @@ DomainParticipantImpl::ignore_participant(
   if (!disco->ignore_domain_participant(domain_id_,
                                         dp_id_,
                                         ignoreId)) {
-    ACE_ERROR_RETURN((LM_ERROR,
-                      ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_participant, ")
-                      ACE_TEXT("Could not ignore domain participant.\n")),
-                     DDS::RETCODE_NOT_ENABLED);
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_participant, ")
+                 ACE_TEXT("Could not ignore domain participant.\n")));
+    }
     return DDS::RETCODE_ERROR;
   }
 
 
   if (DCPS_debug_level >= 4) {
-    GuidConverter converter(dp_id_);
     ACE_DEBUG((LM_DEBUG,
                ACE_TEXT("(%P|%t) DomainParticipantImpl::ignore_participant: ")
                ACE_TEXT("%C repo call returned.\n"),
-               OPENDDS_STRING(converter).c_str()));
+               LogGuid(dp_id_).c_str()));
   }
 
   return DDS::RETCODE_OK;
@@ -1198,16 +1276,17 @@ DDS::ReturnCode_t
 DomainParticipantImpl::ignore_topic(
   DDS::InstanceHandle_t handle)
 {
-#if !defined (DDS_HAS_MINIMUM_BIT)
-
-  if (enabled_ == false) {
-    ACE_ERROR_RETURN((LM_ERROR,
-                      ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_topic, ")
-                      ACE_TEXT(" Entity is not enabled. \n")),
-                     DDS::RETCODE_NOT_ENABLED);
+#ifndef DDS_HAS_MINIMUM_BIT
+  if (!enabled_) {
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_topic, ")
+                 ACE_TEXT(" Entity is not enabled.\n")));
+    }
+    return DDS::RETCODE_NOT_ENABLED;
   }
 
-  RepoId ignoreId = get_repoid(handle);
+  GUID_t ignoreId = get_repoid(handle);
   HandleMap::const_iterator location = this->ignored_topics_.find(ignoreId);
 
   if (location == this->ignored_topics_.end()) {
@@ -1218,11 +1297,10 @@ DomainParticipantImpl::ignore_topic(
   }
 
   if (DCPS_debug_level >= 4) {
-    GuidConverter converter(dp_id_);
     ACE_DEBUG((LM_DEBUG,
                ACE_TEXT("(%P|%t) DomainParticipantImpl::ignore_topic: ")
                ACE_TEXT("%C ignoring handle %x.\n"),
-               OPENDDS_STRING(converter).c_str(),
+               LogGuid(dp_id_).c_str(),
                handle));
   }
 
@@ -1230,9 +1308,11 @@ DomainParticipantImpl::ignore_topic(
   if (!disco->ignore_topic(domain_id_,
                            dp_id_,
                            ignoreId)) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_topic, ")
-               ACE_TEXT(" Could not ignore topic.\n")));
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_topic, ")
+                 ACE_TEXT(" Could not ignore topic.\n")));
+    }
   }
 
   return DDS::RETCODE_OK;
@@ -1246,33 +1326,35 @@ DDS::ReturnCode_t
 DomainParticipantImpl::ignore_publication(
   DDS::InstanceHandle_t handle)
 {
-#if !defined (DDS_HAS_MINIMUM_BIT)
-
-  if (enabled_ == false) {
-    ACE_ERROR_RETURN((LM_ERROR,
-                      ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_publication, ")
-                      ACE_TEXT(" Entity is not enabled. \n")),
-                     DDS::RETCODE_NOT_ENABLED);
+#ifndef DDS_HAS_MINIMUM_BIT
+  if (!enabled_) {
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_publication, ")
+                 ACE_TEXT(" Entity is not enabled.\n")));
+    }
+    return DDS::RETCODE_NOT_ENABLED;
   }
 
   if (DCPS_debug_level >= 4) {
-    GuidConverter converter(dp_id_);
     ACE_DEBUG((LM_DEBUG,
                ACE_TEXT("(%P|%t) DomainParticipantImpl::ignore_publication: ")
                ACE_TEXT("%C ignoring handle %x.\n"),
-               OPENDDS_STRING(converter).c_str(),
+               LogGuid(dp_id_).c_str(),
                handle));
   }
 
-  RepoId ignoreId = get_repoid(handle);
+  GUID_t ignoreId = get_repoid(handle);
   Discovery_rch disco = TheServiceParticipant->get_discovery(domain_id_);
   if (!disco->ignore_publication(domain_id_,
                                  dp_id_,
                                  ignoreId)) {
-    ACE_ERROR_RETURN((LM_ERROR,
-                      ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_publication, ")
-                      ACE_TEXT(" could not ignore publication in discovery. \n")),
-                     DDS::RETCODE_ERROR);
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_publication, ")
+                 ACE_TEXT(" could not ignore publication in discovery.\n")));
+    }
+    return DDS::RETCODE_ERROR;
   }
 
   return DDS::RETCODE_OK;
@@ -1286,34 +1368,35 @@ DDS::ReturnCode_t
 DomainParticipantImpl::ignore_subscription(
   DDS::InstanceHandle_t handle)
 {
-#if !defined (DDS_HAS_MINIMUM_BIT)
-
-  if (enabled_ == false) {
-    ACE_ERROR_RETURN((LM_ERROR,
-                      ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_subscription, ")
-                      ACE_TEXT(" Entity is not enabled. \n")),
-                     DDS::RETCODE_NOT_ENABLED);
+#ifndef DDS_HAS_MINIMUM_BIT
+  if (!enabled_) {
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_subscription, ")
+                 ACE_TEXT(" Entity is not enabled.\n")));
+    }
+    return DDS::RETCODE_NOT_ENABLED;
   }
 
   if (DCPS_debug_level >= 4) {
-    GuidConverter converter(dp_id_);
     ACE_DEBUG((LM_DEBUG,
                ACE_TEXT("(%P|%t) DomainParticipantImpl::ignore_subscription: ")
                ACE_TEXT("%C ignoring handle %d.\n"),
-               OPENDDS_STRING(converter).c_str(),
+               LogGuid(dp_id_).c_str(),
                handle));
   }
 
-
-  RepoId ignoreId = get_repoid(handle);
+  GUID_t ignoreId = get_repoid(handle);
   Discovery_rch disco = TheServiceParticipant->get_discovery(domain_id_);
   if (!disco->ignore_subscription(domain_id_,
                                   dp_id_,
                                   ignoreId)) {
-    ACE_ERROR_RETURN((LM_ERROR,
-                      ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_subscription, ")
-                      ACE_TEXT(" could not ignore subscription in discovery. \n")),
-                     DDS::RETCODE_ERROR);
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::ignore_subscription, ")
+                 ACE_TEXT(" could not ignore subscription in discovery.\n")));
+    }
+    return DDS::RETCODE_ERROR;
   }
 
   return DDS::RETCODE_OK;
@@ -1350,7 +1433,7 @@ DomainParticipantImpl::assert_liveliness()
     it->svt_->assert_liveliness_by_participant();
   }
 
-  last_liveliness_activity_ = ACE_OS::gettimeofday();
+  last_liveliness_activity_.set_to_now();
 
   return DDS::RETCODE_OK;
 }
@@ -1419,42 +1502,30 @@ DomainParticipantImpl::get_default_topic_qos(
 }
 
 DDS::ReturnCode_t
-DomainParticipantImpl::get_current_time(
-  DDS::Time_t & current_time)
+DomainParticipantImpl::get_current_time(DDS::Time_t& current_time)
 {
-  current_time
-  = OpenDDS::DCPS::time_value_to_time(
-      ACE_OS::gettimeofday());
+  current_time = SystemTimePoint::now().to_idl_struct();
   return DDS::RETCODE_OK;
 }
 
 #if !defined (DDS_HAS_MINIMUM_BIT)
 
 DDS::ReturnCode_t
-DomainParticipantImpl::get_discovered_participants(
-  DDS::InstanceHandleSeq & participant_handles)
+DomainParticipantImpl::get_discovered_participants(DDS::InstanceHandleSeq& participant_handles)
 {
-  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                   guard,
-                   this->handle_protector_,
-                   DDS::RETCODE_ERROR);
+  ACE_GUARD_RETURN(ACE_Thread_Mutex, guard, handle_protector_, DDS::RETCODE_ERROR);
 
-  HandleMap::const_iterator itEnd = this->handles_.end();
-
-  for (HandleMap::const_iterator iter = this->handles_.begin();
-       iter != itEnd; ++iter) {
+  const CountedHandleMap::const_iterator itEnd = handles_.end();
+  for (CountedHandleMap::const_iterator iter = handles_.begin(); iter != itEnd; ++iter) {
     GuidConverter converter(iter->first);
 
-    if (converter.entityKind() == KIND_PARTICIPANT)
-    {
+    if (converter.entityKind() == KIND_PARTICIPANT) {
       // skip itself and the ignored participant
-      if (iter->first == this->dp_id_
-      || (this->ignored_participants_.find(iter->first)
-        != this->ignored_participants_.end ())) {
+      if (iter->first == dp_id_ || ignored_participants_.count(iter->first)) {
         continue;
       }
 
-      push_back(participant_handles, iter->second);
+      push_back(participant_handles, iter->second.first);
     }
   }
 
@@ -1462,24 +1533,18 @@ DomainParticipantImpl::get_discovered_participants(
 }
 
 DDS::ReturnCode_t
-DomainParticipantImpl::get_discovered_participant_data(
-  DDS::ParticipantBuiltinTopicData & participant_data,
-  DDS::InstanceHandle_t participant_handle)
+DomainParticipantImpl::get_discovered_participant_data(DDS::ParticipantBuiltinTopicData& participant_data,
+                                                       DDS::InstanceHandle_t participant_handle)
 {
   {
-    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                     guard,
-                     this->handle_protector_,
-                     DDS::RETCODE_ERROR);
+    ACE_GUARD_RETURN(ACE_Thread_Mutex, guard, handle_protector_, DDS::RETCODE_ERROR);
 
     bool found = false;
-    HandleMap::const_iterator itEnd = this->handles_.end();
-
-    for (HandleMap::const_iterator iter = this->handles_.begin();
-         iter != itEnd; ++iter) {
+    const CountedHandleMap::const_iterator itEnd = handles_.end();
+    for (CountedHandleMap::const_iterator iter = handles_.begin(); iter != itEnd; ++iter) {
       GuidConverter converter(iter->first);
 
-      if (participant_handle == iter->second
+      if (participant_handle == iter->second.first
           && converter.entityKind() == KIND_PARTICIPANT) {
         found = true;
         break;
@@ -1490,55 +1555,23 @@ DomainParticipantImpl::get_discovered_participant_data(
       return DDS::RETCODE_PRECONDITION_NOT_MET;
   }
 
-  DDS::SampleInfoSeq info;
-  DDS::ParticipantBuiltinTopicDataSeq data;
-  DDS::DataReader_var dr =
-    this->bit_subscriber_->lookup_datareader(BUILT_IN_PARTICIPANT_TOPIC);
-  DDS::ParticipantBuiltinTopicDataDataReader_var bit_part_dr =
-    DDS::ParticipantBuiltinTopicDataDataReader::_narrow(dr);
-  DDS::ReturnCode_t ret = bit_part_dr->read_instance(data,
-                                                     info,
-                                                     1,
-                                                     participant_handle,
-                                                     DDS::ANY_SAMPLE_STATE,
-                                                     DDS::ANY_VIEW_STATE,
-                                                     DDS::ANY_INSTANCE_STATE);
-
-  if (ret == DDS::RETCODE_OK) {
-    if (info[0].valid_data)
-      participant_data = data[0];
-
-    else
-      return DDS::RETCODE_NO_DATA;
-  }
-
-  return ret;
+  return bit_subscriber_->get_discovered_participant_data(participant_data, participant_handle);
 }
 
 DDS::ReturnCode_t
-DomainParticipantImpl::get_discovered_topics(
-  DDS::InstanceHandleSeq & topic_handles)
+DomainParticipantImpl::get_discovered_topics(DDS::InstanceHandleSeq& topic_handles)
 {
-  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                   guard,
-                   this->handle_protector_,
-                   DDS::RETCODE_ERROR);
+  ACE_GUARD_RETURN(ACE_Thread_Mutex, guard, handle_protector_, DDS::RETCODE_ERROR);
 
-  HandleMap::const_iterator itEnd = this->handles_.end();
-
-  for (HandleMap::const_iterator iter = this->handles_.begin();
-       iter != itEnd; ++iter) {
+  const CountedHandleMap::const_iterator itEnd = handles_.end();
+  for (CountedHandleMap::const_iterator iter = handles_.begin(); iter != itEnd; ++iter) {
     GuidConverter converter(iter->first);
-
     if (converter.isTopic()) {
-
-      // skip the ignored topic
-      if (this->ignored_topics_.find(iter->first)
-          != this->ignored_topics_.end ()) {
+      if (ignored_topics_.count(iter->first)) {
         continue;
       }
 
-      push_back(topic_handles, iter->second);
+      push_back(topic_handles, iter->second.first);
     }
   }
 
@@ -1546,24 +1579,17 @@ DomainParticipantImpl::get_discovered_topics(
 }
 
 DDS::ReturnCode_t
-DomainParticipantImpl::get_discovered_topic_data(
-  DDS::TopicBuiltinTopicData & topic_data,
-  DDS::InstanceHandle_t topic_handle)
+DomainParticipantImpl::get_discovered_topic_data(DDS::TopicBuiltinTopicData& topic_data,
+                                                 DDS::InstanceHandle_t topic_handle)
 {
   {
-    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                     guard,
-                     this->handle_protector_,
-                     DDS::RETCODE_ERROR);
+    ACE_GUARD_RETURN(ACE_Thread_Mutex, guard, handle_protector_, DDS::RETCODE_ERROR);
 
     bool found = false;
-    HandleMap::const_iterator itEnd = this->handles_.end();
-
-    for (HandleMap::const_iterator iter = this->handles_.begin();
-         iter != itEnd; ++iter) {
+    const CountedHandleMap::const_iterator itEnd = handles_.end();
+    for (CountedHandleMap::const_iterator iter = handles_.begin(); iter != itEnd; ++iter) {
       GuidConverter converter(iter->first);
-
-      if (topic_handle == iter->second && converter.isTopic()) {
+      if (topic_handle == iter->second.first && converter.isTopic()) {
         found = true;
         break;
       }
@@ -1573,31 +1599,7 @@ DomainParticipantImpl::get_discovered_topic_data(
       return DDS::RETCODE_PRECONDITION_NOT_MET;
   }
 
-  DDS::DataReader_var dr =
-    bit_subscriber_->lookup_datareader(BUILT_IN_TOPIC_TOPIC);
-  DDS::TopicBuiltinTopicDataDataReader_var bit_topic_dr =
-    DDS::TopicBuiltinTopicDataDataReader::_narrow(dr);
-
-  DDS::SampleInfoSeq info;
-  DDS::TopicBuiltinTopicDataSeq data;
-  DDS::ReturnCode_t ret =
-    bit_topic_dr->read_instance(data,
-                                info,
-                                1,
-                                topic_handle,
-                                DDS::ANY_SAMPLE_STATE,
-                                DDS::ANY_VIEW_STATE,
-                                DDS::ANY_INSTANCE_STATE);
-
-  if (ret == DDS::RETCODE_OK) {
-    if (info[0].valid_data)
-      topic_data = data[0];
-
-    else
-      return DDS::RETCODE_NO_DATA;
-  }
-
-  return ret;
+  return bit_subscriber_->get_discovered_topic_data(topic_data, topic_handle);
 }
 
 #endif
@@ -1615,11 +1617,12 @@ DomainParticipantImpl::enable()
     return DDS::RETCODE_OK;
   }
 
-#ifdef OPENDDS_SECURITY
+#if OPENDDS_CONFIG_SECURITY
   if (!security_config_ && TheServiceParticipant->get_security()) {
     security_config_ = TheSecurityRegistry->default_config();
     if (!security_config_) {
-      security_config_ = TheSecurityRegistry->fix_empty_default();
+      security_config_ = TheSecurityRegistry->builtin_config();
+      TheSecurityRegistry->default_config(security_config_);
     }
   }
 #endif
@@ -1627,27 +1630,29 @@ DomainParticipantImpl::enable()
   Discovery_rch disco = TheServiceParticipant->get_discovery(domain_id_);
 
   if (disco.is_nil()) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("DomainParticipantImpl::enable, ")
-               ACE_TEXT("no repository found for domain id: %d.\n"), domain_id_));
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::enable, ")
+                ACE_TEXT("no discovery found for domain id: %d.\n"), domain_id_));
+    }
     return DDS::RETCODE_ERROR;
   }
 
-#ifdef OPENDDS_SECURITY
+#if OPENDDS_CONFIG_SECURITY
   if (TheServiceParticipant->get_security() && !security_config_) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("DomainParticipantImpl::enable, ")
-               ACE_TEXT("DCPSSecurity flag is set, but unable to load security plugin configuration.\n")));
+    if (DCPS::security_debug.new_entity_error) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::enable, ")
+                 ACE_TEXT("DCPSSecurity flag is set, but unable to load security plugin configuration.\n")));
+    }
     return DDS::RETCODE_ERROR;
   }
 #endif
 
   AddDomainStatus value = {GUID_UNKNOWN, false};
 
-#ifdef OPENDDS_SECURITY
-  if (TheServiceParticipant->get_security()) {
+#if OPENDDS_CONFIG_SECURITY
+  if (TheServiceParticipant->get_security() && security_config_->qos_implies_security(qos_)) {
     Security::Authentication_var auth = security_config_->get_authentication();
 
     DDS::Security::SecurityException se;
@@ -1656,11 +1661,12 @@ DomainParticipantImpl::enable()
 
     /* TODO - Handle VALIDATION_PENDING_RETRY */
     if (val_res != DDS::Security::VALIDATION_OK) {
-      ACE_ERROR((LM_ERROR,
-        ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::enable, ")
-        ACE_TEXT("Unable to validate local identity. SecurityException[%d.%d]: %C\n"),
-          se.code, se.minor_code, se.message.in()));
+      if (DCPS::security_debug.new_entity_error) {
+        ACE_ERROR((LM_ERROR,
+                   ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::enable, ")
+                   ACE_TEXT("Unable to validate local identity. SecurityException[%d.%d]: %C\n"),
+                   se.code, se.minor_code, se.message.in()));
+      }
       return DDS::Security::RETCODE_NOT_ALLOWED_BY_SECURITY;
     }
 
@@ -1669,73 +1675,93 @@ DomainParticipantImpl::enable()
     perm_handle_ = access->validate_local_permissions(auth, id_handle_, domain_id_, qos_, se);
 
     if (perm_handle_ == DDS::HANDLE_NIL) {
-      ACE_ERROR((LM_ERROR,
-        ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::enable, ")
-        ACE_TEXT("Unable to validate local permissions. SecurityException[%d.%d]: %C\n"),
-          se.code, se.minor_code, se.message.in()));
+      if (DCPS::security_debug.new_entity_error) {
+        ACE_ERROR((LM_ERROR,
+                   ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::enable, ")
+                   ACE_TEXT("Unable to validate local permissions. SecurityException[%d.%d]: %C\n"),
+                   se.code, se.minor_code, se.message.in()));
+      }
       return DDS::Security::RETCODE_NOT_ALLOWED_BY_SECURITY;
     }
 
-    bool check_create = access->check_create_participant(perm_handle_, domain_id_, qos_, se);
+    const bool check_create = access->check_create_participant(perm_handle_, domain_id_, qos_, se);
     if (!check_create) {
-      ACE_ERROR((LM_ERROR,
-        ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::enable, ")
-        ACE_TEXT("Unable to create participant. SecurityException[%d.%d]: %C\n"),
-          se.code, se.minor_code, se.message.in()));
+      if (DCPS::security_debug.new_entity_error) {
+        ACE_ERROR((LM_ERROR,
+                   ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::enable, ")
+                   ACE_TEXT("Unable to create participant. SecurityException[%d.%d]: %C\n"),
+                   se.code, se.minor_code, se.message.in()));
+      }
       return DDS::Security::RETCODE_NOT_ALLOWED_BY_SECURITY;
     }
 
     DDS::Security::ParticipantSecurityAttributes part_sec_attr;
-    bool check_part_sec_attr = access->get_participant_sec_attributes(perm_handle_, part_sec_attr, se);
+    const bool check_part_sec_attr = access->get_participant_sec_attributes(perm_handle_, part_sec_attr, se);
 
     if (!check_part_sec_attr) {
-      ACE_ERROR((LM_ERROR,
-        ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::enable, ")
-        ACE_TEXT("Unable to get participant security attributes. SecurityException[%d.%d]: %C\n"),
-          se.code, se.minor_code, se.message.in()));
+      if (DCPS::security_debug.new_entity_error) {
+        ACE_ERROR((LM_ERROR,
+                   ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::enable,")
+                   ACE_TEXT("Unable to get participant security attributes. SecurityException[%d.%d]: %C\n"),
+                   se.code, se.minor_code, se.message.in()));
+      }
       return DDS::RETCODE_ERROR;
     }
 
-    Security::CryptoKeyFactory_var crypto = security_config_->get_crypto_key_factory();
+    if (part_sec_attr.is_rtps_protected) { // DDS-Security v1.1 8.4.2.4 Table 27 is_rtps_protected
+      if (part_sec_attr.allow_unauthenticated_participants) {
+        if (DCPS::security_debug.new_entity_error) {
+          ACE_ERROR((LM_ERROR,
+                     ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::enable, ")
+                     ACE_TEXT("allow_unauthenticated_participants is not possible with is_rtps_protected\n")));
+        }
+        return DDS::Security::RETCODE_NOT_ALLOWED_BY_SECURITY;
+      }
 
-    part_crypto_handle_ = crypto->register_local_participant(id_handle_, perm_handle_,
-      Util::filter_properties(qos_.property.value, "dds.sec.crypto."), part_sec_attr, se);
-    if (part_crypto_handle_ == DDS::HANDLE_NIL) {
-      ACE_ERROR((LM_ERROR,
-        ACE_TEXT("(%P|%t) ERROR: ")
-        ACE_TEXT("DomainParticipantImpl::enable, ")
-        ACE_TEXT("Unable to register local participant. SecurityException[%d.%d]: %C\n"),
-          se.code, se.minor_code, se.message.in()));
-      return DDS::RETCODE_ERROR;
+      const Security::CryptoKeyFactory_var crypto = security_config_->get_crypto_key_factory();
+      part_crypto_handle_ = crypto->register_local_participant(id_handle_, perm_handle_,
+        Util::filter_properties(qos_.property.value, "dds.sec.crypto."), part_sec_attr, se);
+      if (part_crypto_handle_ == DDS::HANDLE_NIL) {
+        if (DCPS::security_debug.new_entity_error) {
+          ACE_ERROR((LM_ERROR,
+                     ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::enable, ")
+                     ACE_TEXT("Unable to register local participant. SecurityException[%d.%d]: %C\n"),
+                     se.code, se.minor_code, se.message.in()));
+        }
+        return DDS::RETCODE_ERROR;
+      }
+
+    } else {
+      part_crypto_handle_ = DDS::HANDLE_NIL;
     }
 
-    value = disco->add_domain_participant_secure(domain_id_, qos_, dp_id_, id_handle_, perm_handle_, part_crypto_handle_);
+    value = disco->add_domain_participant_secure(domain_id_, qos_, type_lookup_service_,
+                                                 dp_id_, id_handle_, perm_handle_, part_crypto_handle_);
 
     if (value.id == GUID_UNKNOWN) {
-      ACE_ERROR((LM_ERROR,
-                 ACE_TEXT("(%P|%t) ERROR: ")
-                 ACE_TEXT("DomainParticipantImpl::enable, ")
-                 ACE_TEXT("add_domain_participant_secure returned invalid id.\n")));
+      if (DCPS::security_debug.new_entity_error) {
+        ACE_ERROR((LM_ERROR,
+                   ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::enable, ")
+                   ACE_TEXT("add_domain_participant_secure returned invalid id.\n")));
+      }
       return DDS::RETCODE_ERROR;
     }
 
   } else {
 #endif
 
-    value = disco->add_domain_participant(domain_id_, qos_);
+    value = disco->add_domain_participant(domain_id_, qos_, type_lookup_service_);
 
     if (value.id == GUID_UNKNOWN) {
-      ACE_ERROR((LM_ERROR,
-                 ACE_TEXT("(%P|%t) ERROR: ")
-                 ACE_TEXT("DomainParticipantImpl::enable, ")
-                 ACE_TEXT("add_domain_participant returned invalid id.\n")));
+      if (DCPS_debug_level > 0) {
+        ACE_ERROR((LM_ERROR,
+                   ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::enable, ")
+                   ACE_TEXT("add_domain_participant returned invalid id.\n")));
+      }
       return DDS::RETCODE_ERROR;
     }
 
-#ifdef OPENDDS_SECURITY
+#if OPENDDS_CONFIG_SECURITY
   }
 #endif
 
@@ -1755,7 +1781,7 @@ DomainParticipantImpl::enable()
   if (DCPS_debug_level > 1) {
     ACE_DEBUG((LM_DEBUG, ACE_TEXT("(%P|%t) DomainParticipantImpl::enable: ")
                ACE_TEXT("enabled participant %C in domain %d\n"),
-               OPENDDS_STRING(GuidConverter(dp_id_)).c_str(), domain_id_));
+               LogGuid(dp_id_).c_str(), domain_id_));
   }
 
   if (ret == DDS::RETCODE_OK && !TheTransientKludge->is_enabled()) {
@@ -1785,8 +1811,8 @@ DomainParticipantImpl::enable()
   return DDS::RETCODE_OK;
 }
 
-RepoId
-DomainParticipantImpl::get_id()
+GUID_t
+DomainParticipantImpl::get_id() const
 {
   return dp_id_;
 }
@@ -1794,56 +1820,113 @@ DomainParticipantImpl::get_id()
 OPENDDS_STRING
 DomainParticipantImpl::get_unique_id()
 {
-  return GuidConverter(dp_id_).uniqueId();
+  return GuidConverter(dp_id_).uniqueParticipantId();
 }
 
 
 DDS::InstanceHandle_t
 DomainParticipantImpl::get_instance_handle()
 {
-  return this->id_to_handle(this->dp_id_);
+  return get_entity_instance_handle(dp_id_, rchandle_from(this));
 }
 
-DDS::InstanceHandle_t
-DomainParticipantImpl::id_to_handle(const RepoId& id)
+DDS::InstanceHandle_t DomainParticipantImpl::assign_handle(const GUID_t& id)
 {
+  ACE_GUARD_RETURN(ACE_Thread_Mutex, guard, handle_protector_, DDS::HANDLE_NIL);
   if (id == GUID_UNKNOWN) {
-    return this->participant_handles_.next();
+    const DDS::InstanceHandle_t ih =
+      reusable_handles_.empty() ? participant_handles_.next() : reusable_handles_.pop_front();
+    if (DCPS_debug_level > 5) {
+      ACE_DEBUG((LM_DEBUG, "(%P|%t) DomainParticipantImpl::assign_handle: "
+                 "New unmapped InstanceHandle %d\n", ih));
+    }
+    return ih;
   }
 
-  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                   guard,
-                   this->handle_protector_,
-                   HANDLE_UNKNOWN);
-
-  HandleMap::const_iterator location = this->handles_.find(id);
-  DDS::InstanceHandle_t result;
-
-  if (location == this->handles_.end()) {
-    // Map new handle in both directions
-    result = this->participant_handles_.next();
-    this->handles_[id] = result;
-    this->repoIds_[result] = id;
-  } else {
-    result = location->second;
+  const CountedHandleMap::iterator location = handles_.find(id);
+  if (location == handles_.end()) {
+    const DDS::InstanceHandle_t handle =
+      reusable_handles_.empty() ? participant_handles_.next() : reusable_handles_.pop_front();
+    if (DCPS_debug_level > 5) {
+      ACE_DEBUG((LM_DEBUG, "(%P|%t) DomainParticipantImpl::assign_handle: "
+                 "New mapped InstanceHandle %d for %C\n",
+                 handle, LogGuid(id).c_str()));
+    }
+    handles_[id] = std::make_pair(handle, 1);
+    repoIds_[handle] = id;
+    handle_waiters_.notify_all();
+    return handle;
   }
 
-  return result;
+  HandleWithCounter& mapped = location->second;
+  ++mapped.second;
+  if (DCPS_debug_level > 5) {
+    ACE_DEBUG((LM_DEBUG, "(%P|%t) DomainParticipantImpl::assign_handle: "
+               "Incremented refcount for InstanceHandle %d to %d\n",
+               mapped.first, mapped.second));
+  }
+  return mapped.first;
 }
 
-RepoId
-DomainParticipantImpl::get_repoid(const DDS::InstanceHandle_t& handle)
+DDS::InstanceHandle_t DomainParticipantImpl::await_handle(const GUID_t& id,
+                                                          TimeDuration max_wait) const
 {
-  RepoId result = GUID_UNKNOWN;
-  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                   guard,
-                   this->handle_protector_,
-                   GUID_UNKNOWN);
-  RepoIdMap::const_iterator location = this->repoIds_.find(handle);
-  if (location != this->repoIds_.end()) {
-    result = location->second;
+  MonotonicTimePoint expire_at = MonotonicTimePoint::now() + max_wait;
+  ACE_GUARD_RETURN(ACE_Thread_Mutex, guard, handle_protector_, DDS::HANDLE_NIL);
+  CountedHandleMap::const_iterator iter = handles_.find(id);
+  CvStatus res = CvStatus_NoTimeout;
+  ThreadStatusManager& thread_status_manager = TheServiceParticipant->get_thread_status_manager();
+  while (res == CvStatus_NoTimeout && iter == handles_.end()) {
+    res = max_wait.is_zero() ? handle_waiters_.wait(thread_status_manager) : handle_waiters_.wait_until(expire_at, thread_status_manager);
+    iter = handles_.find(id);
   }
-  return result;
+  return iter == handles_.end() ? DDS::HANDLE_NIL : iter->second.first;
+}
+
+DDS::InstanceHandle_t DomainParticipantImpl::lookup_handle(const GUID_t& id) const
+{
+  ACE_GUARD_RETURN(ACE_Thread_Mutex, guard, handle_protector_, DDS::HANDLE_NIL);
+  const CountedHandleMap::const_iterator iter = handles_.find(id);
+  return iter == handles_.end() ? DDS::HANDLE_NIL : iter->second.first;
+}
+
+void DomainParticipantImpl::return_handle(DDS::InstanceHandle_t handle)
+{
+  ACE_GUARD(ACE_Thread_Mutex, guard, handle_protector_);
+  const RepoIdMap::iterator r_iter = repoIds_.find(handle);
+  if (r_iter == repoIds_.end()) {
+    reusable_handles_.add(handle);
+    if (DCPS_debug_level > 5) {
+      ACE_DEBUG((LM_DEBUG, "(%P|%t) DomainParticipantImpl::return_handle: "
+                 "Returned unmapped InstanceHandle %d\n", handle));
+    }
+    return;
+  }
+
+  const CountedHandleMap::iterator h_iter = handles_.find(r_iter->second);
+  if (h_iter == handles_.end()) {
+    return;
+  }
+
+  if (DCPS_debug_level > 5) {
+    ACE_DEBUG((LM_DEBUG, "(%P|%t) DomainParticipantImpl::return_handle: "
+               "Returned mapped InstanceHandle %d refcount %d\n",
+               handle, h_iter->second.second));
+  }
+
+  HandleWithCounter& mapped = h_iter->second;
+  if (--mapped.second == 0) {
+    handles_.erase(h_iter);
+    repoIds_.erase(r_iter);
+    reusable_handles_.add(handle);
+  }
+}
+
+GUID_t DomainParticipantImpl::get_repoid(DDS::InstanceHandle_t handle) const
+{
+  ACE_GUARD_RETURN(ACE_Thread_Mutex, guard, handle_protector_, GUID_UNKNOWN);
+  const RepoIdMap::const_iterator location = repoIds_.find(handle);
+  return location == repoIds_.end() ? GUID_UNKNOWN : location->second;
 }
 
 DDS::Topic_ptr
@@ -1860,29 +1943,33 @@ DomainParticipantImpl::create_new_topic(
                    this->topics_protector_,
                    DDS::Topic::_nil());
 
-#ifdef OPENDDS_SECURITY
-  if (TheServiceParticipant->get_security() && !topicIsBIT(topic_name, type_name)) {
+#if OPENDDS_CONFIG_SECURITY
+  if (perm_handle_ && !topicIsBIT(topic_name, type_name)) {
     Security::AccessControl_var access = security_config_->get_access_control();
 
     DDS::Security::SecurityException se;
 
     DDS::Security::TopicSecurityAttributes sec_attr;
     if (!access->get_topic_sec_attributes(perm_handle_, topic_name, sec_attr, se)) {
-      ACE_ERROR((LM_WARNING,
-        ACE_TEXT("(%P|%t) WARNING: ")
-        ACE_TEXT("DomainParticipantImpl::create_new_topic, ")
-        ACE_TEXT("Unable to get security attributes for topic '%C'. SecurityException[%d.%d]: %C\n"),
-          topic_name, se.code, se.minor_code, se.message.in()));
+      if (DCPS::security_debug.new_entity_warn) {
+        ACE_ERROR((LM_WARNING,
+                   ACE_TEXT("(%P|%t) WARNING: ")
+                   ACE_TEXT("DomainParticipantImpl::create_new_topic, ")
+                   ACE_TEXT("Unable to get security attributes for topic '%C'. SecurityException[%d.%d]: %C\n"),
+                   topic_name, se.code, se.minor_code, se.message.in()));
+        }
       return DDS::Topic::_nil();
     }
 
     if ((sec_attr.is_write_protected || sec_attr.is_read_protected) &&
         !access->check_create_topic(perm_handle_, domain_id_, topic_name, qos, se)) {
-      ACE_ERROR((LM_WARNING,
-        ACE_TEXT("(%P|%t) WARNING: ")
-        ACE_TEXT("DomainParticipantImpl::create_new_topic, ")
-        ACE_TEXT("Permissions check failed to create new topic '%C'. SecurityException[%d.%d]: %C\n"),
-          topic_name, se.code, se.minor_code, se.message.in()));
+      if (DCPS::security_debug.new_entity_warn) {
+        ACE_ERROR((LM_WARNING,
+                   ACE_TEXT("(%P|%t) WARNING: ")
+                   ACE_TEXT("DomainParticipantImpl::create_new_topic, ")
+                   ACE_TEXT("Permissions check failed to create new topic '%C'. SecurityException[%d.%d]: %C\n"),
+                   topic_name, se.code, se.minor_code, se.message.in()));
+      }
       return DDS::Topic::_nil();
     }
   }
@@ -1900,23 +1987,23 @@ DomainParticipantImpl::create_new_topic(
                            this),
                  DDS::Topic::_nil());
 
-  if ((enabled_ == true)
-      && (qos_.entity_factory.autoenable_created_entities)) {
-    topic_servant->enable();
+  if (enabled_ && qos_.entity_factory.autoenable_created_entities) {
+    const DDS::ReturnCode_t ret = topic_servant->enable();
+
+    if (ret != DDS::RETCODE_OK) {
+      ACE_ERROR((LM_WARNING,
+          ACE_TEXT("(%P|%t) WARNING: ")
+          ACE_TEXT("DomainParticipantImpl::create_new_topic, ")
+          ACE_TEXT("enable failed.\n")));
+      return DDS::Topic::_nil();
+    }
   }
 
   DDS::Topic_ptr obj(topic_servant);
 
   // this object will also act as a guard against leaking the new TopicImpl
-  RefCounted_Topic refCounted_topic(Topic_Pair(topic_servant, obj, NO_DUP));
-
-  if (OpenDDS::DCPS::bind(topics_, topic_name, refCounted_topic) == -1) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: DomainParticipantImpl::create_new_topic, ")
-               ACE_TEXT("%p \n"),
-               ACE_TEXT("bind")));
-    return DDS::Topic::_nil();
-  }
+  RefCounted_Topic refCounted_topic(Topic_Pair(topic_servant, obj, false));
+  topics_.insert(std::make_pair(topic_name, refCounted_topic));
 
   if (this->monitor_) {
     this->monitor_->report();
@@ -1927,27 +2014,50 @@ DomainParticipantImpl::create_new_topic(
   return DDS::Topic::_duplicate(refCounted_topic.pair_.obj_.in());
 }
 
-bool
-DomainParticipantImpl::is_clean() const
+bool DomainParticipantImpl::is_clean(String* leftover_entities) const
 {
-  bool sub_is_clean = subscribers_.empty();
-  bool topics_is_clean = topics_.size() == 0;
-
-  if (!TheTransientKludge->is_enabled()) {
-    // There are four topics and builtin topic subscribers
-    // left.
-
-    sub_is_clean = !sub_is_clean ? subscribers_.size() == 1 : true;
-    topics_is_clean = !topics_is_clean ? topics_.size() == 4 : true;
+  if (leftover_entities) {
+    leftover_entities->clear();
   }
-  return (publishers_.empty()
-          && sub_is_clean
-          && topics_is_clean);
+
+  // check that the only remaining topics are built-in topics
+  size_t topic_count = 0;
+  for (TopicMap::const_iterator it = topics_.begin(); it != topics_.end(); ++it) {
+    if (!topicIsBIT(it->second.pair_.svt_->topic_name(), it->second.pair_.svt_->type_name())) {
+      ++topic_count;
+    }
+  }
+  if (topic_count) {
+    *leftover_entities += to_dds_string(topic_count) + " topic(s)";
+  }
+
+  size_t sub_count = subscribers_.size();
+  if (!TheTransientKludge->is_enabled()) {
+    // There are built-in topics and built-in topic subscribers left.
+    sub_count = sub_count <= 1 ? 0 : sub_count;
+  }
+  if (leftover_entities && sub_count) {
+    if (leftover_entities->size()) {
+      *leftover_entities += ", ";
+    }
+    *leftover_entities += to_dds_string(sub_count) + " subscriber(s)";
+  }
+
+  const size_t pub_count = publishers_.size();
+  if (leftover_entities && pub_count) {
+    if (leftover_entities->size()) {
+      *leftover_entities += ", ";
+    }
+    *leftover_entities += to_dds_string(pub_count) + " publisher(s)";
+  }
+
+  return topic_count == 0 && sub_count == 0 && pub_count == 0;
 }
 
 DDS::DomainParticipantListener_ptr
 DomainParticipantImpl::listener_for(DDS::StatusKind kind)
 {
+  ACE_Guard<ACE_Thread_Mutex> g(listener_mutex_);
   if (CORBA::is_nil(listener_.in()) || (listener_mask_ & kind) == 0) {
     return DDS::DomainParticipantListener::_nil ();
   } else {
@@ -1975,29 +2085,20 @@ OwnershipManager*
 DomainParticipantImpl::ownership_manager()
 {
 #if !defined (DDS_HAS_MINIMUM_BIT)
-
-  DDS::DataReader_var dr =
-    bit_subscriber_->lookup_datareader(BUILT_IN_PUBLICATION_TOPIC);
-  DDS::PublicationBuiltinTopicDataDataReader_var bit_pub_dr =
-    DDS::PublicationBuiltinTopicDataDataReader::_narrow(dr);
-
-  if (!CORBA::is_nil(bit_pub_dr.in())) {
-    DDS::DataReaderListener_var listener = bit_pub_dr->get_listener();
-    if (CORBA::is_nil(listener.in())) {
-      DDS::DataReaderListener_var bit_pub_listener =
-        new BitPubListenerImpl(this);
-      bit_pub_dr->set_listener(bit_pub_listener, DDS::DATA_AVAILABLE_STATUS);
-      // Must call on_data_available when attaching a listener late - samples may be waiting
-      bit_pub_listener->on_data_available(bit_pub_dr.in());
+  if (bit_subscriber_) {
+    bit_subscriber_->bit_pub_listener_hack(this);
+  } else {
+    if (log_level >= LogLevel::Warning) {
+      ACE_ERROR((LM_WARNING,
+                 "(%P|%t) WARNING: DomainParticipantImpl::ownership_manager: bit_subscriber_ is null"));
     }
   }
-
 #endif
-  return &this->owner_man_;
+  return &owner_man_;
 }
 
 void
-DomainParticipantImpl::update_ownership_strength (const PublicationId& pub_id,
+DomainParticipantImpl::update_ownership_strength (const GUID_t& pub_id,
                                                   const CORBA::Long& ownership_strength)
 {
   ACE_GUARD(ACE_Recursive_Thread_Mutex,
@@ -2015,14 +2116,14 @@ DomainParticipantImpl::update_ownership_strength (const PublicationId& pub_id,
 
 #endif // OPENDDS_NO_OWNERSHIP_KIND_EXCLUSIVE
 
-DomainParticipantImpl::RepoIdSequence::RepoIdSequence(const RepoId& base) :
+DomainParticipantImpl::RepoIdSequence::RepoIdSequence(const GUID_t& base) :
   base_(base),
   serial_(0),
   builder_(base_)
 {
 }
 
-RepoId
+GUID_t
 DomainParticipantImpl::RepoIdSequence::next()
 {
   builder_.entityKey(++serial_);
@@ -2043,10 +2144,12 @@ DomainParticipantImpl::validate_publisher_qos(DDS::PublisherQos & pub_qos)
   OPENDDS_NO_OBJECT_MODEL_PROFILE_COMPATIBILITY_CHECK(pub_qos, false);
 
   if (!Qos_Helper::valid(pub_qos) || !Qos_Helper::consistent(pub_qos)) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("DomainParticipantImpl::validate_publisher_qos, ")
-               ACE_TEXT("invalid qos.\n")));
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: ")
+                 ACE_TEXT("DomainParticipantImpl::validate_publisher_qos, ")
+                 ACE_TEXT("invalid qos.\n")));
+    }
     return false;
   }
 
@@ -2063,10 +2166,12 @@ DomainParticipantImpl::validate_subscriber_qos(DDS::SubscriberQos & subscriber_q
   OPENDDS_NO_OBJECT_MODEL_PROFILE_COMPATIBILITY_CHECK(subscriber_qos, false);
 
   if (!Qos_Helper::valid(subscriber_qos) || !Qos_Helper::consistent(subscriber_qos)) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("DomainParticipantImpl::validate_subscriber_qos, ")
-               ACE_TEXT("invalid qos.\n")));
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: ")
+                 ACE_TEXT("DomainParticipantImpl::validate_subscriber_qos, ")
+                 ACE_TEXT("invalid qos.\n")));
+    }
     return false;
   }
 
@@ -2082,10 +2187,12 @@ DomainParticipantImpl::create_recorder(DDS::Topic_ptr a_topic,
                                        DDS::StatusMask mask)
 {
   if (CORBA::is_nil(a_topic)) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("SubscriberImpl::create_datareader, ")
-               ACE_TEXT("topic desc is nil.\n")));
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: ")
+                 ACE_TEXT("DomainParticipantImpl::create_recorder, ")
+                 ACE_TEXT("topic desc is nil.\n")));
+    }
     return 0;
   }
 
@@ -2105,9 +2212,9 @@ DomainParticipantImpl::create_recorder(DDS::Topic_ptr a_topic,
 
   recorder->init(dynamic_cast<TopicDescriptionImpl*>(a_topic),
     dr_qos, a_listener,
-    mask, this, subscriber_qos);
+    mask, this, sub_qos);
 
-  if ((enabled_ == true) && (qos_.entity_factory.autoenable_created_entities)) {
+  if (enabled_ && qos_.entity_factory.autoenable_created_entities) {
     recorder->enable();
   }
 
@@ -2125,10 +2232,12 @@ DomainParticipantImpl::create_replayer(DDS::Topic_ptr a_topic,
                                        DDS::StatusMask mask)
 {
   if (CORBA::is_nil(a_topic)) {
-    ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: ")
-               ACE_TEXT("SubscriberImpl::create_datareader, ")
-               ACE_TEXT("topic desc is nil.\n")));
+    if (DCPS_debug_level > 0) {
+      ACE_ERROR((LM_ERROR,
+                 ACE_TEXT("(%P|%t) ERROR: ")
+                 ACE_TEXT("DomainParticipantImpl::create_replayer, ")
+                 ACE_TEXT("topic desc is nil.\n")));
+    }
     return 0;
   }
 
@@ -2150,14 +2259,16 @@ DomainParticipantImpl::create_replayer(DDS::Topic_ptr a_topic,
 
   replayer->init(a_topic, topic_servant, dw_qos, a_listener, mask, this, pub_qos);
 
-  if ((this->enabled_ == true) && (qos_.entity_factory.autoenable_created_entities)) {
+  if (enabled_ && qos_.entity_factory.autoenable_created_entities) {
     const DDS::ReturnCode_t ret = replayer->enable();
 
     if (ret != DDS::RETCODE_OK) {
-      ACE_ERROR((LM_ERROR,
-                 ACE_TEXT("(%P|%t) ERROR: ")
-                 ACE_TEXT("DomainParticipantImpl::create_replayer, ")
-                 ACE_TEXT("enable failed.\n")));
+      if (DCPS_debug_level > 0) {
+        ACE_ERROR((LM_ERROR,
+                   ACE_TEXT("(%P|%t) ERROR: ")
+                   ACE_TEXT("DomainParticipantImpl::create_replayer, ")
+                   ACE_TEXT("enable failed.\n")));
+      }
       return 0;
     }
   }
@@ -2186,57 +2297,49 @@ DomainParticipantImpl::delete_replayer(Replayer_ptr replayer)
 void
 DomainParticipantImpl::add_adjust_liveliness_timers(DataWriterImpl* writer)
 {
-  automatic_liveliness_timer_.add_adjust(writer);
-  participant_liveliness_timer_.add_adjust(writer);
+  automatic_liveliness_timer_->add_adjust(writer);
+  participant_liveliness_timer_->add_adjust(writer);
 }
 
 void
 DomainParticipantImpl::remove_adjust_liveliness_timers()
 {
-  automatic_liveliness_timer_.remove_adjust();
-  participant_liveliness_timer_.remove_adjust();
+  automatic_liveliness_timer_->remove_adjust();
+  participant_liveliness_timer_->remove_adjust();
 }
 
 DomainParticipantImpl::LivelinessTimer::LivelinessTimer(DomainParticipantImpl& impl,
                                                         DDS::LivelinessQosPolicyKind kind)
   : impl_(impl)
-  , kind_ (kind)
-  , interval_ (ACE_Time_Value::max_time)
-  , recalculate_interval_ (false)
-  , scheduled_ (false)
+  , kind_(kind)
+  , interval_(TimeDuration::max_value)
+  , recalculate_interval_(false)
+  , scheduled_(false)
 { }
 
 DomainParticipantImpl::LivelinessTimer::~LivelinessTimer()
 {
-  if (scheduled_ && TheServiceParticipant->timer()) {
-    TheServiceParticipant->timer()->cancel_timer(this);
-  }
 }
 
 void
 DomainParticipantImpl::LivelinessTimer::add_adjust(OpenDDS::DCPS::DataWriterImpl* writer)
 {
-  ACE_GUARD(ACE_Thread_Mutex,
-            guard,
-            this->lock_);
+  ACE_GUARD(ACE_Thread_Mutex, guard, lock_);
 
-  const ACE_Time_Value now = ACE_OS::gettimeofday();
+  const MonotonicTimePoint now = MonotonicTimePoint::now();
 
   // Calculate the time remaining to liveliness check.
-  const ACE_Time_Value remaining = interval_ - (now - last_liveliness_check_);
+  const TimeDuration remaining = interval_ - (now - last_liveliness_check_);
 
   // Adopt a smaller interval.
-  const ACE_Time_Value i = writer->liveliness_check_interval(kind_);
-  if (i < interval_) {
-    interval_ = i;
-  }
+  interval_ = std::min(interval_, writer->liveliness_check_interval(kind_));
 
   // Reschedule or schedule a timer if necessary.
   if (scheduled_ && interval_ < remaining) {
-    TheServiceParticipant->timer()->cancel_timer(this);
-    TheServiceParticipant->timer()->schedule_timer(this, 0, interval_);
+    cancel();
+    schedule(interval_);
   } else if (!scheduled_) {
-    TheServiceParticipant->timer()->schedule_timer(this, 0, interval_);
+    schedule(interval_);
     scheduled_ = true;
     last_liveliness_check_ = now;
   }
@@ -2245,36 +2348,34 @@ DomainParticipantImpl::LivelinessTimer::add_adjust(OpenDDS::DCPS::DataWriterImpl
 void
 DomainParticipantImpl::LivelinessTimer::remove_adjust()
 {
-  ACE_GUARD(ACE_Thread_Mutex,
-            guard,
-            this->lock_);
+  ACE_GUARD(ACE_Thread_Mutex, guard, lock_);
 
   recalculate_interval_ = true;
 }
 
-int
-DomainParticipantImpl::LivelinessTimer::handle_timeout(const ACE_Time_Value & tv, const void* /* arg */)
+void DomainParticipantImpl::LivelinessTimer::execute(const MonotonicTimePoint& now)
 {
-  ACE_GUARD_RETURN(ACE_Thread_Mutex,
-                   guard,
-                   this->lock_,
-                   0);
+  ACE_GUARD(ACE_Thread_Mutex, guard, lock_);
+
+  if (recalculate_interval_) {
+    ACE_Reverse_Lock<ACE_Thread_Mutex> rev_lock(lock_);
+    TimeDuration interval;
+    while (recalculate_interval_) {
+      recalculate_interval_ = false;
+      ACE_GUARD(ACE_Reverse_Lock<ACE_Thread_Mutex>, rev_guard, rev_lock);
+      interval = impl_.liveliness_check_interval(kind_);
+    }
+    interval_ = interval;
+  }
 
   scheduled_ = false;
 
-  if (recalculate_interval_) {
-    interval_ = impl_.liveliness_check_interval(kind_);
-    recalculate_interval_ = false;
-  }
-
-  if (interval_ != ACE_Time_Value::max_time) {
-    dispatch(tv);
-    last_liveliness_check_ = tv;
-    TheServiceParticipant->timer()->schedule_timer(this, 0, interval_);
+  if (!interval_.is_max()) {
+    dispatch(now);
+    last_liveliness_check_ = now;
+    schedule(interval_);
     scheduled_ = true;
   }
-
-  return 0;
 }
 
 DomainParticipantImpl::AutomaticLivelinessTimer::AutomaticLivelinessTimer(DomainParticipantImpl& impl)
@@ -2282,52 +2383,48 @@ DomainParticipantImpl::AutomaticLivelinessTimer::AutomaticLivelinessTimer(Domain
 { }
 
 void
-DomainParticipantImpl::AutomaticLivelinessTimer::dispatch(const ACE_Time_Value& /* tv */)
+DomainParticipantImpl::AutomaticLivelinessTimer::dispatch(const MonotonicTimePoint& /* tv */)
 {
-  impl_.signal_liveliness (kind_);
+  impl_.signal_liveliness(kind_);
 }
 
 DomainParticipantImpl::ParticipantLivelinessTimer::ParticipantLivelinessTimer(DomainParticipantImpl& impl)
-  : LivelinessTimer (impl, DDS::MANUAL_BY_PARTICIPANT_LIVELINESS_QOS)
+  : LivelinessTimer(impl, DDS::MANUAL_BY_PARTICIPANT_LIVELINESS_QOS)
 { }
 
 void
-DomainParticipantImpl::ParticipantLivelinessTimer::dispatch(const ACE_Time_Value& tv)
+DomainParticipantImpl::ParticipantLivelinessTimer::dispatch(const MonotonicTimePoint& tv)
 {
   if (impl_.participant_liveliness_activity_after (tv - interval())) {
-    impl_.signal_liveliness (kind_);
+    impl_.signal_liveliness(kind_);
   }
 }
 
-ACE_Time_Value
+TimeDuration
 DomainParticipantImpl::liveliness_check_interval(DDS::LivelinessQosPolicyKind kind)
 {
-  ACE_Time_Value tv = ACE_Time_Value::max_time;
+  TimeDuration tv(TimeDuration::max_value);
 
-  ACE_GUARD_RETURN (ACE_Recursive_Thread_Mutex,
-                    tao_mon,
-                    this->publishers_protector_,
-                    tv);
+  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
+                   tao_mon,
+                   publishers_protector_,
+                   tv);
 
-  for (PublisherSet::iterator it(publishers_.begin());
-       it != publishers_.end(); ++it) {
-    tv = std::min (tv, it->svt_->liveliness_check_interval(kind));
+  for (PublisherSet::iterator it = publishers_.begin(); it != publishers_.end(); ++it) {
+    tv = std::min(tv, it->svt_->liveliness_check_interval(kind));
   }
 
   return tv;
 }
 
 bool
-DomainParticipantImpl::participant_liveliness_activity_after(const ACE_Time_Value& tv)
+DomainParticipantImpl::participant_liveliness_activity_after(const MonotonicTimePoint& tv)
 {
   if (last_liveliness_activity_ > tv) {
     return true;
   }
 
-  ACE_GUARD_RETURN (ACE_Recursive_Thread_Mutex,
-                    tao_mon,
-                    this->publishers_protector_,
-                    tv);
+  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, tao_mon, this->publishers_protector_, !tv.is_zero());
 
   for (PublisherSet::iterator it(publishers_.begin());
        it != publishers_.end(); ++it) {
@@ -2345,150 +2442,248 @@ DomainParticipantImpl::signal_liveliness (DDS::LivelinessQosPolicyKind kind)
   TheServiceParticipant->get_discovery(domain_id_)->signal_liveliness (domain_id_, get_id(), kind);
 }
 
-#ifdef OPENDDS_SECURITY
 void
-DomainParticipantImpl::set_security_config(const Security::SecurityConfig_rch& cfg)
+DomainParticipantImpl::ShutdownHandler::execute(ReactorWrapper&)
 {
-  security_config_ = cfg;
-}
-#endif
+  ThreadStatusManager::Event ev(TheServiceParticipant->get_thread_status_manager());
 
-int
-DomainParticipantImpl::handle_exception(ACE_HANDLE /*fd*/)
-{
   DDS::ReturnCode_t ret = DDS::RETCODE_OK;
 
-  // delete publishers
-  {
-    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                     tao_mon,
-                     this->publishers_protector_,
-                     DDS::RETCODE_ERROR);
+  RcHandle<DomainParticipantImpl> dpi = dpi_.lock();
+  if (dpi) {
 
-    PublisherSet::iterator pubIter = publishers_.begin();
-    DDS::Publisher_ptr pubPtr;
-    size_t pubsize = publishers_.size();
+    dpi->automatic_liveliness_timer_->cancel();
+    dpi->participant_liveliness_timer_->cancel();
 
-    while (pubsize > 0) {
-      pubPtr = (*pubIter).obj_.in();
-      ++pubIter;
+    // delete publishers
+    {
+      ACE_GUARD(ACE_Recursive_Thread_Mutex,
+                tao_mon,
+                dpi->publishers_protector_);
 
-      DDS::ReturnCode_t result
-      = pubPtr->delete_contained_entities();
+      PublisherSet::iterator pubIter = dpi->publishers_.begin();
+      DDS::Publisher_ptr pubPtr;
+      size_t pubsize = dpi->publishers_.size();
 
-      if (result != DDS::RETCODE_OK) {
-        ret = result;
+      while (pubsize > 0) {
+        pubPtr = (*pubIter).obj_.in();
+        ++pubIter;
+
+        DDS::ReturnCode_t result = pubPtr->delete_contained_entities();
+        if (result != DDS::RETCODE_OK) {
+          ret = result;
+        }
+
+        result = dpi->delete_publisher(pubPtr);
+
+        if (result != DDS::RETCODE_OK) {
+          ret = result;
+        }
+
+        --pubsize;
       }
-
-      result = delete_publisher(pubPtr);
-
-      if (result != DDS::RETCODE_OK) {
-        ret = result;
-      }
-
-      --pubsize;
-    }
-
-  }
-
-  // delete subscribers
-  {
-    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                     tao_mon,
-                     this->subscribers_protector_,
-                     DDS::RETCODE_ERROR);
-
-    SubscriberSet::iterator subIter = subscribers_.begin();
-    DDS::Subscriber_ptr subPtr;
-    size_t subsize = subscribers_.size();
-
-    while (subsize > 0) {
-      subPtr = (*subIter).obj_.in();
-      ++subIter;
-
-      DDS::ReturnCode_t result = subPtr->delete_contained_entities();
-
-      if (result != DDS::RETCODE_OK) {
-        ret = result;
-      }
-
-      result = delete_subscriber(subPtr);
-
-      if (result != DDS::RETCODE_OK) {
-        ret = result;
-      }
-
-      --subsize;
-    }
-  }
-
-  // delete topics
-  {
-    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                     tao_mon,
-                     this->topics_protector_,
-                     DDS::RETCODE_ERROR);
-
-    TopicMap::iterator topicIter = topics_.begin();
-    DDS::Topic_ptr topicPtr;
-    size_t topicsize = topics_.size();
-
-    while (topicsize > 0) {
-      topicPtr = topicIter->second.pair_.obj_.in();
-      ++topicIter;
-
-      // Delete the topic the reference count.
-      const DDS::ReturnCode_t result = this->delete_topic_i(topicPtr, true);
-
-      if (result != DDS::RETCODE_OK) {
-        ret = result;
-      }
-      --topicsize;
-    }
-  }
-
-  {
-    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                     tao_mon,
-                     this->recorders_protector_,
-                     DDS::RETCODE_ERROR);
-
-    RecorderSet::iterator it = recorders_.begin();
-    for (; it != recorders_.end(); ++it ){
-      RecorderImpl* impl = dynamic_cast<RecorderImpl* >(it->in());
-      DDS::ReturnCode_t result = DDS::RETCODE_ERROR;
-      if (impl) result = impl->cleanup();
-      if (result != DDS::RETCODE_OK) ret = result;
-    }
-    recorders_.clear();
-  }
-
-  {
-    ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex,
-                     tao_mon,
-                     this->replayers_protector_,
-                     DDS::RETCODE_ERROR);
-
-    ReplayerSet::iterator it = replayers_.begin();
-    for (; it != replayers_.end(); ++it ){
-      ReplayerImpl* impl = static_cast<ReplayerImpl* >(it->in());
-      DDS::ReturnCode_t result = DDS::RETCODE_ERROR;
-      if (impl) result = impl->cleanup();
-      if (result != DDS::RETCODE_OK) ret = result;
 
     }
 
-    replayers_.clear();
+    // delete subscribers
+    {
+      ACE_GUARD(ACE_Recursive_Thread_Mutex,
+                tao_mon,
+                dpi->subscribers_protector_);
+
+      SubscriberSet::iterator subIter = dpi->subscribers_.begin();
+      DDS::Subscriber_ptr subPtr;
+      size_t subsize = dpi->subscribers_.size();
+
+      while (subsize > 0) {
+        subPtr = (*subIter).obj_.in();
+        ++subIter;
+
+        DDS::ReturnCode_t result = subPtr->delete_contained_entities();
+
+        if (result != DDS::RETCODE_OK) {
+          ret = result;
+        }
+
+        result = dpi->delete_subscriber(subPtr);
+
+        if (result != DDS::RETCODE_OK) {
+          ret = result;
+        }
+
+        --subsize;
+      }
+    }
+
+    {
+      ACE_GUARD(ACE_Recursive_Thread_Mutex,
+                tao_mon,
+                dpi->recorders_protector_);
+
+      RecorderSet::iterator it = dpi->recorders_.begin();
+      for (; it != dpi->recorders_.end(); ++it ){
+        RecorderImpl* impl = dynamic_cast<RecorderImpl* >(it->in());
+        DDS::ReturnCode_t result = DDS::RETCODE_ERROR;
+        if (impl) result = impl->cleanup();
+        if (result != DDS::RETCODE_OK) ret = result;
+      }
+      dpi->recorders_.clear();
+    }
+
+    {
+      ACE_GUARD(ACE_Recursive_Thread_Mutex,
+                tao_mon,
+                dpi->replayers_protector_);
+
+      ReplayerSet::iterator it = dpi->replayers_.begin();
+      for (; it != dpi->replayers_.end(); ++it ){
+        ReplayerImpl* impl = static_cast<ReplayerImpl* >(it->in());
+        DDS::ReturnCode_t result = DDS::RETCODE_ERROR;
+        if (impl) result = impl->cleanup();
+        if (result != DDS::RETCODE_OK) ret = result;
+
+      }
+
+      dpi->replayers_.clear();
+    }
+
+    // delete topics
+    {
+      ACE_GUARD(ACE_Recursive_Thread_Mutex,
+                tao_mon,
+                dpi->topics_protector_);
+
+      TopicMap::iterator topicIter = dpi->topics_.begin();
+      DDS::Topic_ptr topicPtr;
+      size_t topicsize = dpi->topics_.size();
+
+      while (topicsize > 0) {
+        topicPtr = topicIter->second.pair_.obj_.in();
+        ++topicIter;
+
+        // Delete the topic the reference count.
+        const DDS::ReturnCode_t result = dpi->delete_topic_i(topicPtr, true);
+
+        if (result != DDS::RETCODE_OK) {
+          ret = result;
+        }
+        --topicsize;
+      }
+    }
+  } else {
+    ret = DDS::RETCODE_ALREADY_DELETED;
   }
 
   shutdown_mutex_.acquire();
   shutdown_result_ = ret;
   shutdown_complete_ = true;
-  shutdown_condition_.signal();
+  shutdown_condition_.notify_all();
   shutdown_mutex_.release();
-
-  return 0;
 }
+
+void
+DomainParticipantImpl::ShutdownHandler::wait()
+{
+  shutdown_mutex_.acquire();
+  ThreadStatusManager& thread_status_manager = TheServiceParticipant->get_thread_status_manager();
+  while (!shutdown_complete_) {
+    shutdown_condition_.wait(thread_status_manager);
+  }
+  shutdown_mutex_.release();
+}
+
+bool DomainParticipantImpl::prepare_to_delete_datawriters()
+{
+  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, publishers_protector_, false);
+  bool result = true;
+  const PublisherSet::iterator end = publishers_.end();
+  for (PublisherSet::iterator i = publishers_.begin(); i != end; ++i) {
+    result &= i->svt_->prepare_to_delete_datawriters();
+  }
+  return result;
+}
+
+bool DomainParticipantImpl::set_wait_pending_deadline(const MonotonicTimePoint& deadline)
+{
+  ACE_GUARD_RETURN(ACE_Recursive_Thread_Mutex, guard, publishers_protector_, false);
+  bool result = true;
+  const PublisherSet::iterator end = publishers_.end();
+  for (PublisherSet::iterator i = publishers_.begin(); i != end; ++i) {
+    result &= i->svt_->set_wait_pending_deadline(deadline);
+  }
+  return result;
+}
+
+#ifndef OPENDDS_SAFETY_PROFILE
+DDS::ReturnCode_t DomainParticipantImpl::get_dynamic_type(
+  DDS::DynamicType_var& type, const DDS::BuiltinTopicKey_t& key)
+{
+  if (!type_lookup_service_) {
+    if (log_level >= LogLevel::Notice) {
+      ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::get_dynamic_type: "
+        "Can't get a DynamicType, no type lookup service\n"));
+    }
+    return DDS::RETCODE_UNSUPPORTED;
+  }
+
+  XTypes::TypeInformation ti = type_lookup_service_->get_type_info(key);
+  if (ti.complete.typeid_with_size.typeobject_serialized_size == 0) {
+    if (log_level >= LogLevel::Notice) {
+      ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::get_dynamic_type: "
+        "Can't get a DynamicType, type info is missing complete\n"));
+    }
+    return DDS::RETCODE_NO_DATA;
+  }
+
+  const XTypes::TypeIdentifier& ctid = ti.complete.typeid_with_size.type_id;
+  const GUID_t entity = bit_key_to_guid(key);
+  if (!type_lookup_service_->has_complete(ctid)) {
+    // We don't have it, try to asking the remote for the complete
+    // TypeObjects.
+    if (DCPS_debug_level >= 4) {
+      ACE_DEBUG((LM_DEBUG, "(%P|%t) DomainParticipantImpl::get_dynamic_type: "
+        "requesting remote complete TypeObject from %C\n", LogGuid(entity).c_str()));
+    }
+    Discovery_rch disco = TheServiceParticipant->get_discovery(domain_id_);
+    TypeObjReqCond cond;
+    disco->request_remote_complete_type_objects(domain_id_, dp_id_, entity, ti, cond);
+    const DDS::ReturnCode_t rc = cond.wait();
+    if (rc != DDS::RETCODE_OK) {
+      if (log_level >= LogLevel::Notice) {
+        ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::get_dynamic_type: "
+          "Couldn't get remote complete type object: %C\n", retcode_to_string(rc)));
+      }
+      return rc;
+    }
+
+    if (!type_lookup_service_->has_complete(ctid)) {
+      if (log_level >= LogLevel::Notice) {
+        ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::get_dynamic_type: "
+          "request_remote_complete_type_objects succeeded, but type lookup service still says it "
+          "doesn't have the complete TypeObject?\n"));
+      }
+      return DDS::RETCODE_ERROR;
+    }
+  }
+
+  DDS::DynamicType_var got_type = type_lookup_service_->type_identifier_to_dynamic(ctid, entity);
+  if (!XTypes::dynamic_type_is_valid(got_type)) {
+    if (log_level >= LogLevel::Notice) {
+      ACE_ERROR((LM_NOTICE, "(%P|%t) NOTICE: DomainParticipantImpl::get_dynamic_type: "
+        "Got an invalid DynamicType\n"));
+    }
+    return DDS::RETCODE_ERROR;
+  }
+  type = got_type;
+
+  XTypes::DynamicTypeImpl* impl = dynamic_cast<XTypes::DynamicTypeImpl*>(type.in());
+  impl->set_complete_type_identifier(ctid);
+  impl->set_minimal_type_identifier(ti.minimal.typeid_with_size.type_id);
+  impl->set_preset_type_info(ti);
+
+  return DDS::RETCODE_OK;
+}
+#endif
 
 } // namespace DCPS
 } // namespace OpenDDS

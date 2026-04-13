@@ -21,7 +21,7 @@ class SimpleTransportClient : public OpenDDS::DCPS::TransportClient
       try
         {
           exceptionThrown = false;
-          this->enable_transport(false, false);
+          this->enable_transport(false, false, repoId_);
         } catch (const OpenDDS::DCPS::Transport::Exception&) {
               exceptionThrown = true;
         } catch (const CORBA::BAD_PARAM& ) {
@@ -31,7 +31,7 @@ class SimpleTransportClient : public OpenDDS::DCPS::TransportClient
 
   bool check_transport_qos(const OpenDDS::DCPS::TransportInst&)
     { return true; }
-  const OpenDDS::DCPS::RepoId& get_repo_id() const
+  OpenDDS::DCPS::GUID_t get_guid() const
     { return repoId_; }
   DDS::DomainId_t domain_id() const
     { return 0; }
@@ -40,7 +40,7 @@ class SimpleTransportClient : public OpenDDS::DCPS::TransportClient
 
   bool exceptionThrown;
 
-  OpenDDS::DCPS::RepoId repoId_;
+  OpenDDS::DCPS::GUID_t repoId_;
 };
 
 #endif

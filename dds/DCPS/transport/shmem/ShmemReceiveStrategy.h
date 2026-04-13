@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_SHMEMRECEIVESTRATEGY_H
-#define OPENDDS_SHMEMRECEIVESTRATEGY_H
+#ifndef OPENDDS_DCPS_TRANSPORT_SHMEM_SHMEMRECEIVESTRATEGY_H
+#define OPENDDS_DCPS_TRANSPORT_SHMEM_SHMEMRECEIVESTRATEGY_H
 
 #include "Shmem_Export.h"
 
@@ -48,6 +48,7 @@ private:
   ShmemData* current_data_;
   size_t partial_recv_remaining_;
   const char* partial_recv_ptr_;
+  ACE_Thread_Mutex mutex_;
 };
 
 } // namespace DCPS

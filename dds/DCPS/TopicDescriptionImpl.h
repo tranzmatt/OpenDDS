@@ -8,12 +8,14 @@
 #ifndef OPENDDS_DCPS_TOPIC_DESCRIPTION_IMPL_H
 #define OPENDDS_DCPS_TOPIC_DESCRIPTION_IMPL_H
 
-#include "dds/DdsDcpsTopicC.h"
-#include "dds/DdsDcpsTypeSupportExtC.h"
+#include "Atomic.h"
 #include "Definitions.h"
-#include "ace/SString.h"
-#include "ace/Atomic_Op.h"
 #include "LocalObject.h"
+
+#include <dds/DdsDcpsTopicC.h>
+#include <dds/DdsDcpsTypeSupportExtC.h>
+
+#include <ace/SString.h>
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 #pragma once
@@ -31,7 +33,7 @@ class DomainParticipantImpl;
 *
 * @brief Implements the DDS::TopicDescription interface.
 *
-* See the DDS specification, OMG formal/04-12-02, for a description of
+* See the DDS specification, OMG formal/2015-04-10, for a description of
 * the interface this class is implementing.
 *
 */
@@ -84,7 +86,7 @@ protected:
   OpenDDS::DCPS::TypeSupport_var type_support_;
 
   /// The number of entities using this topic
-  ACE_Atomic_Op<ACE_Thread_Mutex, unsigned long> entity_refs_;
+  Atomic<ACE_UINT32> entity_refs_;
 };
 
 template <typename Topic>
@@ -94,31 +96,34 @@ public:
   TopicDescriptionPtr(Topic* topic=0)
     : topic_(topic)
   {
-    if (topic_)
+    if (topic_) {
       topic_->add_entity_ref();
+    }
   }
 
   ~TopicDescriptionPtr()
   {
-    if (topic_)
+    if (topic_) {
       topic_->remove_entity_ref();
+    }
   }
 
   TopicDescriptionPtr(const TopicDescriptionPtr& other)
     : topic_(other.topic_)
   {
-    if (topic_)
+    if (topic_) {
       topic_->add_entity_ref();
+    }
   }
 
-  TopicDescriptionPtr& operator = (Topic* other)
+  TopicDescriptionPtr& operator=(Topic* other)
   {
     TopicDescriptionPtr tmp(other);
     std::swap(this->topic_, tmp.topic_);
     return *this;
   }
 
-  TopicDescriptionPtr& operator = (const TopicDescriptionPtr& other)
+  TopicDescriptionPtr& operator=(const TopicDescriptionPtr& other)
   {
     TopicDescriptionPtr tmp(other);
     std::swap(this->topic_, tmp.topic_);

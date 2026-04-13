@@ -5,25 +5,26 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef OPENDDS_TCPTRANSPORT_H
-#define OPENDDS_TCPTRANSPORT_H
+#ifndef OPENDDS_DCPS_TRANSPORT_TCP_TCPTRANSPORT_H
+#define OPENDDS_DCPS_TRANSPORT_TCP_TCPTRANSPORT_H
 
 #include "Tcp_export.h"
-
-#include "dds/DCPS/transport/framework/TransportImpl.h"
 #include "TcpInst_rch.h"
 #include "TcpDataLink_rch.h"
 #include "TcpConnection.h"
 #include "TcpConnection_rch.h"
 
-#include "dds/DCPS/ReactorTask_rch.h"
-#include "dds/DCPS/transport/framework/PriorityKey.h"
+#include <dds/DCPS/Atomic.h>
+#include <dds/DCPS/ReactorTask_rch.h>
+#include <dds/DCPS/transport/framework/PriorityKey.h>
+#include <dds/DCPS/transport/framework/TransportImpl.h>
+#include <dds/DCPS/TimeTypes.h>
 
-#include "ace/INET_Addr.h"
-#include "ace/Hash_Map_Manager.h"
-#include "ace/Synch_Traits.h"
-#include "ace/Connector.h"
-#include "ace/SOCK_Connector.h"
+#include <ace/INET_Addr.h>
+#include <ace/Hash_Map_Manager.h>
+#include <ace/Synch_Traits.h>
+#include <ace/Connector.h>
+#include <ace/SOCK_Connector.h>
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -49,13 +50,14 @@ class OpenDDS_Tcp_Export TcpTransport
 {
 public:
 
-  explicit TcpTransport(TcpInst& inst);
+  TcpTransport(const TcpInst_rch& inst,
+               DDS::DomainId_t domain);
   virtual ~TcpTransport();
 
   int fresh_link(TcpConnection_rch connection);
 
   virtual void unbind_link(DataLink* link);
-  TcpInst& config() const;
+  TcpInst_rch config() const;
 
 private:
   virtual AcceptConnectResult connect_datalink(const RemoteTransport& remote,
@@ -67,13 +69,17 @@ private:
                                               const TransportClient_rch& client);
 
   virtual void stop_accepting_or_connecting(const TransportClient_wrch& client,
-                                            const RepoId& remote_id);
+                                            const GUID_t& remote_id,
+                                            bool disassociate,
+                                            bool association_failed);
 
-  virtual bool configure_i(TcpInst& config);
+  virtual bool configure_i(const TcpInst_rch& config);
+
+  virtual void client_stop(const GUID_t& local_id);
 
   virtual void shutdown_i();
 
-  virtual bool connection_info_i(TransportLocator& local_info) const;
+  virtual bool connection_info_i(TransportLocator& local_info, ConnectionInfoFlags flags) const;
 
   /// Called by the DataLink to release itself.
   virtual void release_datalink(DataLink* link);
@@ -96,8 +102,7 @@ private:
   void passive_connection(const ACE_INET_Addr& remote_address,
                           const TcpConnection_rch& connection);
 
-  bool find_datalink_i(const PriorityKey& key, TcpDataLink_rch& link,
-                       const TransportClient_rch& client, const RepoId& remote_id);
+  bool find_datalink_i(const PriorityKey& key, TcpDataLink_rch& link);
 
   /// Code common to make_active_connection() and
   /// make_passive_connection().
@@ -114,14 +119,14 @@ private:
             TcpDataLink_rch,
             ACE_Hash<PriorityKey>,
             ACE_Equal_To<PriorityKey>,
-            ACE_Null_Mutex>              AddrLinkMap;
+            ACE_Null_Mutex> AddrLinkMap;
 
   typedef OPENDDS_MAP(PriorityKey, TcpDataLink_rch)   LinkMap;
   typedef OPENDDS_MAP(PriorityKey, TcpConnection_rch) ConnectionMap;
 
-  typedef ACE_SYNCH_MUTEX         LockType;
-  typedef ACE_Guard<LockType>     GuardType;
-  typedef ACE_Condition<LockType> ConditionType;
+  typedef ACE_SYNCH_MUTEX LockType;
+  typedef ACE_Guard<LockType> GuardType;
+  typedef ConditionVariable<LockType> ConditionVariableType;
 
 // TBD SOON - Something needs to protect the tcp_config_ reference
 //            because it gets set in our configure() method, and
@@ -139,8 +144,13 @@ private:
   /// Used to accept passive connections on our local_address_.
   unique_ptr<TcpAcceptor> acceptor_;
 
+  class Connector : public ACE_Connector<TcpConnection, ACE_SOCK_Connector>
+  {
+    virtual int fini();
+  };
+
   /// Open TcpConnections using non-blocking connect.
-  ACE_Connector<TcpConnection, ACE_SOCK_Connector> connector_;
+  Connector connector_;
 
   /// This is the map of connected DataLinks.
   AddrLinkMap links_;
@@ -156,12 +166,7 @@ private:
   /// This protects the connections_ and the pending_connections_
   /// data members.
   LockType connections_lock_;
-
-  /// This task is used to resolve some deadlock situation
-  /// during reconnecting.
-  /// TODO: reuse the reconnect_task in the TcpConnection
-  ///       for new connection checking.
-  unique_ptr<TcpConnectionReplaceTask> con_checker_;
+  Atomic<size_t> last_link_;
 };
 
 } // namespace DCPS

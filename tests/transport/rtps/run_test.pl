@@ -9,6 +9,8 @@ use lib "$ENV{DDS_ROOT}/bin";
 use PerlDDS::Run_Test;
 use strict;
 
+PerlDDS::add_lib_path('../TestMsg');
+
 sub do_test {
   my $mcast = shift;
   my $port = PerlACE::random_port();
@@ -17,7 +19,7 @@ sub do_test {
 
   my $test = new PerlDDS::TestFramework();
 
-  $test->process('subscriber', 'subscriber', "-h localhost -p $port");
+  $test->process('subscriber', 'subscriber', "-h 127.0.0.1 -p $port");
   $test->start_process('subscriber');
   if (PerlACE::waitforfile_timed($subready, 10) == -1) {
     print STDERR "ERROR: waiting for subscriber file\n";
@@ -26,19 +28,19 @@ sub do_test {
   }
 
   $test->process('publisher', 'publisher',
-                 $mcast ? "-h 239.255.0.2 -p 7401" : "-h localhost -p $port");
+                 $mcast ? "-h 239.255.0.2 -p 7401" : "-h 127.0.0.1 -p $port");
   $test->start_process('publisher');
 
-  my $result = $test->finish(60);
-  if ($result != 0) {
-      print STDERR "ERROR: test returned $result\n";
+  my $failed = $test->finish(60) ? 1 : 0;
+  if ($failed) {
+    print STDERR "ERROR: test failed\n";
   }
-  return $result;
+  return $failed;
 }
 
-my $result = do_test(0);
-
+my $failed = 0;
+$failed |= do_test(0);
 print "Running with multicast...\n";
-$result += do_test(1);
+$failed |= do_test(1);
 
-exit $result;
+exit $failed;

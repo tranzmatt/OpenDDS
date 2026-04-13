@@ -5,9 +5,7 @@
  * See: http://www.opendds.org/license.html
  */
 
-#include "Tcp_pch.h"
 #include "TcpTransport.h"
-#include "TcpConnectionReplaceTask.h"
 #include "TcpAcceptor.h"
 #include "TcpSendStrategy.h"
 #include "TcpReceiveStrategy.h"
@@ -15,15 +13,18 @@
 #include "TcpDataLink.h"
 #include "TcpSynchResource.h"
 #include "TcpConnection.h"
-#include "dds/DCPS/transport/framework/NetworkAddress.h"
-#include "dds/DCPS/ReactorTask.h"
-#include "dds/DCPS/transport/framework/EntryExit.h"
-#include "dds/DCPS/transport/framework/TransportExceptions.h"
-#include "dds/DCPS/AssociationData.h"
-#include "dds/DCPS/debug.h"
-#include "dds/DCPS/GuidConverter.h"
-#include "dds/DCPS/Service_Participant.h"
-#include "dds/DCPS/transport/framework/TransportClient.h"
+
+#include <dds/DCPS/NetworkResource.h>
+#include <dds/DCPS/ReactorTask.h>
+#include <dds/DCPS/transport/framework/EntryExit.h>
+#include <dds/DCPS/transport/framework/TransportExceptions.h>
+#include <dds/DCPS/AssociationData.h>
+#include <dds/DCPS/debug.h>
+#include <dds/DCPS/GuidConverter.h>
+#include <dds/DCPS/LogAddr.h>
+#include <dds/DCPS/Service_Participant.h>
+#include <dds/DCPS/transport/framework/TransportClient.h>
+#include <dds/DCPS/RcHandle_T.h>
 
 #include <sstream>
 
@@ -32,10 +33,11 @@ OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 namespace OpenDDS {
 namespace DCPS {
 
-TcpTransport::TcpTransport(TcpInst& inst)
-  : TransportImpl(inst)
-  , acceptor_(new TcpAcceptor(this))
-  , con_checker_(new TcpConnectionReplaceTask(this))
+TcpTransport::TcpTransport(const TcpInst_rch& inst,
+                           DDS::DomainId_t domain)
+  : TransportImpl(inst, domain)
+  , acceptor_(new TcpAcceptor(RcHandle<TcpTransport>(this, inc_count())))
+  , last_link_(0)
 {
   DBG_ENTRY_LVL("TcpTransport","TcpTransport",6);
 
@@ -49,14 +51,13 @@ TcpTransport::TcpTransport(TcpInst& inst)
 TcpTransport::~TcpTransport()
 {
   DBG_ENTRY_LVL("TcpTransport","~TcpTransport",6);
-  con_checker_->close(1);  // This could potentially fix a race condition
 }
 
 
-TcpInst&
+TcpInst_rch
 TcpTransport::config() const
 {
-  return static_cast<TcpInst&>(TransportImpl::config());
+  return dynamic_rchandle_cast<TcpInst>(TransportImpl::config());
 }
 
 PriorityKey
@@ -64,9 +65,9 @@ TcpTransport::blob_to_key(const TransportBLOB& remote,
                           Priority priority,
                           bool active)
 {
-  const ACE_INET_Addr remote_address =
-    AssociationData::get_remote_address(remote);
-  const bool is_loopback = remote_address == config().local_address();
+  const ACE_INET_Addr remote_address = AssociationData::get_remote_address(remote);
+  TcpInst_rch cfg = config();
+  const bool is_loopback = cfg && (remote_address == cfg->accept_address());
   return PriorityKey(priority, remote_address, is_loopback, active);
 }
 
@@ -77,27 +78,31 @@ TcpTransport::connect_datalink(const RemoteTransport& remote,
 {
   DBG_ENTRY_LVL("TcpTransport", "connect_datalink", 6);
 
+  if (is_shut_down()) {
+    return AcceptConnectResult();
+  }
+
   const PriorityKey key =
     blob_to_key(remote.blob_, attribs.priority_, true /*active*/);
 
   VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::connect_datalink PriorityKey "
-            "prio=%d, addr=%C:%hu, is_loopback=%d, is_active=%d\n",
-            key.priority(), key.address().get_host_addr(),
-            key.address().get_port_number(), key.is_loopback(),
+            "prio=%d, addr=%C, is_loopback=%d, is_active=%d\n",
+            key.priority(), LogAddr(key.address()).c_str(), key.is_loopback(),
             key.is_active()), 0);
 
   TcpDataLink_rch link;
   {
     GuardType guard(links_lock_);
 
-    if (find_datalink_i(key, link, client, remote.repo_id_)) {
-      VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::connect_datalink found datalink link[%@]\n", link.in()), 0);
-      return link.is_nil()
-        ? AcceptConnectResult(AcceptConnectResult::ACR_SUCCESS)
-        : AcceptConnectResult(link);
+    if (find_datalink_i(key, link)) {
+      VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::connect_datalink found datalink[%@]\n", link.in()), 0);
+      link->add_on_start_callback(client, remote.repo_id_);
+      add_pending_connection(client, link);
+      link->do_association_actions();
+      return AcceptConnectResult(AcceptConnectResult::ACR_SUCCESS);
     }
 
-    link = make_rch<TcpDataLink>(key.address(), ref(*this), attribs.priority_,
+    link = make_rch<TcpDataLink>(rchandle_from(this), key.address(), attribs.priority_,
                                 key.is_loopback(), true /*active*/);
     VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::connect_datalink create new link[%@]\n", link.in()), 0);
     if (links_.bind(key, link) != 0 /*OK*/) {
@@ -106,20 +111,27 @@ TcpTransport::connect_datalink(const RemoteTransport& remote,
                  "TcpTransport in links_ map.\n", link.in()));
       return AcceptConnectResult();
     }
+
+    link->add_on_start_callback(client, remote.repo_id_);
+    add_pending_connection(client, link);
   }
 
-  TcpConnection_rch connection(
-    make_rch<TcpConnection>(key.address(), link->transport_priority(), this->config()));
-  connection->set_datalink(link);
+  int ret = -1; // Default to failure in case config() is returns an invalid RCH
+  errno = EINVAL; // Anything other than EWOULDBLOCK
 
-  TcpConnection* pConn = connection.in();
+  TcpInst_rch cfg = config();
+  if (cfg) {
+    TcpConnection_rch connection(make_rch<TcpConnection>(key.address(), link->transport_priority(), cfg));
+    connection->set_datalink(link);
 
-  ACE_TCHAR str[64];
-  key.address().addr_to_string(str,sizeof(str)/sizeof(str[0]));
+    TcpConnection* pConn = connection.in();
 
-  // Can't make this call while holding onto TransportClient::lock_
-  const int ret =
-    connector_.connect(pConn, key.address(), ACE_Synch_Options::asynch);
+    // Can't make this call while holding onto TransportClient::lock_
+    ACE_Time_Value conn_timeout;
+    conn_timeout.msec(cfg->active_conn_timeout_period());
+
+    ret = connector_.connect(pConn, key.address(), ACE_Synch_Options(ACE_Synch_Options::USE_REACTOR|ACE_Synch_Options::USE_TIMEOUT, conn_timeout));
+  }
 
   if (ret == -1 && errno != EWOULDBLOCK) {
 
@@ -149,19 +161,9 @@ TcpTransport::connect_datalink(const RemoteTransport& remote,
     // connect() completed synchronously and called TcpConnection::active_open().
     VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::connect_datalink "
               "completed synchronously.\n"), 0);
-    return AcceptConnectResult(link);
+    return AcceptConnectResult(AcceptConnectResult::ACR_SUCCESS);
   }
 
-  if (!link->add_on_start_callback(client, remote.repo_id_)) {
-    // link was started by the reactor thread before we could add a callback
-
-    VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::connect_datalink got link.\n"), 0);
-    return AcceptConnectResult(link);
-  }
-
-  GuardType connections_guard(connections_lock_);
-
-  add_pending_connection(client, link);
   VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::connect_datalink pending.\n"), 0);
   return AcceptConnectResult(AcceptConnectResult::ACR_SUCCESS);
 }
@@ -169,7 +171,9 @@ TcpTransport::connect_datalink(const RemoteTransport& remote,
 void
 TcpTransport::async_connect_failed(const PriorityKey& key)
 {
-  ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: Failed to make active connection.\n"));
+  if (DCPS_debug_level >= 2) {
+    ACE_DEBUG((LM_WARNING, "(%P|%t) WARNING: Failed to make active connection.\n"));
+  }
   GuardType guard(links_lock_);
   TcpDataLink_rch link;
   links_.find(key, link);
@@ -183,26 +187,12 @@ TcpTransport::async_connect_failed(const PriorityKey& key)
 
 //Called with links_lock_ held
 bool
-TcpTransport::find_datalink_i(const PriorityKey& key, TcpDataLink_rch& link,
-                              const TransportClient_rch& client, const RepoId& remote_id)
+TcpTransport::find_datalink_i(const PriorityKey& key, TcpDataLink_rch& link)
 {
   DBG_ENTRY_LVL("TcpTransport", "find_datalink_i", 6);
 
   if (links_.find(key, link) == 0 /*OK*/) {
-    if (!link->add_on_start_callback(client, remote_id)) {
-      VDBG_LVL((LM_DEBUG, ACE_TEXT("(%P|%t) TcpTransport::find_datalink_i ")
-                ACE_TEXT("link[%@] found, already started.\n"), link.in()), 0);
-      // Since the link was already started, we won't get an "on start"
-      // callback, and the link is immediately usable.
-      return true;
-    }
-
-    VDBG_LVL((LM_DEBUG, ACE_TEXT("(%P|%t) TcpTransport::find_datalink_i ")
-              ACE_TEXT("link[%@] found, add to pending connections.\n"), link.in()), 0);
-    add_pending_connection(client, link);
-    link.reset(); // don't return link to TransportClient
     return true;
-
   } else if (pending_release_links_.find(key, link) == 0 /*OK*/) {
     if (link->cancel_release()) {
       link->set_release_pending(false);
@@ -231,71 +221,67 @@ TcpTransport::accept_datalink(const RemoteTransport& remote,
                               const ConnectionAttribs& attribs,
                               const TransportClient_rch& client)
 {
-  GuidConverter remote_conv(remote.repo_id_);
-  GuidConverter local_conv(attribs.local_id_);
+  DBG_ENTRY_LVL("TcpTransport", "accept_datalink", 6);
+
+  if (is_shut_down()) {
+    return AcceptConnectResult();
+  }
+
 
   VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::accept_datalink local %C "
             "accepting connection from remote %C\n",
-            std::string(local_conv).c_str(),
-            std::string(remote_conv).c_str()), 5);
+            LogGuid(attribs.local_id_).c_str(),
+            LogGuid(remote.repo_id_).c_str()), 5);
 
-  GuardType guard(connections_lock_);
   const PriorityKey key =
     blob_to_key(remote.blob_, attribs.priority_, false /* !active */);
 
   VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::accept_datalink PriorityKey "
-            "prio=%d, addr=%C:%hu, is_loopback=%d, is_active=%d\n", attribs.priority_,
-            key.address().get_host_addr(), key.address().get_port_number(),
-            key.is_loopback(), key.is_active()), 2);
+            "prio=%d, addr=%C, is_loopback=%d, is_active=%d\n", attribs.priority_,
+            LogAddr(key.address()).c_str(), key.is_loopback(), key.is_active()), 2);
 
   TcpDataLink_rch link;
   {
     GuardType guard(links_lock_);
 
-    if (find_datalink_i(key, link, client, remote.repo_id_)) {
-      return link.is_nil()
-        ? AcceptConnectResult(AcceptConnectResult::ACR_SUCCESS)
-        : AcceptConnectResult(link);
-
-    } else {
-      link = make_rch<TcpDataLink>(key.address(), ref(*this), key.priority(),
-                                  key.is_loopback(), key.is_active());
-
-      if (links_.bind(key, link) != 0 /*OK*/) {
-        ACE_ERROR((LM_ERROR,
-                   "(%P|%t) ERROR: TcpTransport::accept_datalink "
-                   "Unable to bind new TcpDataLink to "
-                   "TcpTransport in links_ map.\n"));
-        return AcceptConnectResult();
-      }
+    if (find_datalink_i(key, link)) {
+      VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::accept_datalink found datalink[%@]\n", link.in()), 0);
+      link->add_on_start_callback(client, remote.repo_id_);
+      add_pending_connection(client, link);
+      guard.release();
+      link->do_association_actions();
+      return AcceptConnectResult(AcceptConnectResult::ACR_SUCCESS);
     }
+
+    link = make_rch<TcpDataLink>(rchandle_from(this), key.address(), key.priority(),
+                                 key.is_loopback(), key.is_active());
+    VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::accept_datalink create new link[%@]\n", link.in()), 0);
+    if (links_.bind(key, link) != 0 /*OK*/) {
+      ACE_ERROR((LM_ERROR,
+                 "(%P|%t) ERROR: TcpTransport::accept_datalink "
+                 "Unable to bind new TcpDataLink[%@] to "
+                 "TcpTransport in links_ map.\n", link.in()));
+      return AcceptConnectResult();
+    }
+
+    link->add_on_start_callback(client, remote.repo_id_);
+    add_pending_connection(client, link);
   }
 
   TcpConnection_rch connection;
-  const ConnectionMap::iterator iter = connections_.find(key);
+  {
+    GuardType guard(connections_lock_);
+    const ConnectionMap::iterator iter = connections_.find(key);
 
-  if (iter != connections_.end()) {
-    connection = iter->second;
-    connections_.erase(iter);
+    if (iter != connections_.end()) {
+      connection = iter->second;
+      connections_.erase(iter);
+    }
   }
 
   if (connection.is_nil()) {
-    if (!link->add_on_start_callback(client, remote.repo_id_)) {
-      VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::accept_datalink "
-                "got started link %@.\n", link.in()), 0);
-      return AcceptConnectResult(link);
-    }
-
-    VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::accept_datalink "
-              "no existing TcpConnection.\n"), 0);
-
-    add_pending_connection(client, link);
-
-    // no link ready, passive_connection will complete later
     return AcceptConnectResult(AcceptConnectResult::ACR_SUCCESS);
   }
-
-  guard.release(); // connect_tcp_datalink() isn't called with connections_lock_
 
   if (connect_tcp_datalink(*link, connection) == -1) {
     GuardType guard(links_lock_);
@@ -305,19 +291,20 @@ TcpTransport::accept_datalink(const RemoteTransport& remote,
 
   VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::accept_datalink "
             "connected link %@.\n", link.in()), 2);
-  return AcceptConnectResult(link);
+  return AcceptConnectResult(AcceptConnectResult::ACR_SUCCESS);
 }
 
 void
 TcpTransport::stop_accepting_or_connecting(const TransportClient_wrch& client,
-                                           const RepoId& remote_id)
+                                           const GUID_t& remote_id,
+                                           bool /*disassociate*/,
+                                           bool /*association_failed*/)
 {
-  GuidConverter remote_converted(remote_id);
   VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport::stop_accepting_or_connecting "
             "stop connecting to remote: %C\n",
-            std::string(remote_converted).c_str()), 5);
+            LogGuid(remote_id).c_str()), 5);
 
-  GuardType guard(connections_lock_);
+  GuardType guard(pending_connections_lock_);
   typedef PendConnMap::iterator iter_t;
   const std::pair<iter_t, iter_t> range =
     pending_connections_.equal_range(client);
@@ -330,40 +317,27 @@ TcpTransport::stop_accepting_or_connecting(const TransportClient_wrch& client,
 }
 
 bool
-TcpTransport::configure_i(TcpInst& config)
+TcpTransport::configure_i(const TcpInst_rch& config)
 {
   DBG_ENTRY_LVL("TcpTransport", "configure_i", 6);
 
-  this->create_reactor_task();
+  if (!config) {
+    return false;
+  }
+
+  this->create_reactor_task(false, "TcpTransport" + config->name());
 
   connector_.open(reactor_task()->get_reactor());
 
-  // Open the reconnect task
-  if (this->con_checker_->open()) {
-    ACE_ERROR_RETURN((LM_ERROR,
-                      ACE_TEXT("(%P|%t) ERROR: connection checker failed to open : %p\n"),
-                      ACE_TEXT("open")),
-                     false);
-  }
-
-  // Override with DCPSDefaultAddress.
-  if (config.local_address() == ACE_INET_Addr () &&
-      !TheServiceParticipant->default_address ().empty ()) {
-    config.local_address(0, TheServiceParticipant->default_address ().c_str ());
-  }
+  VDBG_LVL((LM_DEBUG, ACE_TEXT("(%P|%t) TcpTransport::configure_i opening acceptor for %C on %C\n"),
+            config->local_address().c_str(), LogAddr(config->accept_address()).c_str()), 2);
 
   // Open our acceptor object so that we can accept passive connections
-  // on our config.local_address_.
-
-  if (this->acceptor_->open(config.local_address(),
+  // on our config->local_address_.
+  if (this->acceptor_->open(config->accept_address(),
                             this->reactor_task()->get_reactor()) != 0) {
-
-    ACE_ERROR_RETURN((LM_ERROR,
-                      ACE_TEXT("(%P|%t) ERROR: Acceptor failed to open %C:%d: %p\n"),
-                      config.local_address().get_host_addr(),
-                      config.local_address().get_port_number(),
-                      ACE_TEXT("open")),
-                     false);
+    ACE_ERROR_RETURN((LM_ERROR, ACE_TEXT("(%P|%t) ERROR: Acceptor failed to open %C: %p\n"),
+                      LogAddr(config->accept_address()).c_str(), ACE_TEXT("open")), false);
   }
 
   // update the port number (incase port zero was given).
@@ -376,36 +350,27 @@ TcpTransport::configure_i(TcpInst& config)
                ACE_TEXT("cannot get local addr\n")));
   }
 
-  OPENDDS_STRING listening_addr(address.get_host_addr());
-  VDBG_LVL((LM_DEBUG,
-            ACE_TEXT("(%P|%t) TcpTransport::configure_i listening on %C:%hu\n"),
-            listening_addr.c_str(), address.get_port_number()), 2);
+  VDBG_LVL((LM_DEBUG, ACE_TEXT("(%P|%t) TcpTransport::configure_i listening on %C\n"),
+            LogAddr(address).c_str()), 2);
 
-  unsigned short port = address.get_port_number();
-
-  // As default, the acceptor will be listening on INADDR_ANY but advertise with the fully
-  // qualified hostname and actual listening port number.
-  if (config.local_address().is_any()) {
-    std::string hostname = get_fully_qualified_hostname();
-    config.local_address(port, hostname.c_str());
-    if (config.local_address() == ACE_INET_Addr()) {
-       ACE_ERROR_RETURN((LM_ERROR,
-                          ACE_TEXT("(%P|%t) ERROR: Failed to resolve a local address using fully qualified hostname '%C'\n"),
-                          hostname.c_str()),
-                          false);
-    }
-  }
-
-  // Now we got the actual listening port. Update the port number in the configuration
-  // if it's 0 originally.
-  else if (config.local_address().get_port_number() == 0) {
-    config.local_address_set_port(port);
-  }
-
-  // Ahhh...  The sweet smell of success!
-  return true;
+  return config->set_locator_address(address);
 }
 
+void
+TcpTransport::client_stop(const GUID_t& local_id)
+{
+  GuardType guard(links_lock_);
+
+  AddrLinkMap::ENTRY* entry;
+
+  for (AddrLinkMap::ITERATOR itr(links_); itr.next(entry); itr.advance()) {
+    entry->int_id_->client_stop(local_id);
+  }
+
+  for (AddrLinkMap::ITERATOR itr(pending_release_links_); itr.next(entry); itr.advance()) {
+    entry->int_id_->client_stop(local_id);
+  }
+}
 
 void
 TcpTransport::shutdown_i()
@@ -413,11 +378,11 @@ TcpTransport::shutdown_i()
   DBG_ENTRY_LVL("TcpTransport","shutdown_i",6);
 
   {
-    GuardType guard(this->links_lock_);
+    GuardType guard(links_lock_);
 
     AddrLinkMap::ENTRY* entry;
 
-    for (AddrLinkMap::ITERATOR itr(this->links_);
+    for (AddrLinkMap::ITERATOR itr(links_);
          itr.next(entry);
          itr.advance()) {
       entry->int_id_->pre_stop_i();
@@ -425,57 +390,67 @@ TcpTransport::shutdown_i()
   }
 
   // Don't accept any more connections.
-  this->acceptor_->close();
-  this->acceptor_->transport_shutdown();
-
-  this->con_checker_->close(1);
+  acceptor_->close();
+  acceptor_->transport_shutdown();
 
   {
-    GuardType guard(this->connections_lock_);
+    {
+      GuardType guard(connections_lock_);
 
-    this->connections_.clear();
-    this->pending_connections_.clear();
+      for (ConnectionMap::iterator it = connections_.begin(); it != connections_.end(); ++it) {
+        it->second->shutdown();
+      }
+      connections_.clear();
+    }
+    {
+      GuardType guard(pending_connections_lock_);
+      pending_connections_.clear();
+    }
   }
 
   // Disconnect all of our DataLinks, and clear our links_ collection.
   {
-    GuardType guard(this->links_lock_);
+    GuardType guard(links_lock_);
 
     AddrLinkMap::ENTRY* entry;
 
-    for (AddrLinkMap::ITERATOR itr(this->links_);
+    for (AddrLinkMap::ITERATOR itr(links_);
          itr.next(entry);
          itr.advance()) {
       entry->int_id_->transport_shutdown();
     }
 
-    this->links_.unbind_all();
+    links_.unbind_all();
 
-    for (AddrLinkMap::ITERATOR itr(this->pending_release_links_);
+    for (AddrLinkMap::ITERATOR itr(pending_release_links_);
          itr.next(entry);
          itr.advance()) {
       entry->int_id_->transport_shutdown();
     }
 
-    this->pending_release_links_.unbind_all();
+    pending_release_links_.unbind_all();
   }
 
   // Tell our acceptor about this event so that it can drop its reference
   // it holds to this TcpTransport object (via smart-pointer).
-  this->acceptor_->transport_shutdown();
+  acceptor_->transport_shutdown();
 }
 
 bool
-TcpTransport::connection_info_i(TransportLocator& local_info) const
+TcpTransport::connection_info_i(TransportLocator& local_info, ConnectionInfoFlags flags) const
 {
   DBG_ENTRY_LVL("TcpTransport", "connection_info_i", 6);
 
-  VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport public address str %C\n",
-            this->config().get_public_address().c_str()), 2);
+  TcpInst_rch cfg = config();
+  if (cfg) {
+    VDBG_LVL((LM_DEBUG, "(%P|%t) TcpTransport public address string <%C>\n",
+              cfg->get_locator_address().c_str()), 2);
 
-  this->config().populate_locator(local_info);
+    cfg->populate_locator(local_info, flags, domain_, GUID_UNKNOWN);
+    return true;
+  }
 
-  return true;
+  return false;
 }
 
 void
@@ -511,24 +486,22 @@ TcpTransport::release_datalink(DataLink* link)
 
   VDBG_LVL((LM_DEBUG,
             "(%P|%t) TcpTransport::release_datalink link[%@] PriorityKey "
-            "prio=%d, addr=%C:%hu, is_loopback=%d, is_active=%d\n",
+            "prio=%d, addr=%C, is_loopback=%d, is_active=%d\n",
             link,
             tcp_link->transport_priority(),
-            tcp_link->remote_address().get_host_addr(),
-            tcp_link->remote_address().get_port_number(),
+            LogAddr(tcp_link->remote_address()).c_str(),
             (int)tcp_link->is_loopback(),
             (int)tcp_link->is_active()), 2);
 
   if (this->links_.unbind(key, released_link) != 0) {
     //No op
-  } else if (link->datalink_release_delay() > ACE_Time_Value::zero) {
+  } else if (link->datalink_release_delay() > TimeDuration::zero_value) {
     link->set_scheduling_release(true);
 
     VDBG_LVL((LM_DEBUG,
               "(%P|%t) TcpTransport::release_datalink datalink_release_delay "
-              "is %: sec %d usec\n",
-              link->datalink_release_delay().sec(),
-              link->datalink_release_delay().usec()), 4);
+              "is %C\n",
+              link->datalink_release_delay().str().c_str()), 4);
 
     // Atomic value update, safe to perform here.
     released_link->set_release_pending(true);
@@ -563,14 +536,12 @@ TcpTransport::release_datalink(DataLink* link)
   }
 
   // Actions are executed outside of the lock scope.
-  ACE_Time_Value cancel_now = ACE_OS::gettimeofday();
   switch (linkAction) {
   case StopLink:
-    link->schedule_stop(cancel_now);
+    link->schedule_stop(MonotonicTimePoint::now());
     break;
 
   case ScheduleLinkRelease:
-
     link->schedule_delayed_release();
     break;
 
@@ -601,15 +572,23 @@ TcpTransport::passive_connection(const ACE_INET_Addr& remote_address,
 {
   DBG_ENTRY_LVL("TcpTransport", "passive_connection", 6);
 
+  if (is_shut_down()) {
+    return;
+  }
+
+  TcpInst_rch cfg = config();
+  if (!cfg) {
+    return;
+  }
+
   const PriorityKey key(connection->transport_priority(),
                         remote_address,
-                        remote_address == config().local_address(),
+                        remote_address == cfg->accept_address(),
                         connection->is_connector());
 
   VDBG_LVL((LM_DEBUG, ACE_TEXT("(%P|%t) TcpTransport::passive_connection() - ")
-            ACE_TEXT("established with %C:%d.\n"),
-            remote_address.get_host_name(),
-            remote_address.get_port_number()), 2);
+            ACE_TEXT("established with %C.\n"),
+            LogAddr(remote_address).c_str()), 2);
 
   GuardType connection_guard(connections_lock_);
   TcpDataLink_rch link;
@@ -623,12 +602,13 @@ TcpTransport::passive_connection(const ACE_INET_Addr& remote_address,
 
     if (connect_tcp_datalink(*link, connection) == -1) {
       VDBG_LVL((LM_ERROR,
-                ACE_TEXT("(%P|%t) ERROR: connect_tcp_datalink failed\n")), 5);
+                ACE_TEXT("(%P|%t) TcpTransport::passive_connection() - ")
+                ACE_TEXT("ERROR: connect_tcp_datalink failed\n")), 5);
       GuardType guard(links_lock_);
       links_.unbind(key);
 
     } else {
-      con_checker_->add(connection);
+      this->fresh_link(connection);
     }
 
     return;
@@ -637,23 +617,26 @@ TcpTransport::passive_connection(const ACE_INET_Addr& remote_address,
   // If we reach this point, this link was not in links_, so the
   // accept_datalink() call hasn't happened yet.  Store in connections_ for the
   // accept_datalink() method to find.
-  VDBG_LVL((LM_DEBUG, "(%P|%t) # of bef connections: %d\n", connections_.size()), 5);
+  VDBG_LVL((LM_DEBUG,
+            ACE_TEXT("(%P|%t) TcpTransport::passive_connection() - # of before connections: %d\n"),
+            connections_.size()), 5);
   const ConnectionMap::iterator where = connections_.find(key);
 
   if (where != connections_.end()) {
     ACE_ERROR((LM_ERROR,
-               ACE_TEXT("(%P|%t) ERROR: TcpTransport::passive_connection() - ")
-               ACE_TEXT("connection with %C:%d at priority %d already exists, ")
+               ACE_TEXT("(%P|%t) TcpTransport::passive_connection() - ")
+               ACE_TEXT("ERROR: connection with %C at priority %d already exists, ")
                ACE_TEXT("overwriting previously established connection.\n"),
-               remote_address.get_host_name(),
-               remote_address.get_port_number(),
+               LogAddr(remote_address).c_str(),
                connection->transport_priority()));
   }
 
   connections_[key] = connection;
-  VDBG_LVL((LM_DEBUG, "(%P|%t) # of after connections: %d\n", connections_.size()), 5);
+  VDBG_LVL((LM_DEBUG,
+            ACE_TEXT("(%P|%t) TcpTransport::passive_connection() - # of after connections: %d\n"),
+            connections_.size()), 5);
 
-  con_checker_->add(connection);
+  this->fresh_link(connection);
 }
 
 /// Common code used by accept_datalink(), passive_connection(), and active completion.
@@ -667,21 +650,26 @@ TcpTransport::connect_tcp_datalink(TcpDataLink& link,
     return 0;
   }
 
+  TcpInst_rch cfg = config();
+  if (!cfg) {
+    return -1;
+  }
+
   ++last_link_;
 
   if (DCPS_debug_level > 4) {
     ACE_DEBUG((LM_DEBUG,
                ACE_TEXT("(%P|%t) TcpTransport::connect_tcp_datalink() [%d] - ")
                ACE_TEXT("creating send strategy with priority %d.\n"),
-               last_link_, link.transport_priority()));
+               last_link_.load(), link.transport_priority()));
   }
 
   connection->id() = last_link_;
 
   TcpSendStrategy_rch send_strategy (
-    make_rch<TcpSendStrategy>(last_link_, ref(link),
+    make_rch<TcpSendStrategy>(last_link_.load(), ref(link),
                              new TcpSynchResource(link,
-                                                  this->config().max_output_pause_period_),
+                                                  cfg->max_output_pause_period()),
                              this->reactor_task(), link.transport_priority()));
 
   TcpReceiveStrategy_rch receive_strategy(
@@ -705,9 +693,18 @@ TcpTransport::fresh_link(TcpConnection_rch connection)
   TcpDataLink_rch link;
   GuardType guard(this->links_lock_);
 
+  if (is_shut_down()) {
+    return 0;
+  }
+
+  TcpInst_rch cfg = config();
+  if (!cfg) {
+    return -1;
+  }
+
   PriorityKey key(connection->transport_priority(),
                   connection->get_remote_address(),
-                  connection->get_remote_address() == this->config().local_address(),
+                  connection->get_remote_address() == cfg->accept_address(),
                   connection->is_connector());
 
   if (this->links_.find(key, link) == 0) {
@@ -752,30 +749,36 @@ TcpTransport::unbind_link(DataLink* link)
 
   VDBG_LVL((LM_DEBUG,
             "(%P|%t) TcpTransport::unbind_link link %@ PriorityKey "
-            "prio=%d, addr=%C:%hu, is_loopback=%d, is_active=%d\n",
+            "prio=%d, addr=%C, is_loopback=%d, is_active=%d\n",
             link,
             tcp_link->transport_priority(),
-            tcp_link->remote_address().get_host_addr(),
-            tcp_link->remote_address().get_port_number(),
+            LogAddr(tcp_link->remote_address()).c_str(),
             (int)tcp_link->is_loopback(),
             (int)tcp_link->is_active()), 2);
 
   GuardType guard(this->links_lock_);
 
-  if (this->pending_release_links_.unbind(key) != 0 &&
-      link->datalink_release_delay() > ACE_Time_Value::zero) {
+  if (pending_release_links_.unbind(key) && !link->datalink_release_delay().is_zero()) {
     ACE_ERROR((LM_ERROR,
                "(%P|%t) TcpTransport::unbind_link INTERNAL ERROR - "
                "Failed to find link %@ tcp_link %@ PriorityKey "
-               "prio=%d, addr=%C:%hu, is_loopback=%d, is_active=%d\n",
+               "prio=%d, addr=%C, is_loopback=%d, is_active=%d\n",
                link,
                tcp_link,
                tcp_link->transport_priority(),
-               tcp_link->remote_address().get_host_addr(),
-               tcp_link->remote_address().get_port_number(),
+               LogAddr(tcp_link->remote_address()).c_str(),
                (int)tcp_link->is_loopback(),
                (int)tcp_link->is_active()));
   }
+}
+
+
+int
+TcpTransport::Connector::fini() {
+  // Overriding fini() so that  ACE_Connector<TcpConnection, ACE_SOCK_Connector>::close() won't be
+  // invoked in the process shutting down reactor. Without overrinding fini(), close() would be called
+  // from destructor and from reactor in different threads which leads to synchronization issues.
+  return 0;
 }
 
 }

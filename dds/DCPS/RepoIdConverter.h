@@ -5,8 +5,8 @@
  * See: http://www.opendds.org/license.html
  */
 
-#ifndef DCPS_REPOIDCONVERTER_H
-#define DCPS_REPOIDCONVERTER_H
+#ifndef OPENDDS_DCPS_REPOIDCONVERTER_H
+#define OPENDDS_DCPS_REPOIDCONVERTER_H
 
 #include "dds/DdsDcpsInfrastructureC.h"
 #include "dds/DdsDcpsInfoUtilsC.h"
@@ -66,7 +66,7 @@ namespace DCPS {
  */
 class OpenDDS_Dcps_Export RepoIdConverter : public GuidConverter {
 public:
-  RepoIdConverter(const RepoId& repoId);
+  RepoIdConverter(const GUID_t& repoId);
 
   ~RepoIdConverter();
 

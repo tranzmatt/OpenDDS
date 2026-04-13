@@ -1,6 +1,4 @@
 /*
- *
- *
  * Distributed under the OpenDDS License.
  * See: http://www.opendds.org/license.html
  */
@@ -8,20 +6,24 @@
 #ifndef OPENDDS_DCPS_ENTITY_IMPL_H
 #define OPENDDS_DCPS_ENTITY_IMPL_H
 
-#include "dds/DdsDcpsInfrastructureC.h"
-#include "ace/Atomic_Op_T.h"
-#include "dds/DCPS/LocalObject.h"
+#include "Observer.h"
+#include "LocalObject.h"
 #include "Definitions.h"
-#include "dds/DCPS/transport/framework/TransportConfig_rch.h"
+#include "AtomicBool.h"
+#include "transport/framework/TransportConfig_rch.h"
 
-#if !defined (ACE_LACKS_PRAGMA_ONCE)
-#pragma once
-#endif /* ACE_LACKS_PRAGMA_ONCE */
+#include <dds/DdsDcpsInfrastructureC.h>
+
+#ifndef ACE_LACKS_PRAGMA_ONCE
+#  pragma once
+#endif
 
 OPENDDS_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace OpenDDS {
 namespace DCPS {
+
+class DomainParticipantImpl;
 
 /**
 * @class EntityImpl
@@ -47,6 +49,10 @@ public:
 
   virtual DDS::InstanceHandle_t get_instance_handle() = 0;
 
+  virtual DDS::DomainId_t get_domain_id() { return DOMAIN_UNKNOWN; }
+
+  virtual GUID_t get_id() const { return GUID_UNKNOWN; }
+
   void set_status_changed_flag(DDS::StatusKind status,
                                bool status_changed_flag);
 
@@ -59,18 +65,24 @@ public:
 
   virtual RcHandle<EntityImpl> parent() const { return RcHandle<EntityImpl>(); }
 
+  void set_observer(Observer_rch observer, Observer::Event e);
+
+  Observer_rch get_observer(Observer::Event e);
+
 protected:
   DDS::ReturnCode_t set_enabled();
 
   void set_deleted(bool state);
 
-  bool get_deleted();
+  bool get_deleted() const;
+
+  DDS::InstanceHandle_t get_entity_instance_handle(const GUID_t& id, const RcHandle<DomainParticipantImpl>& participant);
 
   /// The flag indicates the entity is enabled.
-  ACE_Atomic_Op<TAO_SYNCH_MUTEX, bool>       enabled_;
+  AtomicBool enabled_;
 
   /// The flag indicates the entity is being deleted.
-  ACE_Atomic_Op<TAO_SYNCH_MUTEX, bool>       entity_deleted_;
+  AtomicBool entity_deleted_;
 
 private:
   /// The status_changes_ variable lists all status changed flag.
@@ -83,7 +95,13 @@ private:
 
   TransportConfig_rch transport_config_;
 
+  Observer_rch observer_;
+  Observer::Event events_;
+
   mutable ACE_Thread_Mutex lock_;
+
+  DDS::InstanceHandle_t instance_handle_;
+  WeakRcHandle<DomainParticipantImpl> participant_for_instance_handle_;
 };
 
 } // namespace DCPS
