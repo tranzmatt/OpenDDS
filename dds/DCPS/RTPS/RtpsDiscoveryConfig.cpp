@@ -655,6 +655,17 @@ void RtpsDiscoveryConfig::ipv6_spdp_multicast_address(const DCPS::NetworkAddress
                                              DCPS::ConfigStoreImpl::Kind_IPV6);
 }
 
+DCPS::NetworkAddress
+RtpsDiscoveryConfig::ipv6_sedp_multicast_address(DDS::DomainId_t domain) const
+{
+  ACE_UNUSED_ARG(domain);
+  return TheServiceParticipant->config_store()->get(
+    config_key("IPV6_SEDP_MULTICAST_ADDRESS").c_str(),
+    ipv6_default_multicast_group(),
+    DCPS::ConfigStoreImpl::Format_Optional_Port,
+    DCPS::ConfigStoreImpl::Kind_IPV6);
+}
+
 void RtpsDiscoveryConfig::ipv6_sedp_multicast_address(const DCPS::NetworkAddress& addr)
 {
   TheServiceParticipant->config_store()->set(config_key("IPV6_SEDP_MULTICAST_ADDRESS").c_str(),
@@ -684,7 +695,7 @@ RtpsDiscoveryConfig::spdp_send_addrs() const
   return TheServiceParticipant->config_store()->get(config_key("SPDP_SEND_ADDRS").c_str(),
                                                     DCPS::NetworkAddressSet(),
                                                     DCPS::ConfigStoreImpl::Format_Required_Port,
-                                                    DCPS::ConfigStoreImpl::Kind_IPV4);
+                                                    DCPS::ConfigStoreImpl::Kind_ANY);
 }
 
 void
@@ -693,7 +704,7 @@ RtpsDiscoveryConfig::spdp_send_addrs(const DCPS::NetworkAddressSet& addrs)
   TheServiceParticipant->config_store()->set(config_key("SPDP_SEND_ADDRS").c_str(),
                                              addrs,
                                              DCPS::ConfigStoreImpl::Format_Required_Port,
-                                             DCPS::ConfigStoreImpl::Kind_IPV4);
+                                             DCPS::ConfigStoreImpl::Kind_ANY);
 }
 
 DCPS::TimeDuration
@@ -1090,8 +1101,15 @@ RtpsDiscoveryConfig::sedp_fragment_reassembly_timeout(const DCPS::TimeDuration& 
 CORBA::ULong
 RtpsDiscoveryConfig::participant_flags() const
 {
-  return TheServiceParticipant->config_store()->get_uint32(config_key("PARTICIPANT_FLAGS").c_str(),
-                                                           PFLAGS_THIS_VERSION);
+  const CORBA::ULong flags = TheServiceParticipant->config_store()->get_uint32(
+    config_key("PARTICIPANT_FLAGS").c_str(), PFLAGS_THIS_VERSION);
+  // PFLAGS_RTPS_DURATION_FRACTION is exclusively controlled by
+  // USE_RTPS_DURATION_FRACTION (see use_rtps_duration_fraction()) and always
+  // overrides whatever was stored for that bit via participant_flags(CORBA::ULong).
+  // This is unlike every other PARTICIPANT_FLAGS bit, which is raw, authoritative
+  // storage (see e.g. Spdp::init()'s handling of PFLAGS_REFLECT_HEARTBEAT_COUNT).
+  return use_rtps_duration_fraction()
+    ? (flags | PFLAGS_RTPS_DURATION_FRACTION) : (flags & ~PFLAGS_RTPS_DURATION_FRACTION);
 }
 
 void
@@ -1099,6 +1117,20 @@ RtpsDiscoveryConfig::participant_flags(CORBA::ULong participant_flags)
 {
   TheServiceParticipant->config_store()->set_uint32(config_key("PARTICIPANT_FLAGS").c_str(),
                                                     participant_flags);
+}
+
+bool
+RtpsDiscoveryConfig::use_rtps_duration_fraction() const
+{
+  return TheServiceParticipant->config_store()->get_boolean(
+    config_key("USE_RTPS_DURATION_FRACTION").c_str(), false);
+}
+
+void
+RtpsDiscoveryConfig::use_rtps_duration_fraction(bool value)
+{
+  TheServiceParticipant->config_store()->set_boolean(
+    config_key("USE_RTPS_DURATION_FRACTION").c_str(), value);
 }
 
 bool

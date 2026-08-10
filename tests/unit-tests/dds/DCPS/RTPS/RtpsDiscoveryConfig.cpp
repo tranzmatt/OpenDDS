@@ -33,6 +33,22 @@ namespace {
 #endif
 }
 
+TEST(dds_DCPS_RTPS_RtpsDiscoveryConfig, use_rtps_duration_fraction)
+{
+  AddressTest t;
+
+  EXPECT_FALSE(t.rtps.use_rtps_duration_fraction());
+  EXPECT_EQ(0u, t.rtps.participant_flags() & PFLAGS_RTPS_DURATION_FRACTION);
+
+  t.rtps.use_rtps_duration_fraction(true);
+  EXPECT_TRUE(t.rtps.use_rtps_duration_fraction());
+  EXPECT_NE(0u, t.rtps.participant_flags() & PFLAGS_RTPS_DURATION_FRACTION);
+
+  t.rtps.use_rtps_duration_fraction(false);
+  t.rtps.participant_flags(PFLAGS_THIS_VERSION | PFLAGS_RTPS_DURATION_FRACTION);
+  EXPECT_EQ(0u, t.rtps.participant_flags() & PFLAGS_RTPS_DURATION_FRACTION);
+}
+
 TEST(dds_DCPS_RTPS_RtpsDiscoveryConfig, spdp_unicast_address)
 {
   const char* const default_addr = "0.0.0.0";
@@ -162,6 +178,19 @@ TEST(dds_DCPS_RTPS_RtpsDiscoveryConfig, spdp_multicast_address)
   }
 }
 
+TEST(dds_DCPS_RTPS_RtpsDiscoveryConfig, spdp_send_addrs)
+{
+  AddressTest t;
+  NetworkAddressSet expected;
+  expected.insert(fake_ipv4_addr);
+#ifdef ACE_HAS_IPV6
+  expected.insert(fake_ipv6_addr);
+#endif
+
+  t.rtps.spdp_send_addrs(expected);
+  EXPECT_EQ(expected, t.rtps.spdp_send_addrs());
+}
+
 
 #ifdef ACE_HAS_IPV6
 TEST(dds_DCPS_RTPS_RtpsDiscoveryConfig, ipv6_spdp_unicast_address)
@@ -281,6 +310,21 @@ TEST(dds_DCPS_RTPS_RtpsDiscoveryConfig, ipv6_spdp_multicast_address)
     ASSERT_TRUE(t.rtps.ipv6_spdp_multicast_address(t.addr, 1));
     EXPECT_ADDR_EQ(t.addr, fake_ipv6_addr);
     EXPECT_FALSE(t.fixed);
+  }
+}
+
+TEST(dds_DCPS_RTPS_RtpsDiscoveryConfig, ipv6_sedp_multicast_address)
+{
+  {
+    AddressTest t;
+    EXPECT_ADDR_EQ(t.rtps.ipv6_sedp_multicast_address(1),
+                   NetworkAddress(0, "ff03::1"));
+  }
+
+  {
+    AddressTest t;
+    t.rtps.ipv6_sedp_multicast_address(fake_ipv6_addr);
+    EXPECT_ADDR_EQ(t.rtps.ipv6_sedp_multicast_address(1), fake_ipv6_addr);
   }
 }
 #endif
