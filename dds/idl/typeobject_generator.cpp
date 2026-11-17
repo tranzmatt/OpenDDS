@@ -4,6 +4,7 @@
  */
 
 #include "typeobject_generator.h"
+#include "tao_idl_compat.h"
 
 #include "topic_keys.h"
 #include "dds_visitor.h"
@@ -689,7 +690,11 @@ typeobject_generator::gen_epilogue()
   }
 
   std::ostream* const stream = be_global->typeobject_stream();
+#ifdef TAO_IDL_HAS_STD_STRING_API
+  std::string file = idl_global->filename();
+#else
   std::string file = idl_global->filename()->get_string();
+#endif
   file.resize(file.find('.'));
   if (stream && stream->tellp() == 0) {
     *stream << "#include <cstddef>\nstruct Span { const unsigned char* bytes_; std::size_t size_; };\n";
@@ -835,7 +840,8 @@ typeobject_generator::strong_connect(AST_Type* type, const std::string& anonymou
       consider(v, discriminator, v.name + ".d");
 
       const AutoidKind auto_id = be_global->autoid(n);
-      MemberId member_id = 0;
+      // The union discriminator is the first member and has member ID 0.
+      MemberId member_id = 1;
 
       for (Fields::Iterator i = fields.begin(); i != fields.end(); ++i) {
         AST_UnionBranch* ub = ast_cast<AST_UnionBranch>(*i);
@@ -1133,7 +1139,8 @@ typeobject_generator::generate_struct_type_identifier(AST_Type* type)
     }
 
     if (be_global->is_key(field)) {
-      member_flags |= OpenDDS::XTypes::IS_KEY;
+      // XTypes 7.2.2.4.4.4.8 requires key members to be must-understand.
+      member_flags |= OpenDDS::XTypes::IS_KEY | OpenDDS::XTypes::IS_MUST_UNDERSTAND;
     }
 
     if (be_global->is_external(field)) {
@@ -1196,7 +1203,10 @@ typeobject_generator::generate_union_type_identifier(AST_Type* type)
   }
 
   const TryConstructFailAction trycon = be_global->union_discriminator_try_construct(n);
-  OpenDDS::XTypes::UnionDiscriminatorFlag discriminator_flags = try_construct_to_member_flag(trycon);
+  // XTypes 7.2.2.4.4.4.6 requires every union discriminator to be
+  // must-understand.
+  OpenDDS::XTypes::UnionDiscriminatorFlag discriminator_flags =
+    try_construct_to_member_flag(trycon) | OpenDDS::XTypes::IS_MUST_UNDERSTAND;
   if (be_global->union_discriminator_is_key(n)) {
     discriminator_flags |= OpenDDS::XTypes::IS_KEY;
   }

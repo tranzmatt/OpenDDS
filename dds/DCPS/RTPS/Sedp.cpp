@@ -314,6 +314,13 @@ namespace {
       ? ParameterListConverter::RDE_FRACTIONAL_SECONDS
       : ParameterListConverter::RDE_NANOSECONDS;
   }
+
+  ParameterListConverter::TypeConsistencyKindEncoding tc_kind_encoding(bool use_xtypes_values)
+  {
+    return use_xtypes_values
+      ? ParameterListConverter::TCKE_XTYPES
+      : ParameterListConverter::TCKE_LEGACY;
+  }
 }
 
 RtpsDiscoveryCore::RtpsDiscoveryCore(RcHandle<RtpsDiscoveryConfig> config,
@@ -339,6 +346,7 @@ Sedp::Sedp(const GUID_t& participant_id, Spdp& owner, ACE_Thread_Mutex& lock)
   , participant_id_(participant_id)
   , participant_flags_(owner.config()->participant_flags())
   , local_duration_encoding_(duration_encoding((participant_flags_ & PFLAGS_RTPS_DURATION_FRACTION) != 0))
+  , local_tc_kind_encoding_(tc_kind_encoding((participant_flags_ & PFLAGS_XTYPES_TYPE_CONSISTENCY_KIND) != 0))
   , publication_counter_(0)
   , subscription_counter_(0)
   , topic_counter_(0)
@@ -3506,12 +3514,14 @@ Sedp::LivelinessWriter::write_participant_message(const ParticipantMessageData& 
     new ACE_Message_Block(
       DCPS::DataSampleHeader::get_max_serialized_size(),
       ACE_Message_Block::MB_DATA,
-      new ACE_Message_Block(size)));
+      new ACE_Message_Block(size + DCPS::EncapsulationHeader::padding_marker_alignment - 1)));
   Serializer serializer(payload->cont(), sedp_encoding);
   DCPS::EncapsulationHeader encap;
   if (from_encoding(encap, sedp_encoding, DCPS::FINAL) &&
-      serializer << encap && serializer << pmd) {
-    send_sample(OPENDDS_MOVE_NS::move(payload), size, reader, sequence, reader != GUID_UNKNOWN);
+      serializer << encap && serializer << pmd &&
+      DCPS::EncapsulationHeader::set_encapsulation_options(*payload->cont())) {
+    const size_t payload_length = payload->cont()->length();
+    send_sample(OPENDDS_MOVE_NS::move(payload), payload_length, reader, sequence, reader != GUID_UNKNOWN);
   } else {
     result = DDS::RETCODE_ERROR;
   }
@@ -3535,12 +3545,14 @@ Sedp::SecurityWriter::write_stateless_message(const DDS::Security::ParticipantSt
     new ACE_Message_Block(
       DCPS::DataSampleHeader::get_max_serialized_size(),
       ACE_Message_Block::MB_DATA,
-      new ACE_Message_Block(size)));
+      new ACE_Message_Block(size + DCPS::EncapsulationHeader::padding_marker_alignment - 1)));
   Serializer serializer(payload->cont(), sedp_encoding);
   DCPS::EncapsulationHeader encap;
   if (from_encoding(encap, sedp_encoding, DCPS::FINAL) &&
-      serializer << encap && serializer << msg) {
-    send_sample(OPENDDS_MOVE_NS::move(payload), size, reader, sequence);
+      serializer << encap && serializer << msg &&
+      DCPS::EncapsulationHeader::set_encapsulation_options(*payload->cont())) {
+    const size_t payload_length = payload->cont()->length();
+    send_sample(OPENDDS_MOVE_NS::move(payload), payload_length, reader, sequence);
   } else {
     result = DDS::RETCODE_ERROR;
   }
@@ -3563,12 +3575,14 @@ Sedp::SecurityWriter::write_volatile_message_secure(const DDS::Security::Partici
     new ACE_Message_Block(
       DCPS::DataSampleHeader::get_max_serialized_size(),
       ACE_Message_Block::MB_DATA,
-      new ACE_Message_Block(size)));
+      new ACE_Message_Block(size + DCPS::EncapsulationHeader::padding_marker_alignment - 1)));
   Serializer serializer(payload->cont(), sedp_encoding);
   DCPS::EncapsulationHeader encap;
   if (from_encoding(encap, sedp_encoding, DCPS::FINAL) &&
-      serializer << encap && serializer << msg) {
-    send_sample(OPENDDS_MOVE_NS::move(payload), size, reader, sequence);
+      serializer << encap && serializer << msg &&
+      DCPS::EncapsulationHeader::set_encapsulation_options(*payload->cont())) {
+    const size_t payload_length = payload->cont()->length();
+    send_sample(OPENDDS_MOVE_NS::move(payload), payload_length, reader, sequence);
   } else {
     result = DDS::RETCODE_ERROR;
   }
@@ -3820,14 +3834,16 @@ bool Sedp::TypeLookupRequestWriter::send_type_lookup_request(
     new ACE_Message_Block(
       DCPS::DataSampleHeader::get_max_serialized_size(),
       ACE_Message_Block::MB_DATA,
-      new ACE_Message_Block(size)));
+      new ACE_Message_Block(size + DCPS::EncapsulationHeader::padding_marker_alignment - 1)));
   Serializer serializer(payload->cont(), type_lookup_encoding);
   DCPS::EncapsulationHeader encap;
   bool success = true;
   if (from_encoding(encap, serializer.encoding(), DCPS::FINAL) &&
-      serializer << encap && serializer << type_lookup_request) {
+      serializer << encap && serializer << type_lookup_request &&
+      DCPS::EncapsulationHeader::set_encapsulation_options(*payload->cont())) {
     DCPS::SequenceNumber sn(seq_++);
-    send_sample(OPENDDS_MOVE_NS::move(payload), size, reader, sn);
+    const size_t payload_length = payload->cont()->length();
+    send_sample(OPENDDS_MOVE_NS::move(payload), payload_length, reader, sn);
   } else {
     if (DCPS::DCPS_debug_level) {
       ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: "
@@ -3864,14 +3880,16 @@ bool Sedp::TypeLookupReplyWriter::send_type_lookup_reply(
     new ACE_Message_Block(
       DCPS::DataSampleHeader::get_max_serialized_size(),
       ACE_Message_Block::MB_DATA,
-      new ACE_Message_Block(size)));
+      new ACE_Message_Block(size + DCPS::EncapsulationHeader::padding_marker_alignment - 1)));
   Serializer serializer(payload->cont(), type_lookup_encoding);
   DCPS::EncapsulationHeader encap;
   bool success = true;
   if (from_encoding(encap, serializer.encoding(), DCPS::FINAL) &&
-      serializer << encap && serializer << type_lookup_reply) {
+      serializer << encap && serializer << type_lookup_reply &&
+      DCPS::EncapsulationHeader::set_encapsulation_options(*payload->cont())) {
     DCPS::SequenceNumber sn(seq_++);
-    send_sample(OPENDDS_MOVE_NS::move(payload), size, reader, sn);
+    const size_t payload_length = payload->cont()->length();
+    send_sample(OPENDDS_MOVE_NS::move(payload), payload_length, reader, sn);
   } else {
     if (DCPS::DCPS_debug_level) {
       ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: "
@@ -4442,10 +4460,14 @@ Sedp::DiscoveryReader::data_received_i(const DCPS::ReceivedDataSample& sample,
   const DCPS::MessageId id = static_cast<DCPS::MessageId>(sample.header_.message_id_);
   VendorId_t remote_vendor_id;
   bool remote_uses_rtps_duration_fraction = false;
-  sedp_.spdp_.get_vendor_id_and_duration_encoding(
-    sample.header_.publication_id_, remote_vendor_id, remote_uses_rtps_duration_fraction);
+  bool remote_uses_xtypes_tc_kind = true;
+  sedp_.spdp_.get_vendor_id_and_encodings(
+    sample.header_.publication_id_, remote_vendor_id, remote_uses_rtps_duration_fraction,
+    remote_uses_xtypes_tc_kind);
   const ParameterListConverter::RtpsDurationEncoding remote_duration_encoding =
     duration_encoding(remote_uses_rtps_duration_fraction);
+  const ParameterListConverter::TypeConsistencyKindEncoding remote_tc_kind_encoding =
+    tc_kind_encoding(remote_uses_xtypes_tc_kind);
 
   if (entity_id == ENTITYID_SEDP_BUILTIN_PUBLICATIONS_WRITER) {
     ParameterList data;
@@ -4556,7 +4578,7 @@ Sedp::DiscoveryReader::data_received_i(const DCPS::ReceivedDataSample& sample,
     if (!ParameterListConverter::from_param_list(
           data, remote_vendor_id,
           rdata.reader_data_, sedp_.use_xtypes_, rdata.type_info_,
-          remote_duration_encoding)) {
+          remote_duration_encoding, remote_tc_kind_encoding)) {
       if (log_level >= LogLevel::Warning) {
         ACE_ERROR((LM_WARNING, "(%P|%t) WARNING: Sedp::DiscoveryReader::data_received_i: "
                    "failed to convert from ParameterList to DiscoveredReaderData\n"));
@@ -4607,7 +4629,7 @@ Sedp::DiscoveryReader::data_received_i(const DCPS::ReceivedDataSample& sample,
     if (!ParameterListConverter::from_param_list(
           data, remote_vendor_id,
           rdata_secure, sedp_.use_xtypes_, rdata_secure.type_info,
-          remote_duration_encoding)) {
+          remote_duration_encoding, remote_tc_kind_encoding)) {
       if (log_level >= LogLevel::Warning) {
         ACE_ERROR((LM_WARNING, "(%P|%t) WARNING: Sedp::DiscoveryReader::data_received_i: "
                    "failed to convert from ParameterList to DiscoveredSubscription_SecurityWrapper\n"));
@@ -5300,13 +5322,13 @@ Sedp::write_subscription_data_unsecure(UsedEndpoints& ue,
       }
       const DCPS::TypeInformation typeinfo(*ls.typeInfoFor(reader, &useFlexibleTypes));
       if (!ParameterListConverter::to_param_list(
-            drd, plist, true, typeinfo, local_duration_encoding_)) {
+            drd, plist, true, typeinfo, local_duration_encoding_, local_tc_kind_encoding_)) {
         ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: Sedp::write_subscription_data_unsecure: "
                    "Failed to convert DiscoveredReaderData to ParameterList (Flags_FlexibleTypeSupport)\n"));
         result = DDS::RETCODE_ERROR;
       }
     } else if (!ParameterListConverter::to_param_list(
-          drd, plist, use_xtypes_, ls.type_info_, local_duration_encoding_)) {
+          drd, plist, use_xtypes_, ls.type_info_, local_duration_encoding_, local_tc_kind_encoding_)) {
       ACE_ERROR((LM_ERROR,
                  ACE_TEXT("(%P|%t) ERROR: Sedp::write_subscription_data_unsecure: ")
                  ACE_TEXT("Failed to convert DiscoveredReaderData ")
@@ -5375,13 +5397,13 @@ Sedp::write_subscription_data_secure(UsedEndpoints& ue,
       }
       const DCPS::TypeInformation typeinfo(*ls.typeInfoFor(reader, &useFlexibleTypes));
       if (!ParameterListConverter::to_param_list(
-            drd, plist, true, typeinfo, local_duration_encoding_)) {
+            drd, plist, true, typeinfo, local_duration_encoding_, local_tc_kind_encoding_)) {
         ACE_ERROR((LM_ERROR, "(%P|%t) ERROR: Sedp::write_subscription_data_secure: "
                    "Failed to convert DiscoveredReaderData to ParameterList (Flags_FlexibleTypeSupport)\n"));
         result = DDS::RETCODE_ERROR;
       }
     } else if (!ParameterListConverter::to_param_list(
-          drd, plist, use_xtypes_, ls.type_info_, local_duration_encoding_)) {
+          drd, plist, use_xtypes_, ls.type_info_, local_duration_encoding_, local_tc_kind_encoding_)) {
       ACE_ERROR((LM_ERROR,
                  ACE_TEXT("(%P|%t) ERROR: Sedp::write_subscription_data_secure: ")
                  ACE_TEXT("Failed to convert DiscoveredReaderData ")
